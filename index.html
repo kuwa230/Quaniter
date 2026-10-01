@@ -68,6 +68,10 @@ h1,h2,h3,.disp{ font-family:"Barlow Condensed",Impact,"Arial Narrow",sans-serif;
 .fileinfo{ font-size:12.5px; color:var(--text-dim); margin-top:10px; }
 
 html,body{ touch-action:manipulation; -webkit-tap-highlight-color:transparent; }
+/* page 2: no browser pinch-zoom of the page itself (pan only). iOS Safari
+   ignores user-scalable=no, but it does honour a touch-action without
+   pinch-zoom — see also the gesturestart guard in showPage's section. */
+html.noPageZoom, html.noPageZoom body, html.noPageZoom button{ touch-action:pan-x pan-y; }
 *{ -webkit-tap-highlight-color:transparent; } /* iOS's default gray tap-flash was very likely the "whole area looks selected" flash reported on #axisBottomBtn, which spans the full width */
 button{
   font-family:inherit; font-size:13px; font-weight:600; color:var(--text); background:var(--surface-2);
@@ -218,7 +222,7 @@ td.num{ text-align:right; font-variant-numeric:tabular-nums; }
 #tlGridCanvas, #tlHrCanvas{ position:absolute; left:0; top:0; width:100%; height:100%; pointer-events:none; }
 #tlGridCanvas{ z-index:0; }
 #tlHrCanvas{ z-index:2; }
-.tlTrack{ position:absolute; left:0; right:0; border-bottom:1px solid var(--border); box-sizing:border-box; }
+.tlTrack{ position:absolute; left:0; right:0; box-sizing:border-box; }
 .tlSeekLine{ position:absolute; top:0; bottom:0; width:2px; background:#e08a1e; z-index:5; pointer-events:none; }
 .tlClip{ position:absolute; top:2px; bottom:2px; display:flex; align-items:stretch; border-radius:5px; box-sizing:border-box;
   background:var(--accent); opacity:.4; border:1.5px solid var(--accent); overflow:hidden; touch-action:none; }
@@ -228,8 +232,8 @@ td.num{ text-align:right; font-variant-numeric:tabular-nums; }
    edge scrolls into view (the clip itself extends past the visible window) */
 .tlClipHandle{ position:absolute; top:0; bottom:0; width:16px; display:flex; align-items:center; justify-content:center; font-size:10px;
   font-weight:700; color:#08211d; background:rgba(255,255,255,.35); touch-action:none; }
-.tlClipName{ flex:1 1 0; min-width:0; display:flex; align-items:center; justify-content:center; font-size:10.5px;
-  font-weight:700; color:#08211d; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; padding:0 2px; }
+.tlClipName{ position:absolute; top:50%; transform:translateY(-50%); text-align:center; font-size:10.5px;
+  font-weight:700; color:#08211d; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; } /* left/width set per frame in renderTimeline */
 .tlClipHandle[data-edge="start"]{ left:0; }
 .tlClipHandle[data-edge="end"]{ right:0; }
 #p2Confirm{ flex:1 1 0; display:flex; align-items:stretch; gap:6px; }
@@ -512,7 +516,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
 // (this session's own publish count so far) is reconstructed from the
 // conversation itself rather than mechanically verified — best-effort, not
 // guaranteed exact. Increment by exactly 1 on every future publish.
-const APP_VERSION = 142;
+const APP_VERSION = 143;
 
 /* ============ FIT PARSER ============ */
 const FIT_EPOCH = 631065600; // seconds between 1970-01-01 and 1989-12-31 (FIT epoch)
@@ -1027,24 +1031,63 @@ function createVelocityTracker(){
     },
   };
 }
-// Shared momentum engine — used by both the chart's own drag (pointermove
-// history kept locally there) and the timeline's pan gesture below, since
-// both ultimately just shift the same S.chartView range.
+// Scrolling the chart or the timeline drives the seek bar: the seek position
+// is the data value at the centre of the screen, with the view following it.
+// At the true start/end of the data the view stops (it never shows empty
+// space past either end) and the seek bar slides on toward the left/right
+// edge instead, until it reaches the first/last record.
+let scrollSeeking = false; // true while a scroll drives the seek bar — map renders are throttled meanwhile
+let scrollState = null;    // {c, min, max, idx} snapshot of the last scrollCenterTo()
+function nearestIndexByX(x){
+  const recs = S.records, dist = S.xMode==='dist';
+  let lo=0, hi=recs.length-1;
+  while (lo<hi){ const mid=(lo+hi)>>1; if ((dist?recs[mid].dist:recs[mid].elapsed)<x) lo=mid+1; else hi=mid; }
+  if (lo>0){
+    const a = dist?recs[lo-1].dist:recs[lo-1].elapsed, b = dist?recs[lo].dist:recs[lo].elapsed;
+    if (x-a < b-x) lo--;
+  }
+  return lo;
+}
+// where the seek bar currently sits, in data units: the value it was last
+// scrolled to if nothing has moved it since (it may be off-centre near the
+// ends), otherwise the centre of the visible window
+function currentScrollCenter(){
+  const xs = S.chartView;
+  if (scrollState && S.selection && scrollState.idx===S.selection.idx && scrollState.min===xs.min && scrollState.max===xs.max) return scrollState.c;
+  return (xs.min+xs.max)/2;
+}
+function scrollCenterTo(c){
+  const xs = S.chartView;
+  const lo = xVal(S.records[0]), hi = xVal(S.records[S.records.length-1]);
+  c = Math.max(lo, Math.min(hi, c));
+  const span = xs.max-xs.min;
+  xs.min = Math.max(lo, Math.min(hi-span, c-span/2));
+  xs.max = xs.min+span;
+  const idx = nearestIndexByX(c);
+  scrollSeeking = true;
+  if (!S.selection || S.selection.idx!==idx) setSelection(idx, null, 'chart'); // redraws chart + timeline, recentres the map
+  else { redrawChart(); renderTimeline(); }
+  scrollState = {c, min:xs.min, max:xs.max, idx};
+}
+function endScrollSeeking(){
+  if (!scrollSeeking) return;
+  scrollSeeking = false;
+  if (S.hasGps && S.mapView) renderMapFrame(); // catch the map up once the scroll is over
+}
+// Shared momentum engine — used by both the chart's own drag and the
+// timeline's pan gesture, since both just scroll the same view.
 let momentumRAF = null;
 function stopMomentum(){ if (momentumRAF!=null){ cancelAnimationFrame(momentumRAF); momentumRAF=null; } }
 function startMomentum(v0, canvasWidth){
   if (!S.chartView || !canvasWidth) return;
   stopMomentum();
-  let v = v0, lastT = null;
-  function finish(){ momentumRAF=null; chartIsPanning=false; redrawChart(); }
+  let v = v0, lastT = null, c = currentScrollCenter();
+  function finish(){ momentumRAF=null; endScrollSeeking(); redrawChart(); }
   function step(t){
     // The first frame's rAF timestamp is the frame's start time, which is
     // often equal to or even earlier than the performance.now() taken at
-    // release. The old code used that as dt: a 0ms step shifted nothing,
-    // which the "min didn't change → hit the edge" check below read as an
-    // edge and killed the glide at step 1 (the "step 1, gap 0ms" failures),
-    // and a negative one nudged the view backwards. Use one nominal frame
-    // for the first step and never a non-positive dt.
+    // release. Use one nominal frame for the first step and never a
+    // non-positive dt (a 0ms step used to read as "hit the edge").
     const rawDt = lastT==null ? 16 : t-lastT;
     lastT = t;
     if (rawDt <= 0){ momentumRAF = requestAnimationFrame(step); return; }
@@ -1053,11 +1096,12 @@ function startMomentum(v0, canvasWidth){
     if (Math.abs(v) < MOMENTUM_STOP_THRESHOLD){ finish(); return; }
     const xs = S.chartView;
     const lo = xVal(S.records[0]), hi = xVal(S.records[S.records.length-1]);
-    // already pinned against the edge we're gliding toward — stop cleanly
-    if ((v>0 && xs.min<=lo) || (v<0 && xs.max>=hi)){ finish(); return; }
+    // the seek bar already reached the end we're gliding toward — stop cleanly
+    if ((v>0 && c<=lo) || (v<0 && c>=hi)){ finish(); return; }
     const shiftPerPixel = (xs.max-xs.min) / canvasWidth;
-    const shift = -v*dt*shiftPerPixel;
-    clampAndSetX(xs.min+shift, xs.max+shift);
+    c -= v*dt*shiftPerPixel;
+    scrollCenterTo(c);
+    c = scrollState.c; // clamped
     momentumRAF = requestAnimationFrame(step);
   }
   momentumRAF = requestAnimationFrame(step);
@@ -1088,6 +1132,7 @@ function showPage(n){
   $$('.page').forEach(p=> p.classList.add('hidden'));
   $('#page'+n).classList.remove('hidden');
   document.querySelector('.wrap').classList.toggle('p2Active', n===2);
+  document.documentElement.classList.toggle('noPageZoom', n===2);
   window.scrollTo(0,0);
   if (n===2 && S.records.length){
     // the map/chart containers are display:none until this page is shown, so
@@ -1107,6 +1152,15 @@ function showPage(n){
   }
 }
 $('#appVersionLabel').textContent = 'v'+APP_VERSION;
+// page 2 only: block the browser's own pinch-zoom of the whole page. iOS
+// Safari fires its proprietary gesture* events for it and ignores
+// user-scalable=no, so cancel those; the multi-touch touchmove guard covers
+// other browsers. (The chart's and timeline's own two-finger zoom runs on
+// their own listeners and is unaffected.)
+['gesturestart','gesturechange','gestureend'].forEach(ev=>{
+  document.addEventListener(ev, e=>{ if (currentPageNum===2) e.preventDefault(); }, {passive:false});
+});
+document.addEventListener('touchmove', e=>{ if (currentPageNum===2 && e.touches.length>1) e.preventDefault(); }, {passive:false});
 $('#toPage2Btn').addEventListener('click', ()=>{ showPage(2); });
 attachTimelinePan();
 
@@ -2200,7 +2254,7 @@ function computeXTicks(view, widthPx){
 // per tick, pooled and updated in place (no innerHTML), and redrawn
 // synchronously with the canvas so labels never lag a frame behind the
 // gridlines they belong to.
-function renderXAxisLabels(view, ticks){
+function renderXAxisLabels(view, ticks, W){
   const el = $('#xAxisLabels');
   if (!el) return;
   const span = view.max-view.min;
@@ -2213,8 +2267,8 @@ function renderXAxisLabels(view, ticks){
   }
   pool.forEach((p,i)=>{
     if (i>=ticks.length){ if (p.shown){ p.line.style.display = p.lab.style.display = 'none'; p.shown=false; } return; }
-    const pct = (ticks[i].v-view.min)/span*100;
-    p.line.style.left = pct+'%'; p.lab.style.left = pct+'%';
+    const x = Math.round((ticks[i].v-view.min)/span*W); // same snapping as the chart canvas and the timeline
+    p.line.style.left = x+'px'; p.lab.style.left = x+'px';
     if (!p.shown){ p.line.style.display = p.lab.style.display = ''; p.shown=true; }
     if (p.text!==ticks[i].label){ p.lab.textContent = ticks[i].label; p.text = ticks[i].label; }
   });
@@ -2224,7 +2278,7 @@ function redrawChart(){
   if (!canvas || !S.chartView || !S.records.length) return;
   const {ctx, w, h} = chartCanvasSetup(canvas);
   ctx.clearRect(0,0,w,h);
-  const padTop = 16, padBottom = 2;
+  const padTop = 16, padBottom = 0; // no bottom gap: the gridlines run on unbroken into the label strip and timeline
   const plotTop = padTop, plotBottom = Math.max(padTop+10, h-padBottom);
   const plotLeft = 0, plotRight = w; // spans the canvas's full width — exactly matches the timeline below
   const view = S.chartView;
@@ -2286,20 +2340,10 @@ function redrawChart(){
     ctx.textBaseline = 'alphabetic';
     const titleX = position==='left' ? plotLeft : plotRight;
     ctx.fillText(meta.label, titleX, plotTop-6);
-    ctx.font = '600 10px sans-serif';
-    ctx.textBaseline = 'middle';
-    const INSET = 4;
-    const valueX = position==='left' ? plotLeft+INSET : plotRight-INSET;
-    for (let k=0;k<=4;k++){
-      const v = range.min + (range.max-range.min)*k/4;
-      const y = yPx(v);
-      if (y<plotTop-2 || y>plotBottom+2) continue;
-      ctx.fillText(String(Math.round(v)), valueX, y);
-    }
     ctx.restore();
   });
 
-  renderXAxisLabels(view, xTicks);
+  renderXAxisLabels(view, xTicks, w);
 
   // dashed selection line
   if (S.selection && !chartIsPanning){
@@ -2307,7 +2351,7 @@ function redrawChart(){
     if (rec){
       const xv = xVal(rec);
       if (xv>=view.min && xv<=view.max){
-        const px = xPx(xv);
+        const px = Math.round(xPx(xv)); // whole pixel: matches the timeline's seek bar column exactly
         ctx.save();
         ctx.strokeStyle = cssVar('--power');
         ctx.lineWidth = 2;
@@ -2379,7 +2423,7 @@ function attachChartZoom(){
     return view.min + (px/(rect.width||1))*(view.max-view.min);
   }
 
-  let dragging=false, startX=0, lastX=0, moved=false, dragStartXs=null, panStart=null, pinchDist=null;
+  let dragging=false, startX=0, lastX=0, moved=false, dragStartC=0, pinchDist=null;
   const activeChartPointers = new Set();
   let longPressTimer = null, longPressFired = false;
   let lastPressX = 0, lastPressY = 0;
@@ -2424,10 +2468,10 @@ function attachChartZoom(){
   canvas.addEventListener('pointerdown', e=>{
     activeChartPointers.add(e.pointerId);
     if (activeChartPointers.size > 1){ dragging=false; chartIsPanning=false; seekDragActive=false; stopEdgeScroll(); clearTimeout(longPressTimer); if (S.chartView) redrawChart(); return; }
-    stopMomentum();
+    stopMomentum(); endScrollSeeking();
     const rect = canvas.getBoundingClientRect();
     startX = e.clientX-rect.left; lastX=startX; moved=false; dragging=true; longPressFired=false; chartIsPanning=false;
-    dragStartXs = {min:S.chartView.min, max:S.chartView.max};
+    dragStartC = currentScrollCenter();
     lastMoveTime = performance.now(); lastMoveX = startX; velocityX = 0;
     chartVelocity.reset(startX, e.timeStamp || performance.now());
     canvas.setPointerCapture(e.pointerId);
@@ -2460,17 +2504,14 @@ function attachChartZoom(){
     // cancelling a pending long-press — but that delay was exactly the
     // dead zone making every pan/flick on the chart feel laggy compared to
     // the map, which has no such delay at all.
-    if (Math.abs(curX-startX)>3 && !moved){ moved=true; chartIsPanning=true; }
+    if (Math.abs(curX-startX)>3 && !moved){ moved=true; }
     if (!moved || longPressFired) return;
     lastMoveTime=now; lastMoveX=curX;
-    // pan live by the same pixel distance dragged, converted to data units at
-    // the scale the drag started with (not the live-updating one, so panning
-    // stays linear with the finger instead of accelerating/drifting)
+    // scroll live by the same pixel distance dragged (the seek bar follows
+    // the centre of the screen — see scrollCenterTo)
     const totalDx = curX - startX;
-    const range = dragStartXs.max - dragStartXs.min;
-    const shiftPerPixel = range / (rect.width || 1);
-    const shift = -totalDx * shiftPerPixel;
-    clampAndSetX(dragStartXs.min + shift, dragStartXs.max + shift);
+    const range = S.chartView.max - S.chartView.min;
+    scrollCenterTo(dragStartC - totalDx * range / (rect.width || 1));
   });
   canvas.addEventListener('pointerup', e=>{
     clearTimeout(longPressTimer);
@@ -2488,6 +2529,7 @@ function attachChartZoom(){
       // if a pan really was in progress and everything's now lifted, don't
       // leave the selection marker stuck hidden
       if (chartIsPanning && activeChartPointers.size===0){ chartIsPanning=false; if (S.chartView) redrawChart(); }
+      endScrollSeeking();
       return;
     }
     const finalVelocity = chartVelocity.velocity(e.timeStamp || performance.now());
@@ -2516,10 +2558,11 @@ function attachChartZoom(){
       startMomentum(finalVelocity, canvas.getBoundingClientRect().width);
     } else {
       chartIsPanning = false;
+      endScrollSeeking();
       redrawChart();
     }
   });
-  canvas.addEventListener('pointercancel', e=>{ clearTimeout(longPressTimer); activeChartPointers.delete(e.pointerId); dragging=false; chartIsPanning=false; seekDragActive=false; stopEdgeScroll(); stopMomentum(); if (S.chartView) redrawChart(); });
+  canvas.addEventListener('pointercancel', e=>{ clearTimeout(longPressTimer); activeChartPointers.delete(e.pointerId); dragging=false; chartIsPanning=false; seekDragActive=false; stopEdgeScroll(); stopMomentum(); endScrollSeeking(); if (S.chartView) redrawChart(); });
   // helper: zoom operations center on the currently selected point (if any)
   // instead of the cursor/midpoint, so zooming keeps the highlighted point in view.
   function zoomCenterX(fallback){
@@ -2732,7 +2775,7 @@ function setSelection(idx, clientPos, source){
     const [wx, wy] = lonLatToWorld(rec.lon, rec.lat, S.mapView.zoom);
     S.mapView.cx = wx; S.mapView.cy = wy;
   }
-  if (S.hasGps && S.mapView){ if (seekDragActive) renderMapFrameThrottled(); else renderMapFrame(); }
+  if (S.hasGps && S.mapView){ if (seekDragActive || scrollSeeking) renderMapFrameThrottled(); else renderMapFrame(); }
 
   // map click (or explicit jump/step) -> recentre the graph on that point (same visible width)
   if ((source==='map' || source==='both') && S.chartView){
@@ -3055,14 +3098,14 @@ function attachTimelinePan(){
   // gesture itself). Captured pointers are always delivered to `scroll`,
   // whatever happens to the DOM underneath.
   const pointers = new Map(); // pointerId -> clientX/clientY
-  let startX=0, dragging=false, moved=false, dragStartXs=null, lastWidth=0, panPointerId=null;
+  let startX=0, dragging=false, moved=false, dragStartC=0, lastWidth=0, panPointerId=null, noTap=false;
   let pinch = null;
   const tlVelocity = createVelocityTracker();
   function beginPan(id, clientX, t){
     const rect = scroll.getBoundingClientRect();
     panPointerId = id; dragging = true; lastWidth = rect.width;
     startX = clientX-rect.left;
-    dragStartXs = {min:S.chartView.min, max:S.chartView.max};
+    dragStartC = currentScrollCenter();
     tlVelocity.reset(startX, t);
   }
   function beginPinch(){
@@ -3095,16 +3138,16 @@ function attachTimelinePan(){
   }
   scroll.addEventListener('pointerdown', e=>{
     if (e.target.closest('.tlClipHandle') || !S.chartView) return; // edge handles run their own drag gesture
-    stopMomentum();
+    stopMomentum(); endScrollSeeking();
     pointers.set(e.pointerId, {x:e.clientX, y:e.clientY});
     try{ scroll.setPointerCapture(e.pointerId); }catch(err){}
     if (pointers.size===1){
-      moved = false;
+      moved = false; noTap = false;
       beginPan(e.pointerId, e.clientX, e.timeStamp || performance.now());
     } else if (pointers.size===2){
       // a second finger means this is a pinch, not a pan
       dragging = false; panPointerId = null;
-      if (moved) suppressNextTimelineTap = true;
+      noTap = true; // a pinch is never a tap, even if one finger stays down afterwards
       moved = false;
       beginPinch();
     }
@@ -3116,7 +3159,7 @@ function attachTimelinePan(){
       if (pointers.size>=2 && S.chartView) updatePinch();
       return;
     }
-    if (!dragging || !dragStartXs || e.pointerId!==panPointerId) return;
+    if (!dragging || e.pointerId!==panPointerId) return;
     const rect = scroll.getBoundingClientRect();
     const curX = e.clientX-rect.left;
     // sample velocity from the very start of the gesture (not gated by the
@@ -3130,10 +3173,8 @@ function attachTimelinePan(){
     if (Math.abs(curX-startX)>3) moved=true;
     if (!moved) return;
     const totalDx = curX-startX;
-    const range = dragStartXs.max-dragStartXs.min;
-    const shiftPerPixel = range/(rect.width||1);
-    const shift = -totalDx*shiftPerPixel;
-    clampAndSetX(dragStartXs.min+shift, dragStartXs.max+shift);
+    const range = S.chartView.max-S.chartView.min;
+    scrollCenterTo(dragStartC - totalDx*range/(rect.width||1));
   });
   const endPointer = e=>{
     if (!pointers.has(e.pointerId)) return;
@@ -3153,9 +3194,18 @@ function attachTimelinePan(){
     if (e.pointerId!==panPointerId) return;
     dragging = false; panPointerId = null;
     if (moved){
-      suppressNextTimelineTap = true; // a real pan just happened — don't also treat the release as a seek-tap
       const v = e.type==='pointercancel' ? 0 : tlVelocity.velocity(e.timeStamp || performance.now());
       if (Math.abs(v) > MOMENTUM_TRIGGER_THRESHOLD) startMomentum(v, lastWidth);
+      else endScrollSeeking();
+    } else if (e.type==='pointerup' && !noTap){
+      // A tap is resolved here, from the pointer's own release, rather than
+      // from a 'click' on whatever element was under the finger: the pointer
+      // is captured by #timelineScroll and renderTimeline() keeps replacing
+      // the clip/track elements, so click events were unreliable — and the
+      // old "swallow the next click after a pan" flag was left set whenever
+      // no click followed, which ate the next real tap (the "two taps to
+      // move the seek bar" bug).
+      handleTimelineTap(e);
     }
     moved=false;
   };
@@ -3166,7 +3216,6 @@ function attachTimelinePan(){
   // turn into a page zoom
   scroll.addEventListener('touchmove', e=>{ if (e.touches.length>=2) e.preventDefault(); }, {passive:false});
 }
-let suppressNextTimelineTap = false;
 // The timeline's own visible window — always the same elapsed-time range
 // the chart above is currently showing, so pinch-zooming/panning the chart
 // moves the timeline in lockstep, rather than the timeline always showing
@@ -3215,46 +3264,53 @@ function renderTimeline(){
       // extent and the container's overflow:hidden crops it, so the edge
       // handles stay at the real start/end and only show once those edges
       // scroll into view
-      const x0 = (iv.start-t0)/span*100, x1 = (iv.end-t0)/span*100;
+      const x0 = (iv.start-t0)/span, x1 = (iv.end-t0)/span; // fractions of the width
       const isActive = !!(activeIv && activeIv.id===iv.id);
       const label = numberPrefix(idx+1)+intervalDisplayName(iv, idx);
-      clips.push({ti, iv, left:x0, width:Math.max(0.6,x1-x0), isActive, label});
+      clips.push({ti, iv, f0:x0, f1:x1, isActive, label});
     });
   });
-  const W = scroll.clientWidth, H = scroll.clientHeight;
+  // All x positions are whole pixels in one shared pixel space (the same
+  // integer width the chart canvas uses), so a gridline or the seek bar lands
+  // on exactly the same pixel column in the chart, the label strip and here.
+  const W = Math.round(scroll.getBoundingClientRect().width), H = scroll.clientHeight;
+  const xOf = f => Math.round(f*W);
   const HANDLE_PX = 18;
-  // keep each clip's name centred in its VISIBLE part: pad by the width that
-  // is scrolled out of view on either side
   clips.forEach(c=>{
-    c.padL = HANDLE_PX + Math.max(0, -c.left/100*W);
-    c.padR = HANDLE_PX + Math.max(0, (c.left+c.width-100)/100*W);
+    c.L = xOf(c.f0); c.R = Math.max(c.L+4, xOf(c.f1));
+    c.name = tlNameGeometry(c, W, HANDLE_PX);
   });
   const seekVisible = seekT>=t0 && seekT<=t1;
-  const seekX = (seekT-t0)/span*100;
-  // Fast path: while panning/pinching (or a momentum glide), only positions
-  // change — the same clips stay visible on the same tracks with the same
-  // labels. Rebuilding everything via innerHTML each frame was costly AND
-  // replaced the very elements the fingers were touching; instead just move
-  // the existing ones.
+  const seekPx = xOf((seekT-t0)/span);
+  const placeClips = ()=>{
+    const els = tracksWrap.querySelectorAll('.tlClip');
+    clips.forEach((c,i)=>{
+      const st = els[i].style;
+      st.left = c.L+'px'; st.width = (c.R-c.L)+'px';
+      const nm = els[i].querySelector('.tlClipName');
+      if (!c.name){ nm.style.display = 'none'; return; }
+      nm.style.display = '';
+      nm.style.left = (c.name.left-c.L-1.5)+'px'; nm.style.width = c.name.width+'px';
+    });
+    const seekLine = tracksWrap.querySelector('.tlSeekLine');
+    if (seekLine) seekLine.style.left = (seekPx-1)+'px';
+  };
+  // Fast path: while scrolling (or gliding), only positions change — the
+  // same clips stay visible on the same tracks with the same labels.
+  // Rebuilding everything via innerHTML each frame was costly, so just move
+  // the existing elements.
   const structKey = trackCount+'|'+(seekVisible?1:0)+'|'+clips.map(c=>c.ti+':'+c.iv.id+':'+(c.isActive?1:0)+':'+c.label).join('\u0001');
   const existingClips = tracksWrap.querySelectorAll('.tlClip');
   if (structKey===timelineStructKey && existingClips.length===clips.length){
-    clips.forEach((c,i)=>{
-      const st = existingClips[i].style;
-      st.left = c.left+'%'; st.width = c.width+'%';
-      const nm = existingClips[i].querySelector('.tlClipName').style;
-      nm.paddingLeft = c.padL+'px'; nm.paddingRight = c.padR+'px';
-    });
-    const seekLine = tracksWrap.querySelector('.tlSeekLine');
-    if (seekLine) seekLine.style.left = seekX+'%';
+    placeClips();
   } else {
     let html = '';
     for (let ti=0; ti<trackCount; ti++){
       html += '<div class="tlTrack" data-track="'+ti+'" style="top:'+(ti*trackHeightPct)+'%; height:'+trackHeightPct+'%;">';
       clips.filter(c=>c.ti===ti).forEach(c=>{
         const iv = c.iv;
-        html += '<div class="tlClip'+(c.isActive?' tlHighlight':' tlLocked')+'" data-id="'+iv.id+'" style="left:'+c.left+'%; width:'+c.width+'%;">'+
-          '<div class="tlClipName" data-id="'+iv.id+'" style="padding-left:'+c.padL+'px; padding-right:'+c.padR+'px;">'+escapeHtml(c.label)+'</div>'+
+        html += '<div class="tlClip'+(c.isActive?' tlHighlight':' tlLocked')+'" data-id="'+iv.id+'">'+
+          '<div class="tlClipName" data-id="'+iv.id+'">'+escapeHtml(c.label)+'</div>'+
           '<div class="tlClipHandle" data-edge="start" data-id="'+iv.id+'">◀</div>'+
           '<div class="tlClipHandle" data-edge="end" data-id="'+iv.id+'">▶</div>'+
         '</div>';
@@ -3265,21 +3321,46 @@ function renderTimeline(){
     if (seekVisible){
       const seekLine = document.createElement('div');
       seekLine.className = 'tlSeekLine';
-      seekLine.style.left = seekX+'%';
       tracksWrap.appendChild(seekLine);
     }
     timelineStructKey = structKey;
     wireTimelineEvents();
+    placeClips();
   }
   drawTimelineCanvases(clips, W, H, t0, span, trackCount);
   validateIntervals();
   saveStateIfChanged();
 }
 let timelineStructKey = null;
+// Where a clip's name goes. It is centred in the part of the clip that is
+// on screen, but never leaves the clip itself: when the clip's start or end
+// scrolls into view the name stays attached to the clip (between the two
+// edge handles) and slides off the screen edge with it, cropped rather than
+// squeezed. A clip too narrow for its name gets the whole inner area (and an
+// ellipsis).
+let tlMeasureCtx = null, tlMeasureCache = {};
+function tlTextWidth(text){
+  if (!tlMeasureCtx){
+    tlMeasureCtx = document.createElement('canvas').getContext('2d');
+    tlMeasureCtx.font = '700 10.5px '+(getComputedStyle(document.body).fontFamily||'sans-serif');
+  }
+  return tlMeasureCache[text] || (tlMeasureCache[text] = tlMeasureCtx.measureText(text).width);
+}
+function tlNameGeometry(c, W, pad){
+  const innerL = c.L+pad, innerR = c.R-pad, innerW = innerR-innerL;
+  if (innerW<8) return null;
+  const tw = tlTextWidth(c.label)+8;
+  if (tw>=innerW) return {left:innerL, width:innerW};
+  const vl = Math.max(innerL, 0), vr = Math.min(innerR, W);
+  const cx = vr>vl ? (vl+vr)/2 : (innerL+innerR)/2;
+  const left = Math.max(innerL, Math.min(innerR-tw, cx-tw/2));
+  return {left, width:tw};
+}
 function tlCanvasSetup(canvas, W, H){
   const dpr = window.devicePixelRatio || 1;
   const pw = Math.round(W*dpr), ph = Math.round(H*dpr);
   if (canvas.width!==pw || canvas.height!==ph){ canvas.width = pw; canvas.height = ph; }
+  canvas.style.width = W+'px'; canvas.style.height = H+'px';
   const ctx = canvas.getContext('2d');
   ctx.setTransform(dpr,0,0,dpr,0,0);
   ctx.clearRect(0,0,W,H);
@@ -3334,7 +3415,7 @@ function drawTimelineCanvases(clips, W, H, t0, span, trackCount){
   const trackH = H/trackCount;
   const COL = 2; // px per sample column
   clips.forEach(c=>{
-    const xa = Math.max(0, c.left/100*W), xb = Math.min(W, (c.left+c.width)/100*W);
+    const xa = Math.max(0, c.L), xb = Math.min(W, c.R);
     if (xb-xa<2) return;
     const yTop = c.ti*trackH + 5, yBot = (c.ti+1)*trackH - 5;
     if (yBot-yTop<6) return;
@@ -3363,34 +3444,32 @@ function drawTimelineCanvases(clips, W, H, t0, span, trackCount){
     ctx.fill();
   });
 }
+function onClipTap(id){
+  const wasHighlighted = getActiveInterval() && getActiveInterval().id===id;
+  S.timelineSelectedId = id;
+  if (wasHighlighted){
+    const iv = S.intervals.find(x=>x.id===id);
+    if (iv) openRenameModal(iv);
+  } else {
+    renderTimeline();
+  }
+}
+function handleTimelineTap(e){
+  const scroll = $('#timelineScroll');
+  const el = document.elementFromPoint(e.clientX, e.clientY);
+  if (el && el.closest('.tlClipHandle')) return; // handles are for dragging (the highlighted clip's), not tapping
+  const clipEl = el && el.closest('.tlClip');
+  if (clipEl){ onClipTap(Number(clipEl.dataset.id)); return; }
+  const rect = scroll.getBoundingClientRect();
+  const {t0, t1} = getTimelineTimeRange();
+  const span = Math.max(1, t1-t0);
+  const frac = Math.max(0, Math.min(1, (e.clientX-rect.left)/rect.width));
+  const rec = nearestRecordByElapsed(t0+frac*span);
+  if (rec) setSelection(S.records.indexOf(rec), null, 'chart'); // like a chart tap: recentres the map, doesn't force-pan the chart itself
+}
 function wireTimelineEvents(){
-  $$('#timelineTracks .tlClipName').forEach(el=>{
-    el.addEventListener('click', ()=>{
-      const id = Number(el.dataset.id);
-      const wasHighlighted = getActiveInterval() && getActiveInterval().id===id;
-      S.timelineSelectedId = id;
-      if (wasHighlighted){
-        const iv = S.intervals.find(x=>x.id===id);
-        if (iv) openRenameModal(iv);
-      } else {
-        renderTimeline();
-      }
-    });
-  });
   $$('#timelineTracks .tlClipHandle').forEach(el=>{
     el.addEventListener('pointerdown', onClipHandleDown);
-  });
-  $$('#timelineTracks .tlTrack').forEach(el=>{
-    el.addEventListener('click', e=>{
-      if (suppressNextTimelineTap){ suppressNextTimelineTap=false; return; }
-      if (e.target.closest('.tlClip')) return; // clip taps are handled above
-      const rect = el.getBoundingClientRect();
-      const {t0, t1} = getTimelineTimeRange();
-      const span = Math.max(1, t1-t0);
-      const frac = Math.max(0, Math.min(1, (e.clientX-rect.left)/rect.width));
-      const rec = nearestRecordByElapsed(t0+frac*span);
-      if (rec) setSelection(S.records.indexOf(rec), null, 'chart'); // like a chart tap: recentres the map, doesn't force-pan the chart itself
-    });
   });
 }
 let boundaryDrag = null;
