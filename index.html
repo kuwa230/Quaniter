@@ -201,23 +201,37 @@ td.num{ text-align:right; font-variant-numeric:tabular-nums; }
 /* the shared x-axis time strip — sits between the chart and the timeline
    tracks, doubling as the x-axis mode switch button (tap to change
    clock/elapsed/distance), replacing the old axisBottomBtn overlay */
-#xAxisLabels{ flex:none; height:18px; position:relative; width:100%; border:none; padding:0;
-  background:transparent; border-top:1px solid var(--border); border-bottom:1px solid var(--border); }
+#xAxisLabels{ flex:none; height:18px; position:relative; width:100%; border:none; padding:0; overflow:hidden;
+  background:transparent; }
+/* tick marks + labels scroll with the chart: each tick is a 1px line (the
+   chart's vertical gridline continued through this strip) with its label to
+   its right; labels run off the edge as the tick scrolls out of view */
+#xAxisLabels .xTickLine{ position:absolute; top:0; bottom:0; width:1px; background:var(--border); pointer-events:none; }
+#xAxisLabels .xTickLabel{ position:absolute; top:50%; transform:translateY(-50%); padding-left:3px; font-size:10px;
+  color:var(--text-faint); white-space:nowrap; pointer-events:none; }
 #p2SeekCtrl{ flex:1 1 0; display:flex; align-items:center; }
 #p2SeekCtrl .chart-toolbar{ width:100%; }
 #timelineScroll{ flex:1 1 0; min-height:0; overflow:hidden; position:relative;
   touch-action:none; -webkit-touch-callout:none; -webkit-user-select:none; user-select:none; } /* this page has no vertical scroll by design — the browser must never claim a swipe here as a page-scroll attempt */
-#timelineTracks{ position:relative; height:100%; }
+#timelineTracks{ position:relative; height:100%; z-index:1; }
+/* canvases behind (gridlines) and in front of (heart-rate fill) the clips */
+#tlGridCanvas, #tlHrCanvas{ position:absolute; left:0; top:0; width:100%; height:100%; pointer-events:none; }
+#tlGridCanvas{ z-index:0; }
+#tlHrCanvas{ z-index:2; }
 .tlTrack{ position:absolute; left:0; right:0; border-bottom:1px solid var(--border); box-sizing:border-box; }
 .tlSeekLine{ position:absolute; top:0; bottom:0; width:2px; background:#e08a1e; z-index:5; pointer-events:none; }
-.tlClip{ position:absolute; top:2px; bottom:2px; display:flex; align-items:stretch; border-radius:5px;
+.tlClip{ position:absolute; top:2px; bottom:2px; display:flex; align-items:stretch; border-radius:5px; box-sizing:border-box;
   background:var(--accent); opacity:.4; border:1.5px solid var(--accent); overflow:hidden; touch-action:none; }
 .tlClip.tlHighlight{ opacity:1; box-shadow:0 0 0 2px #08211d inset; }
 .tlClip.tlLocked .tlClipHandle{ opacity:.35; } /* only the highlighted clip's edges are editable */
-.tlClipHandle{ flex:none; width:16px; display:flex; align-items:center; justify-content:center; font-size:10px;
+/* handles sit at the clip's real start/end, so they only appear once that
+   edge scrolls into view (the clip itself extends past the visible window) */
+.tlClipHandle{ position:absolute; top:0; bottom:0; width:16px; display:flex; align-items:center; justify-content:center; font-size:10px;
   font-weight:700; color:#08211d; background:rgba(255,255,255,.35); touch-action:none; }
 .tlClipName{ flex:1 1 0; min-width:0; display:flex; align-items:center; justify-content:center; font-size:10.5px;
   font-weight:700; color:#08211d; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; padding:0 2px; }
+.tlClipHandle[data-edge="start"]{ left:0; }
+.tlClipHandle[data-edge="end"]{ right:0; }
 #p2Confirm{ flex:1 1 0; display:flex; align-items:stretch; gap:6px; }
 #p2Confirm .halfBtn{ flex:1; margin:0; }
 #backToPage1Btn{ background:var(--surface-2); color:var(--text); border:1px solid var(--border); }
@@ -397,7 +411,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
         <div id="axisPicker" class="axisPicker hidden"></div>
       </div>
       <button id="xAxisLabels" type="button" title="横軸を切り替え"></button>
-      <div id="timelineScroll"><div id="timelineTracks"></div></div>
+      <div id="timelineScroll"><canvas id="tlGridCanvas"></canvas><div id="timelineTracks"></div><canvas id="tlHrCanvas"></canvas></div>
       <div class="msg err hidden" id="intervalErr"></div>
     </div>
     <div id="p2SeekCtrl" class="p2Block">
@@ -498,7 +512,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
 // (this session's own publish count so far) is reconstructed from the
 // conversation itself rather than mechanically verified — best-effort, not
 // guaranteed exact. Increment by exactly 1 on every future publish.
-const APP_VERSION = 141;
+const APP_VERSION = 142;
 
 /* ============ FIT PARSER ============ */
 const FIT_EPOCH = 631065600; // seconds between 1970-01-01 and 1989-12-31 (FIT epoch)
@@ -944,10 +958,13 @@ let seekDragActive = false;
 //    roughly 3x faster-decaying than the iOS constant, which is very
 //    likely why momentum felt weaker/shorter than the map's even after
 //    the two were made to use the same formula shape).
-const MOMENTUM_DECELERATION = 0.998;
+// Tightened from iOS's 0.998 ("normal") to stop sooner: 0.996/ms leaves
+// ~1.8% of the speed after 1s (vs ~13.5%) and roughly halves the glide
+// distance (≈ v × 250ms instead of v × 500ms).
+const MOMENTUM_DECELERATION = 0.996;
 // must stay below MOMENTUM_TRIGGER_THRESHOLD, otherwise a flick between the
 // two values passes the trigger check and then dies on the very first step
-const MOMENTUM_STOP_THRESHOLD = 0.005;
+const MOMENTUM_STOP_THRESHOLD = 0.01;
 // Text-reported results confirmed the render loop itself has no stall —
 // once triggered, momentum ran 120-170 steps at a rock-steady 17ms each.
 // "step 1, gap 0ms" on failed attempts just means the very first check
@@ -1015,27 +1032,10 @@ function createVelocityTracker(){
 // both ultimately just shift the same S.chartView range.
 let momentumRAF = null;
 function stopMomentum(){ if (momentumRAF!=null){ cancelAnimationFrame(momentumRAF); momentumRAF=null; } }
-// Temporary on-screen diagnostic: frame analysis of a real recording found
-// a genuine ~930ms complete freeze mid-glide (identical pixels across ~28
-// consecutive frames), not just uneven pacing — long enough that it's very
-// likely something is actually blocking the main thread, not just a
-// physics-tuning issue. This shows the real (uncapped) gap between
-// consecutive momentum steps live, so the next recording can show exactly
-// when and how long a stall is, pinpointing the cause instead of guessing.
-function showMomentumDebugOverlay(text){
-  let el = document.getElementById('momentumDebugOverlay');
-  if (!el){
-    el = document.createElement('div');
-    el.id = 'momentumDebugOverlay';
-    el.style.cssText = 'position:fixed; bottom:60px; left:4px; z-index:999; background:rgba(0,0,0,.65); color:#fff; font-size:10px; padding:3px 6px; border-radius:5px; pointer-events:none; font-family:monospace;';
-    document.body.appendChild(el);
-  }
-  el.textContent = text;
-}
 function startMomentum(v0, canvasWidth){
   if (!S.chartView || !canvasWidth) return;
   stopMomentum();
-  let v = v0, lastT = null, stepCount = 0;
+  let v = v0, lastT = null;
   function finish(){ momentumRAF=null; chartIsPanning=false; redrawChart(); }
   function step(t){
     // The first frame's rAF timestamp is the frame's start time, which is
@@ -1047,8 +1047,6 @@ function startMomentum(v0, canvasWidth){
     // for the first step and never a non-positive dt.
     const rawDt = lastT==null ? 16 : t-lastT;
     lastT = t;
-    stepCount++;
-    showMomentumDebugOverlay('momentum step '+stepCount+': gap='+rawDt.toFixed(0)+'ms'+(rawDt>100?' ← STALL':''));
     if (rawDt <= 0){ momentumRAF = requestAnimationFrame(step); return; }
     const dt = Math.min(48, rawDt);
     v *= Math.pow(MOMENTUM_DECELERATION, dt);
@@ -2158,32 +2156,68 @@ function chartCanvasSetup(canvas){
 // and naturally coalesces rapid repeated calls into one DOM update per
 // frame at most — the label text itself doesn't need per-frame precision,
 // unlike the chart line, which still redraws every call as before.
-let xAxisLabelsQueued = false, xAxisLabelsPending = null;
-function renderXAxisLabelsThrottled(view, span){
-  xAxisLabelsPending = {min:view.min, max:view.max, span};
-  if (xAxisLabelsQueued) return;
-  xAxisLabelsQueued = true;
-  requestAnimationFrame(()=>{
-    xAxisLabelsQueued = false;
-    if (xAxisLabelsPending) renderXAxisLabels(xAxisLabelsPending, xAxisLabelsPending.span);
-  });
+// Round-number x ticks for the visible window [view.min, view.max], shared
+// by the chart's vertical gridlines, the label strip and the timeline's
+// gridlines. Ticks sit at fixed data values (multiples of a "nice" step), so
+// they scroll along with the data instead of staying at fixed screen
+// positions; the step only changes with zoom. A tick up to ~one label width
+// before the left edge is included so its label can slide out smoothly.
+const TICK_TIME_STEPS = [1,2,5,10,15,30,60,120,300,600,900,1800,3600,7200,10800,21600,43200,86400];
+const TICK_DIST_STEPS = [10,20,50,100,200,500,1000,2000,5000,10000,20000,50000,100000,200000,500000];
+const TICK_MIN_PX = 64; // spacing needed for a label such as "12:34:56"
+function computeXTicks(view, widthPx){
+  const span = view.max-view.min;
+  if (!(span>0) || !(widthPx>0)) return [];
+  const dist = S.xMode==='dist', clock = S.xMode==='clock';
+  const steps = dist ? TICK_DIST_STEPS : TICK_TIME_STEPS;
+  let step = steps[steps.length-1];
+  for (const st of steps){ if (st/span*widthPx >= TICK_MIN_PX){ step = st; break; } }
+  const vLo = view.min - span*(TICK_MIN_PX/widthPx), vHi = view.max;
+  // clock ticks align to local wall-clock multiples of the step
+  let base = 0;
+  if (clock){
+    const t0 = S.records[0].t;
+    const d = new Date(t0*1000); d.setHours(0,0,0,0);
+    base = Math.floor(d.getTime()/1000) - t0; // elapsed value of local midnight
+  }
+  const ticks = [];
+  const first = Math.ceil((vLo-base)/step);
+  for (let k=first; ticks.length<200; k++){
+    const v = base + k*step;
+    if (v>vHi) break;
+    let label;
+    if (dist){
+      const km = v/1000;
+      label = km.toFixed(step%1000===0 ? 0 : (step>=100 ? 1 : 2))+' km';
+    } else if (clock){
+      label = step<60 ? fmtClock(S.records[0].t+v) : fmtClockNoSec(S.records[0].t+v);
+    } else label = fmtHMS(v);
+    ticks.push({v, label});
+  }
+  return ticks;
 }
-// Renders the shared x-axis label strip between the chart and the timeline
-// — plain positioned DOM text (not canvas-drawn), since it's now a
-// standalone element shared by both, doubling as the x-axis mode switch
-// button (see #xAxisLabels's own click handler).
-function renderXAxisLabels(view, span){
+// The label strip between the chart and the timeline: one tick line + label
+// per tick, pooled and updated in place (no innerHTML), and redrawn
+// synchronously with the canvas so labels never lag a frame behind the
+// gridlines they belong to.
+function renderXAxisLabels(view, ticks){
   const el = $('#xAxisLabels');
   if (!el) return;
-  let html = '';
-  for (let i=0;i<=4;i++){
-    const v = view.min + span*i/4;
-    const pct = i/4*100;
-    const align = i===0 ? 'left' : (i===4 ? 'right' : 'center');
-    const transform = i===0 ? '' : (i===4 ? 'translateX(-100%)' : 'translateX(-50%)');
-    html += '<span style="position:absolute; left:'+pct+'%; top:50%; transform:translateY(-50%) '+transform+'; text-align:'+align+'; font-size:10px; color:var(--text-faint); white-space:nowrap; pointer-events:none;">'+xTickLabel(v)+'</span>';
+  const span = view.max-view.min;
+  const pool = el._tickPool || (el._tickPool = []);
+  while (pool.length<ticks.length){
+    const line = document.createElement('div'); line.className = 'xTickLine';
+    const lab = document.createElement('span'); lab.className = 'xTickLabel';
+    el.appendChild(line); el.appendChild(lab);
+    pool.push({line, lab, text:null});
   }
-  el.innerHTML = html;
+  pool.forEach((p,i)=>{
+    if (i>=ticks.length){ if (p.shown){ p.line.style.display = p.lab.style.display = 'none'; p.shown=false; } return; }
+    const pct = (ticks[i].v-view.min)/span*100;
+    p.line.style.left = pct+'%'; p.lab.style.left = pct+'%';
+    if (!p.shown){ p.line.style.display = p.lab.style.display = ''; p.shown=true; }
+    if (p.text!==ticks[i].label){ p.lab.textContent = ticks[i].label; p.text = ticks[i].label; }
+  });
 }
 function redrawChart(){
   const canvas = $('#chart');
@@ -2198,13 +2232,15 @@ function redrawChart(){
   const xPx = v => plotLeft + (v-view.min)/span*(plotRight-plotLeft);
   S.chartPlotTop = plotTop; S.chartPlotBottom = plotBottom;
 
-  // vertical gridlines (5, evenly spaced across the visible range)
+  // vertical gridlines at round x values — they scroll with the data
+  const xTicks = computeXTicks(view, plotRight-plotLeft);
   ctx.save();
   ctx.strokeStyle = cssVar('--border'); ctx.lineWidth = 1;
-  for (let i=0;i<=4;i++){
-    const px = Math.round(xPx(view.min+span*i/4))+0.5;
+  xTicks.forEach(tk=>{
+    const px = Math.round(xPx(tk.v))+0.5;
+    if (px<0 || px>w) return;
     ctx.beginPath(); ctx.moveTo(px, plotTop); ctx.lineTo(px, plotBottom); ctx.stroke();
-  }
+  });
   ctx.restore();
 
   // each metric's line/area, plus its own title and tick values
@@ -2263,7 +2299,7 @@ function redrawChart(){
     ctx.restore();
   });
 
-  renderXAxisLabelsThrottled(view, span);
+  renderXAxisLabels(view, xTicks);
 
   // dashed selection line
   if (S.selection && !chartIsPanning){
@@ -2455,13 +2491,6 @@ function attachChartZoom(){
       return;
     }
     const finalVelocity = chartVelocity.velocity(e.timeStamp || performance.now());
-    // Diagnostic: the momentum-run turned out to be perfectly smooth once
-    // triggered (steady 16-17ms steps, no stalls) — the real open question
-    // is why some flicks don't trigger it at all. Showing the computed
-    // velocity on every single release (pass or fail against the trigger
-    // threshold) will reveal whether failed attempts were genuinely slow,
-    // or close to the threshold and being miscounted.
-    showMomentumDebugOverlay('release velocity: '+finalVelocity.toFixed(4)+' px/ms (moved='+moved+', samples='+chartVelocity.count()+')');
     if (!moved){
       // genuinely a tap — never moved past the 3px pan threshold (a flick
       // that short glides only a few pixels anyway, and with the
@@ -2580,7 +2609,7 @@ function clampAndSetX(min,max){
   if (newMax > hi){ newMax = hi; newMin = hi-width; }
   S.chartView.min = newMin; S.chartView.max = newMax;
   redrawChart();
-  if (typeof renderTimelineThrottled==='function') renderTimelineThrottled(); // keep the timeline's own visible window matching the chart's pinch/pan zoom
+  if (typeof renderTimeline==='function') renderTimeline(); // synchronous (it's cheap now), so the timeline never lags the chart by a frame — keep the timeline's own visible window matching the chart's pinch/pan zoom
 }
 
 /* metric/x-axis pickers, triggered by long-pressing the chart's axes
@@ -3126,7 +3155,6 @@ function attachTimelinePan(){
     if (moved){
       suppressNextTimelineTap = true; // a real pan just happened — don't also treat the release as a seek-tap
       const v = e.type==='pointercancel' ? 0 : tlVelocity.velocity(e.timeStamp || performance.now());
-      showMomentumDebugOverlay('[timeline] release velocity: '+v.toFixed(4)+' px/ms (samples='+tlVelocity.count()+')');
       if (Math.abs(v) > MOMENTUM_TRIGGER_THRESHOLD) startMomentum(v, lastWidth);
     }
     moved=false;
@@ -3183,11 +3211,23 @@ function renderTimeline(){
     track.forEach(iv=>{
       if (iv.end<=t0 || iv.start>=t1) return; // entirely outside the current window — skip
       const idx = S.intervals.indexOf(iv);
-      const x0 = Math.max(0,(iv.start-t0)/span*100), x1 = Math.min(100,(iv.end-t0)/span*100);
+      // deliberately NOT clamped to the window: the clip keeps its true
+      // extent and the container's overflow:hidden crops it, so the edge
+      // handles stay at the real start/end and only show once those edges
+      // scroll into view
+      const x0 = (iv.start-t0)/span*100, x1 = (iv.end-t0)/span*100;
       const isActive = !!(activeIv && activeIv.id===iv.id);
       const label = numberPrefix(idx+1)+intervalDisplayName(iv, idx);
       clips.push({ti, iv, left:x0, width:Math.max(0.6,x1-x0), isActive, label});
     });
+  });
+  const W = scroll.clientWidth, H = scroll.clientHeight;
+  const HANDLE_PX = 18;
+  // keep each clip's name centred in its VISIBLE part: pad by the width that
+  // is scrolled out of view on either side
+  clips.forEach(c=>{
+    c.padL = HANDLE_PX + Math.max(0, -c.left/100*W);
+    c.padR = HANDLE_PX + Math.max(0, (c.left+c.width-100)/100*W);
   });
   const seekVisible = seekT>=t0 && seekT<=t1;
   const seekX = (seekT-t0)/span*100;
@@ -3199,7 +3239,12 @@ function renderTimeline(){
   const structKey = trackCount+'|'+(seekVisible?1:0)+'|'+clips.map(c=>c.ti+':'+c.iv.id+':'+(c.isActive?1:0)+':'+c.label).join('\u0001');
   const existingClips = tracksWrap.querySelectorAll('.tlClip');
   if (structKey===timelineStructKey && existingClips.length===clips.length){
-    clips.forEach((c,i)=>{ existingClips[i].style.left = c.left+'%'; existingClips[i].style.width = c.width+'%'; });
+    clips.forEach((c,i)=>{
+      const st = existingClips[i].style;
+      st.left = c.left+'%'; st.width = c.width+'%';
+      const nm = existingClips[i].querySelector('.tlClipName').style;
+      nm.paddingLeft = c.padL+'px'; nm.paddingRight = c.padR+'px';
+    });
     const seekLine = tracksWrap.querySelector('.tlSeekLine');
     if (seekLine) seekLine.style.left = seekX+'%';
   } else {
@@ -3209,8 +3254,8 @@ function renderTimeline(){
       clips.filter(c=>c.ti===ti).forEach(c=>{
         const iv = c.iv;
         html += '<div class="tlClip'+(c.isActive?' tlHighlight':' tlLocked')+'" data-id="'+iv.id+'" style="left:'+c.left+'%; width:'+c.width+'%;">'+
+          '<div class="tlClipName" data-id="'+iv.id+'" style="padding-left:'+c.padL+'px; padding-right:'+c.padR+'px;">'+escapeHtml(c.label)+'</div>'+
           '<div class="tlClipHandle" data-edge="start" data-id="'+iv.id+'">◀</div>'+
-          '<div class="tlClipName" data-id="'+iv.id+'">'+escapeHtml(c.label)+'</div>'+
           '<div class="tlClipHandle" data-edge="end" data-id="'+iv.id+'">▶</div>'+
         '</div>';
       });
@@ -3226,10 +3271,98 @@ function renderTimeline(){
     timelineStructKey = structKey;
     wireTimelineEvents();
   }
+  drawTimelineCanvases(clips, W, H, t0, span, trackCount);
   validateIntervals();
   saveStateIfChanged();
 }
 let timelineStructKey = null;
+function tlCanvasSetup(canvas, W, H){
+  const dpr = window.devicePixelRatio || 1;
+  const pw = Math.round(W*dpr), ph = Math.round(H*dpr);
+  if (canvas.width!==pw || canvas.height!==ph){ canvas.width = pw; canvas.height = ph; }
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  ctx.clearRect(0,0,W,H);
+  return ctx;
+}
+// Per-ride heart-rate lookup for the clip backdrop: prefix sums over the
+// records (gaps carry the previous value) so the mean HR over any time
+// range is O(1) regardless of zoom, plus the ride's HR min/max.
+let tlHrCache = null;
+function getHrCache(){
+  const recs = S.records;
+  if (tlHrCache && tlHrCache.recs===recs) return tlHrCache;
+  const n = recs.length;
+  const el = new Float64Array(n), pre = new Float64Array(n+1);
+  let last = null, min = Infinity, max = -Infinity;
+  const firstValid = recs.find(r=>r.hr!=null && r.hr>0);
+  last = firstValid ? firstValid.hr : null;
+  for (let i=0;i<n;i++){
+    el[i] = recs[i].elapsed;
+    const h = recs[i].hr;
+    if (h!=null && h>0){ last = h; if (h<min) min=h; if (h>max) max=h; }
+    pre[i+1] = pre[i] + (last!=null ? last : 0);
+  }
+  tlHrCache = {recs, el, pre, min, max, valid: last!=null && max>min};
+  return tlHrCache;
+}
+function hrLowerBound(el, t){
+  let lo=0, hi=el.length;
+  while (lo<hi){ const mid=(lo+hi)>>1; if (el[mid]<t) lo=mid+1; else hi=mid; }
+  return lo;
+}
+// Gridlines (behind the clips) and a faint heart-rate area (in front of
+// them, clipped to each clip's visible span) for the timeline.
+function drawTimelineCanvases(clips, W, H, t0, span, trackCount){
+  const grid = $('#tlGridCanvas'), hrc = $('#tlHrCanvas');
+  if (!grid || !hrc || !(W>0) || !(H>0)) return;
+  const gctx = tlCanvasSetup(grid, W, H);
+  if (S.chartView){
+    // same fractions as the chart's gridlines, so the lines run unbroken
+    // from the chart through the label strip into the timeline
+    gctx.strokeStyle = cssVar('--border'); gctx.lineWidth = 1;
+    const view = S.chartView, vspan = view.max-view.min;
+    computeXTicks(view, W).forEach(tk=>{
+      const px = Math.round((tk.v-view.min)/vspan*W)+0.5;
+      if (px<0 || px>W) return;
+      gctx.beginPath(); gctx.moveTo(px,0); gctx.lineTo(px,H); gctx.stroke();
+    });
+  }
+  const ctx = tlCanvasSetup(hrc, W, H);
+  const hc = getHrCache();
+  if (!hc.valid) return;
+  const trackH = H/trackCount;
+  const COL = 2; // px per sample column
+  clips.forEach(c=>{
+    const xa = Math.max(0, c.left/100*W), xb = Math.min(W, (c.left+c.width)/100*W);
+    if (xb-xa<2) return;
+    const yTop = c.ti*trackH + 5, yBot = (c.ti+1)*trackH - 5;
+    if (yBot-yTop<6) return;
+    const pxToT = span/W;
+    ctx.beginPath();
+    let started = false, lastX = xa;
+    for (let x=xa; x<=xb+COL; x+=COL){
+      const xx = Math.min(x, xb);
+      const ta = t0 + (xx-COL/2)*pxToT, tb = t0 + (xx+COL/2)*pxToT;
+      let i0 = hrLowerBound(hc.el, ta), i1 = hrLowerBound(hc.el, tb);
+      // at least a few records per column so a deep zoom doesn't go blocky
+      if (i1-i0<4){ const mid=(i0+i1)>>1; i0=Math.max(0,mid-2); i1=Math.min(hc.el.length,mid+2); }
+      if (i1<=i0) continue;
+      const hr = (hc.pre[i1]-hc.pre[i0])/(i1-i0);
+      const frac = Math.max(0, Math.min(1, (hr-hc.min)/(hc.max-hc.min)));
+      const y = yBot - (0.1+0.8*frac)*(yBot-yTop);
+      if (!started){ ctx.moveTo(xx, yBot); ctx.lineTo(xx, y); started=true; } else ctx.lineTo(xx, y);
+      lastX = xx;
+      if (xx>=xb) break;
+    }
+    if (!started) return;
+    ctx.lineTo(lastX, yBot); ctx.closePath();
+    // understated: dark tint, lighter on the non-highlighted clips (which
+    // are already faded)
+    ctx.fillStyle = c.isActive ? 'rgba(8,33,29,.2)' : 'rgba(8,33,29,.12)';
+    ctx.fill();
+  });
+}
 function wireTimelineEvents(){
   $$('#timelineTracks .tlClipName').forEach(el=>{
     el.addEventListener('click', ()=>{
