@@ -498,7 +498,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
 // (this session's own publish count so far) is reconstructed from the
 // conversation itself rather than mechanically verified — best-effort, not
 // guaranteed exact. Increment by exactly 1 on every future publish.
-const APP_VERSION = 140;
+const APP_VERSION = 141;
 
 /* ============ FIT PARSER ============ */
 const FIT_EPOCH = 631065600; // seconds between 1970-01-01 and 1989-12-31 (FIT epoch)
@@ -945,14 +945,71 @@ let seekDragActive = false;
 //    likely why momentum felt weaker/shorter than the map's even after
 //    the two were made to use the same formula shape).
 const MOMENTUM_DECELERATION = 0.998;
-const MOMENTUM_STOP_THRESHOLD = 0.01;
+// must stay below MOMENTUM_TRIGGER_THRESHOLD, otherwise a flick between the
+// two values passes the trigger check and then dies on the very first step
+const MOMENTUM_STOP_THRESHOLD = 0.005;
 // Text-reported results confirmed the render loop itself has no stall —
 // once triggered, momentum ran 120-170 steps at a rock-steady 17ms each.
 // "step 1, gap 0ms" on failed attempts just means the very first check
 // already found velocity under the trigger threshold, so it never got
 // going. Lowered from 0.02 (20px/s) to 0.006 (6px/s) so a normal, not
 // especially hard flick reliably qualifies.
-const MOMENTUM_TRIGGER_THRESHOLD = 0.006;
+const MOMENTUM_TRIGGER_THRESHOLD = 0.03;
+// Release-velocity tracker shared by the chart and the timeline. Improves on
+// the earlier "first vs last sample within 80ms" reading, which under-read
+// many real flicks:
+//  - uses each event's own timeStamp (when the finger actually moved), not
+//    performance.now() at handler time, which a busy main thread skews;
+//  - reads getCoalescedEvents() so samples the browser merged into one
+//    pointermove aren't thrown away;
+//  - takes the larger of a least-squares slope over the last 100ms and the
+//    speed over the last ~40ms, so the natural slow-down right before the
+//    finger lifts doesn't cancel out the flick;
+//  - only reports zero when the finger was genuinely held still before
+//    lifting (no movement for VELOCITY_HOLD_MS).
+const VELOCITY_WINDOW_MS = 100;
+const VELOCITY_HOLD_MS = 90;
+function createVelocityTracker(){
+  let samples = [];
+  function push(x, t){
+    const last = samples[samples.length-1];
+    if (last && t <= last.t){ last.x = x; return; } // same timestamp — keep the newest position
+    samples.push({x, t});
+    const cutoff = t - 300;
+    while (samples.length>2 && samples[0].t < cutoff) samples.shift();
+  }
+  return {
+    reset(x, t){ samples = [{x, t}]; },
+    // offsetX: subtract from clientX (the element's rect.left)
+    add(e, offsetX){
+      const list = (typeof e.getCoalescedEvents==='function') ? e.getCoalescedEvents() : null;
+      if (list && list.length) list.forEach(ev=>push(ev.clientX-offsetX, ev.timeStamp || e.timeStamp));
+      else push(e.clientX-offsetX, e.timeStamp || performance.now());
+    },
+    count(){ return samples.length; },
+    velocity(releaseT){
+      if (samples.length<2) return 0;
+      const last = samples[samples.length-1];
+      if (releaseT!=null && releaseT-last.t > VELOCITY_HOLD_MS) return 0;
+      let win = samples.filter(s=>s.t >= last.t-VELOCITY_WINDOW_MS);
+      if (win.length<2) win = samples.slice(-2); // sparse events: fall back to the last segment
+      if (win[win.length-1].t - win[0].t <= 0) return 0;
+      // least-squares slope (px/ms) over the window
+      const n = win.length;
+      let mt=0, mx=0;
+      win.forEach(s=>{ mt+=s.t; mx+=s.x; }); mt/=n; mx/=n;
+      let num=0, den=0;
+      win.forEach(s=>{ const dt=s.t-mt; num+=dt*(s.x-mx); den+=dt*dt; });
+      const vFit = den>0 ? num/den : 0;
+      // short-window endpoint speed
+      let a = win[0];
+      for (let i=win.length-2;i>=0;i--){ a = win[i]; if (last.t-win[i].t >= 40) break; }
+      const vEnd = last.t>a.t ? (last.x-a.x)/(last.t-a.t) : 0;
+      if (Math.sign(vFit)===Math.sign(vEnd)) return Math.abs(vEnd)>Math.abs(vFit) ? vEnd : vFit;
+      return vEnd; // direction changed at the very end — trust the latest motion
+    },
+  };
+}
 // Shared momentum engine — used by both the chart's own drag (pointermove
 // history kept locally there) and the timeline's pan gesture below, since
 // both ultimately just shift the same S.chartView range.
@@ -977,20 +1034,32 @@ function showMomentumDebugOverlay(text){
 }
 function startMomentum(v0, canvasWidth){
   if (!S.chartView || !canvasWidth) return;
-  let v = v0, lastT = performance.now(), stepCount = 0;
+  stopMomentum();
+  let v = v0, lastT = null, stepCount = 0;
+  function finish(){ momentumRAF=null; chartIsPanning=false; redrawChart(); }
   function step(t){
-    const rawDt = t-lastT;
+    // The first frame's rAF timestamp is the frame's start time, which is
+    // often equal to or even earlier than the performance.now() taken at
+    // release. The old code used that as dt: a 0ms step shifted nothing,
+    // which the "min didn't change → hit the edge" check below read as an
+    // edge and killed the glide at step 1 (the "step 1, gap 0ms" failures),
+    // and a negative one nudged the view backwards. Use one nominal frame
+    // for the first step and never a non-positive dt.
+    const rawDt = lastT==null ? 16 : t-lastT;
+    lastT = t;
     stepCount++;
     showMomentumDebugOverlay('momentum step '+stepCount+': gap='+rawDt.toFixed(0)+'ms'+(rawDt>100?' ← STALL':''));
-    const dt = Math.min(48, rawDt); lastT = t;
+    if (rawDt <= 0){ momentumRAF = requestAnimationFrame(step); return; }
+    const dt = Math.min(48, rawDt);
     v *= Math.pow(MOMENTUM_DECELERATION, dt);
-    if (Math.abs(v) < MOMENTUM_STOP_THRESHOLD){ momentumRAF=null; chartIsPanning=false; redrawChart(); return; }
+    if (Math.abs(v) < MOMENTUM_STOP_THRESHOLD){ finish(); return; }
     const xs = S.chartView;
+    const lo = xVal(S.records[0]), hi = xVal(S.records[S.records.length-1]);
+    // already pinned against the edge we're gliding toward — stop cleanly
+    if ((v>0 && xs.min<=lo) || (v<0 && xs.max>=hi)){ finish(); return; }
     const shiftPerPixel = (xs.max-xs.min) / canvasWidth;
     const shift = -v*dt*shiftPerPixel;
-    const beforeMin = xs.min;
     clampAndSetX(xs.min+shift, xs.max+shift);
-    if (S.chartView.min===beforeMin){ momentumRAF=null; chartIsPanning=false; redrawChart(); return; } // hit the edge — stop cleanly
     momentumRAF = requestAnimationFrame(step);
   }
   momentumRAF = requestAnimationFrame(step);
@@ -1254,11 +1323,26 @@ function serializeState(){
     powerChartXMode: S.powerChartXMode,
   };
 }
+// what the last saveState() wrote — lets saveStateIfChanged() skip
+// redundant writes
+let lastSavedStateJson = null, lastSavedRecords = null;
 function saveState(){
   if (!S.records.length) return;
   S.dirty = true;
-  try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(serializeState())); }catch(e){}
+  const json = JSON.stringify(serializeState());
+  lastSavedStateJson = json; lastSavedRecords = S.records;
+  try{ localStorage.setItem(STORAGE_KEY, json); }catch(e){}
   saveDisplayPrefs();
+}
+// renderTimeline() runs every frame while panning/pinching/gliding, but
+// that changes nothing that gets saved — two synchronous localStorage
+// writes per frame were a real source of jank, and also flagged the ride
+// as having unsaved changes just from scrolling. Only save when the
+// serialized state actually differs from what was last written.
+function saveStateIfChanged(){
+  if (!S.records.length) return;
+  if (S.records===lastSavedRecords && JSON.stringify(serializeState())===lastSavedStateJson) return;
+  saveState();
 }
 function loadSavedState(){
   try{
@@ -2299,18 +2383,7 @@ function attachChartZoom(){
   // before release. An EMA built up over a whole (possibly slower) drag
   // was under-reading fast flicks at the very end, since earlier slower
   // samples still had lingering weight — this only looks at recent history.
-  let moveHistory = [];
-  function pushMoveSample(x, t){
-    moveHistory.push({x, t});
-    const cutoff = t - 80;
-    while (moveHistory.length>2 && moveHistory[0].t < cutoff) moveHistory.shift();
-  }
-  function recentVelocity(){
-    if (moveHistory.length<2) return 0;
-    const a = moveHistory[0], b = moveHistory[moveHistory.length-1];
-    const dt = b.t-a.t;
-    return dt>0 ? (b.x-a.x)/dt : 0;
-  }
+  const chartVelocity = createVelocityTracker();
 
   canvas.addEventListener('pointerdown', e=>{
     activeChartPointers.add(e.pointerId);
@@ -2320,7 +2393,7 @@ function attachChartZoom(){
     startX = e.clientX-rect.left; lastX=startX; moved=false; dragging=true; longPressFired=false; chartIsPanning=false;
     dragStartXs = {min:S.chartView.min, max:S.chartView.max};
     lastMoveTime = performance.now(); lastMoveX = startX; velocityX = 0;
-    moveHistory = [{x:startX, t:performance.now()}];
+    chartVelocity.reset(startX, e.timeStamp || performance.now());
     canvas.setPointerCapture(e.pointerId);
     const pressX = e.clientX-rect.left, pressY = e.clientY-rect.top;
     lastPressX = pressX; lastPressY = pressY;
@@ -2337,7 +2410,7 @@ function attachChartZoom(){
     const curX = e.clientX-rect.left;
     if (seekDragActive){ updateSeekDrag(curX, rect.width); return; }
     const now = performance.now();
-    pushMoveSample(curX, now);
+    chartVelocity.add(e, rect.left);
     // Matches the map's own gesture model exactly: panning starts the
     // instant there's real movement (3px, same threshold the map uses),
     // with no waiting period — the long-press timer doesn't need to be
@@ -2381,16 +2454,19 @@ function attachChartZoom(){
       if (chartIsPanning && activeChartPointers.size===0){ chartIsPanning=false; if (S.chartView) redrawChart(); }
       return;
     }
-    const finalVelocity = recentVelocity();
+    const finalVelocity = chartVelocity.velocity(e.timeStamp || performance.now());
     // Diagnostic: the momentum-run turned out to be perfectly smooth once
     // triggered (steady 16-17ms steps, no stalls) — the real open question
     // is why some flicks don't trigger it at all. Showing the computed
     // velocity on every single release (pass or fail against the trigger
     // threshold) will reveal whether failed attempts were genuinely slow,
     // or close to the threshold and being miscounted.
-    showMomentumDebugOverlay('release velocity: '+finalVelocity.toFixed(4)+' px/ms (moved='+moved+', samples='+moveHistory.length+')');
-    if (!moved && Math.abs(finalVelocity) <= MOMENTUM_TRIGGER_THRESHOLD){
-      // genuinely a tap — barely moved AND not fast. A tap landing in the
+    showMomentumDebugOverlay('release velocity: '+finalVelocity.toFixed(4)+' px/ms (moved='+moved+', samples='+chartVelocity.count()+')');
+    if (!moved){
+      // genuinely a tap — never moved past the 3px pan threshold (a flick
+      // that short glides only a few pixels anyway, and with the
+      // event-timestamp velocity a slightly jittery tap could otherwise
+      // read as a "flick" and lose its selection). A tap landing in the
       // top-left/top-right corner (where the axis titles are drawn) opens
       // that axis's picker instead of selecting a point — this check lives
       // here, in the canvas's own handler, rather than as a separate
@@ -2408,8 +2484,6 @@ function attachChartZoom(){
         if (rec) setSelection(S.records.indexOf(rec), null, 'chart');
       }
     } else if (Math.abs(finalVelocity) > MOMENTUM_TRIGGER_THRESHOLD){
-      // a fast flick — even one short enough to never cross the 14px pan
-      // threshold above — still deserves momentum
       startMomentum(finalVelocity, canvas.getBoundingClientRect().width);
     } else {
       chartIsPanning = false;
@@ -2943,29 +3017,77 @@ function getActiveInterval(){
 function attachTimelinePan(){
   const scroll = $('#timelineScroll');
   if (!scroll) return;
-  let startX=0, dragging=false, moved=false, dragStartXs=null, lastWidth=0, tlMoveHistory=[];
-  function pushTlSample(x,t){
-    tlMoveHistory.push({x,t});
-    const cutoff = t-80;
-    while (tlMoveHistory.length>2 && tlMoveHistory[0].t<cutoff) tlMoveHistory.shift();
+  // Pan and pinch both run on pointer events captured to #timelineScroll.
+  // The old pinch listened to touchmove on #timelineScroll, but touch events
+  // stay bound to the element the finger first landed on — a .tlTrack /
+  // .tlClip that renderTimeline() then replaced via innerHTML. Once that
+  // element was detached, its touchmoves no longer bubbled up here, so the
+  // pinch only updated sporadically (and the browser was free to handle the
+  // gesture itself). Captured pointers are always delivered to `scroll`,
+  // whatever happens to the DOM underneath.
+  const pointers = new Map(); // pointerId -> clientX/clientY
+  let startX=0, dragging=false, moved=false, dragStartXs=null, lastWidth=0, panPointerId=null;
+  let pinch = null;
+  const tlVelocity = createVelocityTracker();
+  function beginPan(id, clientX, t){
+    const rect = scroll.getBoundingClientRect();
+    panPointerId = id; dragging = true; lastWidth = rect.width;
+    startX = clientX-rect.left;
+    dragStartXs = {min:S.chartView.min, max:S.chartView.max};
+    tlVelocity.reset(startX, t);
   }
-  function tlRecentVelocity(){
-    if (tlMoveHistory.length<2) return 0;
-    const a=tlMoveHistory[0], b=tlMoveHistory[tlMoveHistory.length-1];
-    const dt=b.t-a.t;
-    return dt>0 ? (b.x-a.x)/dt : 0;
+  function beginPinch(){
+    const [a, b] = [...pointers.values()];
+    const rect = scroll.getBoundingClientRect();
+    const xs = S.chartView;
+    const midFrac = Math.max(0, Math.min(1, ((a.x+b.x)/2-rect.left)/(rect.width||1)));
+    // Anchored pinch: remember the data value under the fingers' midpoint
+    // and the range at the start, then derive each frame's window from the
+    // gesture's total scale. The old version multiplied in a fresh ratio on
+    // every touchmove, so rounding and the clamp at the data edges
+    // accumulated into drift; this also lets the window follow the
+    // midpoint, so pinch and two-finger pan work together like the map.
+    pinch = {
+      startDist: Math.max(1, Math.hypot(a.x-b.x, a.y-b.y)),
+      startRange: xs.max-xs.min,
+      anchor: xs.min + midFrac*(xs.max-xs.min),
+    };
+  }
+  function updatePinch(){
+    const [a, b] = [...pointers.values()];
+    const rect = scroll.getBoundingClientRect();
+    const nd = Math.max(1, Math.hypot(a.x-b.x, a.y-b.y));
+    const midFrac = Math.max(0, Math.min(1, ((a.x+b.x)/2-rect.left)/(rect.width||1)));
+    const lo = xVal(S.records[0]), hi = xVal(S.records[S.records.length-1]);
+    let range = pinch.startRange * pinch.startDist/nd;
+    range = Math.max((hi-lo)*0.0005, Math.min(hi-lo, range)); // same limits clampAndSetX enforces
+    const min = pinch.anchor - midFrac*range;
+    clampAndSetX(min, min+range);
   }
   scroll.addEventListener('pointerdown', e=>{
     if (e.target.closest('.tlClipHandle') || !S.chartView) return; // edge handles run their own drag gesture
     stopMomentum();
-    const rect = scroll.getBoundingClientRect();
-    startX = e.clientX-rect.left; moved=false; dragging=true; lastWidth=rect.width;
-    dragStartXs = {min:S.chartView.min, max:S.chartView.max};
-    tlMoveHistory = [{x:startX, t:performance.now()}];
+    pointers.set(e.pointerId, {x:e.clientX, y:e.clientY});
     try{ scroll.setPointerCapture(e.pointerId); }catch(err){}
+    if (pointers.size===1){
+      moved = false;
+      beginPan(e.pointerId, e.clientX, e.timeStamp || performance.now());
+    } else if (pointers.size===2){
+      // a second finger means this is a pinch, not a pan
+      dragging = false; panPointerId = null;
+      if (moved) suppressNextTimelineTap = true;
+      moved = false;
+      beginPinch();
+    }
   });
   scroll.addEventListener('pointermove', e=>{
-    if (!dragging || !dragStartXs) return;
+    if (!pointers.has(e.pointerId)) return;
+    pointers.set(e.pointerId, {x:e.clientX, y:e.clientY});
+    if (pinch){
+      if (pointers.size>=2 && S.chartView) updatePinch();
+      return;
+    }
+    if (!dragging || !dragStartXs || e.pointerId!==panPointerId) return;
     const rect = scroll.getBoundingClientRect();
     const curX = e.clientX-rect.left;
     // sample velocity from the very start of the gesture (not gated by the
@@ -2975,7 +3097,7 @@ function attachTimelinePan(){
     // the timeline has no competing long-press gesture on this element, so
     // there's no reason to delay longer than that bare minimum needed to
     // tell a pan apart from a stationary tap.
-    pushTlSample(curX, performance.now());
+    tlVelocity.add(e, rect.left);
     if (Math.abs(curX-startX)>3) moved=true;
     if (!moved) return;
     const totalDx = curX-startX;
@@ -2984,45 +3106,37 @@ function attachTimelinePan(){
     const shift = -totalDx*shiftPerPixel;
     clampAndSetX(dragStartXs.min+shift, dragStartXs.max+shift);
   });
-  const endDrag = ()=>{
-    dragging=false;
+  const endPointer = e=>{
+    if (!pointers.has(e.pointerId)) return;
+    pointers.delete(e.pointerId);
+    if (pinch){
+      if (pointers.size>=2){ beginPinch(); return; } // a third finger lifted — re-anchor on the remaining two
+      pinch = null;
+      if (pointers.size===1){
+        // one finger left after a pinch: carry on as a plain pan from here,
+        // re-based so the window doesn't jump
+        const [id, p] = [...pointers.entries()][0];
+        moved = false;
+        beginPan(id, p.x, e.timeStamp || performance.now());
+      }
+      return;
+    }
+    if (e.pointerId!==panPointerId) return;
+    dragging = false; panPointerId = null;
     if (moved){
       suppressNextTimelineTap = true; // a real pan just happened — don't also treat the release as a seek-tap
-      const v = tlRecentVelocity();
-      showMomentumDebugOverlay('[timeline] release velocity: '+v.toFixed(4)+' px/ms (samples='+tlMoveHistory.length+')');
+      const v = e.type==='pointercancel' ? 0 : tlVelocity.velocity(e.timeStamp || performance.now());
+      showMomentumDebugOverlay('[timeline] release velocity: '+v.toFixed(4)+' px/ms (samples='+tlVelocity.count()+')');
       if (Math.abs(v) > MOMENTUM_TRIGGER_THRESHOLD) startMomentum(v, lastWidth);
     }
     moved=false;
   };
-  scroll.addEventListener('pointerup', endDrag);
-  scroll.addEventListener('pointercancel', endDrag);
-
-  // pinch-to-zoom, mirroring the chart's own implementation — two-finger
-  // touch events bypass the single-pointer pan logic above naturally,
-  // since browsers report each touch through the Touch API separately
-  let tlPinchDist = null;
-  scroll.addEventListener('touchstart', e=>{
-    if (e.touches.length===2){
-      dragging = false; // a second finger means this is a pinch, not a pan
-      tlPinchDist = Math.hypot(e.touches[0].clientX-e.touches[1].clientX, e.touches[0].clientY-e.touches[1].clientY);
-    }
-  }, {passive:true});
-  scroll.addEventListener('touchmove', e=>{
-    if (e.touches.length===2 && tlPinchDist && S.chartView){
-      e.preventDefault();
-      const nd = Math.hypot(e.touches[0].clientX-e.touches[1].clientX, e.touches[0].clientY-e.touches[1].clientY);
-      const factor = tlPinchDist/nd;
-      const xs = S.chartView;
-      const rect = scroll.getBoundingClientRect();
-      const midPx = (e.touches[0].clientX+e.touches[1].clientX)/2 - rect.left;
-      const frac = Math.max(0, Math.min(1, midPx/(rect.width||1)));
-      const cx = xs.min + frac*(xs.max-xs.min);
-      const min = cx-(cx-xs.min)*factor, max = cx+(xs.max-cx)*factor;
-      clampAndSetX(min, max);
-      tlPinchDist = nd;
-    }
-  }, {passive:false});
-  scroll.addEventListener('touchend', ()=>{ tlPinchDist=null; });
+  scroll.addEventListener('pointerup', endPointer);
+  scroll.addEventListener('pointercancel', endPointer);
+  // belt and braces for browsers that don't fully honour touch-action:none
+  // on multi-touch (older iOS Safari): never let a two-finger gesture here
+  // turn into a page zoom
+  scroll.addEventListener('touchmove', e=>{ if (e.touches.length>=2) e.preventDefault(); }, {passive:false});
 }
 let suppressNextTimelineTap = false;
 // The timeline's own visible window — always the same elapsed-time range
@@ -3064,35 +3178,58 @@ function renderTimeline(){
   const trackHeightPct = 100/trackCount;
   const activeIv = getActiveInterval();
   const seekT = S.selection ? S.records[S.selection.idx].elapsed : 0;
-  let html = '';
+  const clips = [];
   tracks.forEach((track,ti)=>{
-    html += '<div class="tlTrack" data-track="'+ti+'" style="top:'+(ti*trackHeightPct)+'%; height:'+trackHeightPct+'%;">';
     track.forEach(iv=>{
       if (iv.end<=t0 || iv.start>=t1) return; // entirely outside the current window — skip
       const idx = S.intervals.indexOf(iv);
       const x0 = Math.max(0,(iv.start-t0)/span*100), x1 = Math.min(100,(iv.end-t0)/span*100);
       const isActive = !!(activeIv && activeIv.id===iv.id);
       const label = numberPrefix(idx+1)+intervalDisplayName(iv, idx);
-      html += '<div class="tlClip'+(isActive?' tlHighlight':' tlLocked')+'" data-id="'+iv.id+'" style="left:'+x0+'%; width:'+Math.max(0.6,x1-x0)+'%;">'+
-        '<div class="tlClipHandle" data-edge="start" data-id="'+iv.id+'">◀</div>'+
-        '<div class="tlClipName" data-id="'+iv.id+'">'+escapeHtml(label)+'</div>'+
-        '<div class="tlClipHandle" data-edge="end" data-id="'+iv.id+'">▶</div>'+
-      '</div>';
+      clips.push({ti, iv, left:x0, width:Math.max(0.6,x1-x0), isActive, label});
     });
-    html += '</div>';
   });
-  tracksWrap.innerHTML = html;
-  if (seekT>=t0 && seekT<=t1){
-    const seekX = (seekT-t0)/span*100;
-    const seekLine = document.createElement('div');
-    seekLine.className = 'tlSeekLine';
-    seekLine.style.left = seekX+'%';
-    tracksWrap.appendChild(seekLine);
+  const seekVisible = seekT>=t0 && seekT<=t1;
+  const seekX = (seekT-t0)/span*100;
+  // Fast path: while panning/pinching (or a momentum glide), only positions
+  // change — the same clips stay visible on the same tracks with the same
+  // labels. Rebuilding everything via innerHTML each frame was costly AND
+  // replaced the very elements the fingers were touching; instead just move
+  // the existing ones.
+  const structKey = trackCount+'|'+(seekVisible?1:0)+'|'+clips.map(c=>c.ti+':'+c.iv.id+':'+(c.isActive?1:0)+':'+c.label).join('\u0001');
+  const existingClips = tracksWrap.querySelectorAll('.tlClip');
+  if (structKey===timelineStructKey && existingClips.length===clips.length){
+    clips.forEach((c,i)=>{ existingClips[i].style.left = c.left+'%'; existingClips[i].style.width = c.width+'%'; });
+    const seekLine = tracksWrap.querySelector('.tlSeekLine');
+    if (seekLine) seekLine.style.left = seekX+'%';
+  } else {
+    let html = '';
+    for (let ti=0; ti<trackCount; ti++){
+      html += '<div class="tlTrack" data-track="'+ti+'" style="top:'+(ti*trackHeightPct)+'%; height:'+trackHeightPct+'%;">';
+      clips.filter(c=>c.ti===ti).forEach(c=>{
+        const iv = c.iv;
+        html += '<div class="tlClip'+(c.isActive?' tlHighlight':' tlLocked')+'" data-id="'+iv.id+'" style="left:'+c.left+'%; width:'+c.width+'%;">'+
+          '<div class="tlClipHandle" data-edge="start" data-id="'+iv.id+'">◀</div>'+
+          '<div class="tlClipName" data-id="'+iv.id+'">'+escapeHtml(c.label)+'</div>'+
+          '<div class="tlClipHandle" data-edge="end" data-id="'+iv.id+'">▶</div>'+
+        '</div>';
+      });
+      html += '</div>';
+    }
+    tracksWrap.innerHTML = html;
+    if (seekVisible){
+      const seekLine = document.createElement('div');
+      seekLine.className = 'tlSeekLine';
+      seekLine.style.left = seekX+'%';
+      tracksWrap.appendChild(seekLine);
+    }
+    timelineStructKey = structKey;
+    wireTimelineEvents();
   }
-  wireTimelineEvents();
   validateIntervals();
-  saveState();
+  saveStateIfChanged();
 }
+let timelineStructKey = null;
 function wireTimelineEvents(){
   $$('#timelineTracks .tlClipName').forEach(el=>{
     el.addEventListener('click', ()=>{
