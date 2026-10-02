@@ -2,6 +2,7 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
+<meta name="theme-color" content="#000000">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <title>区間分析 — FITファイル インターバルアナライザー</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap">
@@ -9,22 +10,21 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <style>
 :root{
-  --bg:#f4f6f8; --surface:#ffffff; --surface-2:#eef1f4; --border:#d7dde3;
-  --text:#161a1f; --text-dim:#5b6570; --text-faint:#8a94a0;
-  --speed:#0e9e8c; --cadence:#7c5cff; --hr:#e0435a; --power:#e08a1e; --elevation:#a9762d;
-  --accent:#0e9e8c; --danger:#e0435a; --radius:10px;
+  color-scheme:dark;
+  --bg:#000000; --surface:#0e0f11; --surface-2:#17181b; --border:#2b2d32;
+  --text:#ececee; --text-dim:#9ca0a8; --text-faint:#686c74;
+  --speed:#17b8a4; --cadence:#8c70ff; --hr:#f0506a; --power:#f0961f; --elevation:#c18a3a;
+  --accent:#17b8a4; --danger:#f0506a; --radius:10px;
   padding-top:env(safe-area-inset-top,0px); padding-bottom:env(safe-area-inset-bottom,0px);
   box-sizing:border-box;
 }
-@media (prefers-color-scheme: dark){
-  :root:not([data-theme="light"]){
-    --bg:#12151a; --surface:#1a1f26; --surface-2:#212832; --border:#2b323d;
-    --text:#e9edf1; --text-dim:#a0aab6; --text-faint:#6b7480;
-  }
-}
-:root[data-theme="dark"]{
-  --bg:#12151a; --surface:#1a1f26; --surface-2:#212832; --border:#2b323d;
-  --text:#e9edf1; --text-dim:#a0aab6; --text-faint:#6b7480;
+/* the original light palette, still available via data-theme="light" */
+:root[data-theme="light"]{
+  color-scheme:light;
+  --bg:#f4f6f8; --surface:#ffffff; --surface-2:#eef1f4; --border:#d7dde3;
+  --text:#161a1f; --text-dim:#5b6570; --text-faint:#8a94a0;
+  --speed:#0e9e8c; --cadence:#7c5cff; --hr:#e0435a; --power:#e08a1e; --elevation:#a9762d;
+  --accent:#0e9e8c; --danger:#e0435a;
 }
 html{scroll-padding-top:env(safe-area-inset-top,0px); height:100%; overflow-x:clip; width:100%;}
 *{box-sizing:border-box;}
@@ -50,7 +50,7 @@ h1,h2,h3,.disp{ font-family:"Barlow Condensed",Impact,"Arial Narrow",sans-serif;
 .headerMsg.fading{ opacity:0; }
 #p1TopRow{ display:flex; align-items:center; gap:4px; margin-bottom:8px; }
 .icon-btn{ width:34px; height:34px; padding:0; display:flex; align-items:center; justify-content:center; font-size:17px; flex:none; }
-.mapCtrlBtn{ background:rgba(255,255,255,.82); color:#222; border-color:rgba(0,0,0,.15); width:32px; height:32px; padding:0; display:flex; align-items:center; justify-content:center; }
+.mapCtrlBtn{ background:rgba(28,29,32,.88); color:#ececee; border-color:rgba(255,255,255,.18); width:32px; height:32px; padding:0; display:flex; align-items:center; justify-content:center; }
 .panel{ background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:16px; margin-bottom:16px; overflow:hidden; min-width:0; }
 /* page 2 is the map+graph+interval working screen — the goal is fitting all
    three without scrolling, so it drops the card chrome entirely. */
@@ -176,10 +176,10 @@ td.num{ text-align:right; font-variant-numeric:tabular-nums; }
 #p2Layout{ display:flex; flex-direction:column; height:calc(100dvh - env(safe-area-inset-top,0px) - 8px); min-height:420px; gap:0; }
 .wrap.p2Active{ padding-bottom:0; }
 .p2Block{ min-height:0; overflow:hidden; }
-/* vertical ratio (of 20): map 9 / status 1 / timeline 7 / back+results buttons 1 / footer 2 */
-#p2Map{ flex:9 1 0; position:relative; border-radius:8px; overflow:hidden; background:var(--surface-2); }
+/* vertical ratio (of 40): map 17 / status 3 / timeline 13 / back+results buttons 3 / footer 4 */
+#p2Map{ flex:17 1 0; position:relative; border-radius:8px; overflow:hidden; background:var(--surface-2); }
 #p2Map #routeWrap{ position:absolute; inset:0; aspect-ratio:auto; border-radius:0; }
-#p2Status{ flex:1 1 0; display:flex; align-items:center; }
+#p2Status{ flex:3 1 0; display:flex; align-items:center; }
 #p2StatusRow{ display:flex; align-items:center; width:100%; text-align:center; }
 #p2StatusRow > div{ width:25%; flex:none; } /* fixed equal width per slot, so digit-count changes never shift positions */
 #p2StatusRow .k{ display:block; line-height:1.1; font-size:10px; color:var(--text-dim); }
@@ -189,9 +189,9 @@ td.num{ text-align:right; font-variant-numeric:tabular-nums; }
    one visually continuous block: a single bordered container holding the
    plot, a shared x-axis label strip, and the timeline tracks stacked
    directly beneath it with no visual seam between them. */
-#p2ChartTimeline{ flex:7 1 0; display:flex; flex-direction:column; min-height:0; position:relative;
+#p2ChartTimeline{ flex:13 1 0; display:flex; flex-direction:column; min-height:0; position:relative;
   border:1px solid var(--border); border-radius:8px; overflow:hidden; background:var(--surface-2); }
-#xAxisLabels{ flex:none; height:18px; position:relative; width:100%; border:none; padding:0; overflow:hidden;
+#xAxisLabels{ flex:none; height:24px; position:relative; width:100%; border:none; padding:0; overflow:hidden;
   background:transparent; }
 /* tick marks + labels scroll with the chart: each tick is a 1px line (the
    chart's vertical gridline continued through this strip) with its label to
@@ -218,28 +218,28 @@ td.num{ text-align:right; font-variant-numeric:tabular-nums; }
 #tlVBar{ position:absolute; right:1px; width:6px; z-index:7; display:none; border-radius:3px; background:rgba(128,128,128,.12); touch-action:none; }
 #tlVThumb{ position:absolute; left:0; right:0; top:0; border-radius:3px; background:var(--text-faint); opacity:.75; }
 .tlSeekLine{ position:absolute; top:0; bottom:0; width:2px; background:#e08a1e; z-index:5; pointer-events:none; display:none; }
-#zoomReset{ position:absolute; top:1px; right:2px; z-index:8; width:16px; height:16px; padding:0; border-radius:50%;
-  display:flex; align-items:center; justify-content:center; font-size:10px; line-height:1;
+#zoomReset{ position:absolute; top:1px; right:3px; z-index:8; width:22px; height:22px; padding:0; border-radius:50%;
+  display:flex; align-items:center; justify-content:center; font-size:14px; line-height:1;
   background:var(--surface); border:1px solid var(--border); color:var(--text); }
 /* clips are translucent so the speed graph shows through them */
 .tlClip{ position:absolute; top:2px; bottom:2px; border-radius:5px; box-sizing:border-box;
   border:1.5px solid var(--accent); overflow:hidden; touch-action:none; }
-.tlClip::before{ content:''; position:absolute; inset:0; background:var(--accent); opacity:.14; pointer-events:none; }
+.tlClip::before{ content:''; position:absolute; inset:0; background:var(--accent); opacity:.2; pointer-events:none; }
 .tlClip.tlHighlight::before{ opacity:.3; }
-.tlClip.tlHighlight{ box-shadow:0 0 0 2px #08211d inset; }
+.tlClip.tlHighlight{ box-shadow:0 0 0 1.5px rgba(255,255,255,.9) inset; }
 .tlClip.tlLocked .tlClipHandle{ opacity:.35; } /* only the highlighted clip's edges are editable */
 /* handles sit at the clip's real start/end, so they only appear once that
    edge scrolls into view (the clip itself extends past the visible window) */
-.tlClipHandle{ position:absolute; top:0; bottom:0; width:16px; display:flex; align-items:center; justify-content:center; font-size:10px;
-  font-weight:700; color:#08211d; background:rgba(255,255,255,.35); touch-action:none; z-index:1; }
+.tlClipHandle{ position:absolute; top:0; bottom:0; width:28px; display:flex; align-items:center; justify-content:center; font-size:10px;
+  font-weight:700; color:#fff; background:rgba(255,255,255,.16); touch-action:none; z-index:1; }
 .tlClipHandle[data-edge="start"]{ left:0; }
 .tlClipHandle[data-edge="end"]{ right:0; }
 .tlClipName{ position:absolute; top:50%; transform:translateY(-50%); text-align:center; font-size:10.5px;
-  font-weight:700; color:#08211d; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; z-index:1; pointer-events:none; } /* left/width set per frame in renderTimeline */
-#p2Confirm{ flex:1 1 0; display:flex; align-items:stretch; gap:6px; }
+  font-weight:700; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; z-index:1; pointer-events:none; } /* left/width set per frame in renderTimeline */
+#p2Confirm{ flex:3 1 0; display:flex; align-items:stretch; gap:6px; }
 #p2Confirm .halfBtn{ flex:1; margin:2px 0; }
 #backToPage1Btn{ background:var(--surface-2); color:var(--text); border:1px solid var(--border); }
-#p2BottomToolbar{ flex:2 1 0; min-height:0; overflow:hidden; display:flex; align-items:center;
+#p2BottomToolbar{ flex:4 1 0; min-height:0; overflow:hidden; display:flex; align-items:center;
   justify-content:space-around; gap:6px; padding:0 14px env(safe-area-inset-bottom,0px);
   background:var(--bg); border-top:1px solid var(--border); }
 .tbBtn{ flex:none; width:44px; height:44px; border-radius:50%; display:flex; align-items:center; justify-content:center;
@@ -510,7 +510,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
 // (this session's own publish count so far) is reconstructed from the
 // conversation itself rather than mechanically verified — best-effort, not
 // guaranteed exact. Increment by exactly 1 on every future publish.
-const APP_VERSION = 146;
+const APP_VERSION = 147;
 
 /* ============ FIT PARSER ============ */
 const FIT_EPOCH = 631065600; // seconds between 1970-01-01 and 1989-12-31 (FIT epoch)
@@ -815,7 +815,7 @@ function renderRoutePreview(){
     const wrappedX = ((tx % n)+n) % n;
     for (let ty=tyMin; ty<=tyMax; ty++){
       const left = tx*TILE_SIZE - topLeftX, top = ty*TILE_SIZE - topLeftY;
-      tilesHtml += '<img src="https://tile.openstreetmap.org/'+zoom+'/'+wrappedX+'/'+ty+'.png" '+
+      tilesHtml += '<img src="'+mapTileUrl(zoom,wrappedX,ty)+'" onerror="if(!this.dataset.fb){this.dataset.fb=1;this.src=\''+mapTileFallbackUrl(zoom,wrappedX,ty)+'\';}" '+
         'style="position:absolute;left:'+left+'px;top:'+top+'px;width:'+TILE_SIZE+'px;height:'+TILE_SIZE+'px;pointer-events:none;" '+
         'draggable="false" loading="lazy" alt="">';
     }
@@ -852,7 +852,7 @@ function renderRoutePreview(){
     lapMarkersHtml+
     '</svg>';
   el.innerHTML = tilesHtml + svgHtml +
-    '<div style="position:absolute;bottom:4px;right:6px;font-size:9px;background:rgba(255,255,255,.82);color:#222;padding:1px 5px;border-radius:4px;">© OpenStreetMap contributors</div>';
+    '<div style="position:absolute;bottom:4px;right:6px;font-size:9px;background:rgba(0,0,0,.6);color:#c8ccd2;padding:1px 5px;border-radius:4px;">© OpenStreetMap contributors © CARTO</div>';
 }
 
 let rideSummaryLoadSeq = 0; // bumped on every renderRideSummary() call, so an in-flight
@@ -1368,10 +1368,12 @@ function buildAutoIntervals(recs, laps, useLaps){
   const ivs = [];
   for (let i=0;i<bounds.length-1;i++){
     const mid = (bounds[i]+bounds[i+1])/2;
-    const name = within(rests, mid) ? '休憩' : within(climbs, mid) ? 'ヒルクライム' : '';
+    if (within(rests, mid)) continue; // a stretch judged to be a rest is dropped: no interval is made for it
+    const name = within(climbs, mid) ? 'ヒルクライム' : '';
     ivs.push({ id:S.nextId++, name, nameType:'a', start:bounds[i], end:bounds[i+1], startSet:true, endSet:true });
   }
-  if (ivs.length===1){ ivs[0].startSet = false; ivs[0].endSet = false; }
+  if (!ivs.length) ivs.push({ id:S.nextId++, name:'', nameType:'a', start:0, end:total, startSet:false, endSet:false });
+  if (ivs.length===1 && !rests.length){ ivs[0].startSet = false; ivs[0].endSet = false; }
   return {ivs, nRests:rests.length, nClimbs:climbs.length};
 }
 
@@ -1456,7 +1458,7 @@ async function processFitData(arrayBuffer, displayName){
     // S.dirty=true as a side effect — but this is the initial render of a
     // freshly-loaded, unmodified file, not a user change, so clear it again.
     S.dirty = false;
-    if (autoInfo) showHeaderMsg('自動分割: ヒルクライム'+autoInfo.nClimbs+'件・休憩'+autoInfo.nRests+'件を検出し、'+S.intervals.length+'区間に分割しました。', false);
+    if (autoInfo) showHeaderMsg('自動分割: ヒルクライム'+autoInfo.nClimbs+'件を検出、休憩'+autoInfo.nRests+'件は区間から除外し、'+S.intervals.length+'区間にしました。', false);
   } catch(err){
     showHeaderMsg('解析エラー: '+err.message, true);
   }
@@ -1775,6 +1777,16 @@ $('#importSettingsFile').addEventListener('change', e=>{
 const routeWrap = $('#routeWrap');
 const mapBadge = $('#mapBadge');
 const TILE_SIZE = 256;
+// Map tiles: CARTO "Dark Matter" served as @2x (512px images drawn at 256 CSS
+// px), which is sharp on high-DPI screens where the plain OSM tiles looked
+// soft, and matches the dark UI. Data is © OpenStreetMap contributors.
+// If a tile fails to load it falls back once to the standard OSM tile.
+function mapTileUrl(z, x, y){
+  return 'https://'+'abcd'[(x+y)&3]+'.basemaps.cartocdn.com/dark_all/'+z+'/'+x+'/'+y+'@2x.png';
+}
+function mapTileFallbackUrl(z, x, y){
+  return 'https://tile.openstreetmap.org/'+z+'/'+x+'/'+y+'.png';
+}
 let tileErrorShown = false;
 
 function lonLatToWorld(lon, lat, zoom){
@@ -1830,10 +1842,10 @@ function renderRoute(){
       '<div id="tileLayer" style="position:absolute;top:0;left:0;width:0;height:0;transition:transform .18s ease-out;"></div>'+
       '<svg id="routeSvg" style="position:absolute;top:0;left:0;pointer-events:none;transition:transform .18s ease-out;"></svg>'+
     '</div>'+
-    '<div style="position:absolute;top:6px;right:6px;font-size:10px;background:rgba(255,255,255,.82);color:#222;padding:1px 6px;border-radius:5px;">© OpenStreetMap contributors</div>'+
+    '<div style="position:absolute;top:6px;right:6px;font-size:10px;background:rgba(0,0,0,.6);color:#c8ccd2;padding:1px 6px;border-radius:5px;">© OpenStreetMap contributors © CARTO</div>'+
     '<div id="mapScale" style="position:absolute;bottom:8px;left:6px;pointer-events:none;">'+
-      '<div id="mapScaleBar" style="height:4px;border:1.5px solid #222;border-top:none;background:rgba(255,255,255,.55);"></div>'+
-      '<div id="mapScaleLabel" style="font-size:10.5px;color:#222;background:rgba(255,255,255,.82);display:inline-block;padding:0 4px;border-radius:3px;margin-top:2px;"></div>'+
+      '<div id="mapScaleBar" style="height:4px;border:1.5px solid #e6e8eb;border-top:none;background:rgba(0,0,0,.4);"></div>'+
+      '<div id="mapScaleLabel" style="font-size:10.5px;color:#e6e8eb;background:rgba(0,0,0,.6);display:inline-block;padding:0 4px;border-radius:3px;margin-top:2px;"></div>'+
     '</div>'+
     '<div style="position:absolute;bottom:8px;right:6px;display:flex;flex-direction:column;gap:5px;">'+
       '<button id="mapGoogleSearch" class="small mapCtrlBtn" type="button" title="Google マップで検索">📍</button>'+
@@ -1946,14 +1958,17 @@ function renderMapFrame(){
       let img = tileElements.get(key);
       if (!img){
         img = document.createElement('img');
-        img.src = 'https://tile.openstreetmap.org/'+zoom+'/'+wrappedX+'/'+ty+'.png';
+        img.src = mapTileUrl(zoom, wrappedX, ty);
         img.draggable = false;
         img.loading = 'lazy';
         img.alt = '';
         img.style.position = 'absolute';
         img.style.width = TILE_SIZE+'px'; img.style.height = TILE_SIZE+'px';
         img.style.pointerEvents = 'none';
-        img.onerror = ()=>{ window.__mapTileError && window.__mapTileError(); };
+        img.onerror = ()=>{
+          if (!img.dataset.fb){ img.dataset.fb = '1'; img.src = mapTileFallbackUrl(zoom, wrappedX, ty); return; }
+          window.__mapTileError && window.__mapTileError();
+        };
         img.onload = ()=>{ window.__mapTileSuccess && window.__mapTileSuccess(); };
         tileLayer.appendChild(img);
         tileElements.set(key, img);
@@ -3027,7 +3042,7 @@ function renderTimeline(){
       clips.push({ti, iv, L, R, isActive: !!(activeIv && activeIv.id===iv.id), label});
     });
   });
-  const HANDLE_PX = 18;
+  const HANDLE_PX = 30;
   clips.forEach(c=>{ c.name = tlNameGeometry(c, W, HANDLE_PX); });
   const seekX = seekRec ? xOf(xVal(seekRec)) : null;
   const seekVisible = seekX!=null && seekX>=0 && seekX<=W;
@@ -3118,15 +3133,26 @@ function tlCanvasSetup(canvas, W, H){
   ctx.clearRect(0,0,W,H);
   return ctx;
 }
-// Down-sampled series for the visible window: at most ~1 bucket per 1.5px
+// Down-sampled series for the visible window: about one bucket per 1.5px
 // (mean of each bucket), so cost stays flat however long the ride is.
+// The buckets are anchored to absolute record indices (multiples of the
+// stride) and the stride is a power of two with hysteresis, so merely
+// scrolling never re-slices the data: the same records always fall in the
+// same bucket and the drawn shape stays identical frame to frame. (Slicing
+// from the first visible record, as before, shifted every bucket boundary as
+// the window moved, which made the line keep going sharper and smoother.)
+let tlStride = 0;
 function tlBuckets(view, W){
   const recs = S.records, n = recs.length;
   const i0 = Math.max(0, nearestIndexByX(view.min)-1), i1 = Math.min(n-1, nearestIndexByX(view.max)+1);
-  const stride = Math.max(1, Math.floor((i1-i0+1)/(W/1.5)));
+  const raw = (i1-i0+1)/(W/1.5);
+  if (!(tlStride && raw>=tlStride*0.7 && raw<tlStride*2.8)){
+    tlStride = raw<=1 ? 1 : Math.pow(2, Math.floor(Math.log2(raw)));
+  }
+  const stride = tlStride;
   const out = [];
-  for (let i=i0; i<=i1; i+=stride){
-    const j = Math.min(i+stride-1, i1);
+  for (let i=Math.floor(i0/stride)*stride; i<=i1; i+=stride){
+    const j = Math.min(i+stride-1, n-1);
     let sx=0, ss=0, ns=0, sa=0, na=0, sh=0, nh=0;
     for (let k=i; k<=j; k++){
       const r = recs[k];
@@ -3201,7 +3227,7 @@ function drawTimelineCanvases(view, W, H, rowH, row2H, xTicks){
     const bot = row2H-PAD;
     if (st.hasAlt){
       const yAlt = v => bot - (v-st.altMin)/(st.altMax-st.altMin)*(bot-TOP-4);
-      tlFillSegs(ctx, tlSegments(buckets, 'alt', xPx, yAlt), bot, 'rgba(128,136,148,.30)');
+      tlFillSegs(ctx, tlSegments(buckets, 'alt', xPx, yAlt), bot, 'rgba(150,158,170,.26)');
     }
     if (st.hasHr){
       const yHr = v => bot - (v-st.hrMin)/(st.hrMax-st.hrMin)*(bot-TOP);
@@ -3209,7 +3235,7 @@ function drawTimelineCanvases(view, W, H, rowH, row2H, xTicks){
     }
     ctx.font = '700 10px sans-serif'; ctx.textBaseline = 'alphabetic';
     let tx = 4;
-    if (st.hasAlt){ ctx.fillStyle = 'rgba(110,118,130,.95)'; ctx.fillText('標高', tx, 10); tx += ctx.measureText('標高').width+8; }
+    if (st.hasAlt){ ctx.fillStyle = 'rgba(170,176,186,.95)'; ctx.fillText('標高', tx, 10); tx += ctx.measureText('標高').width+8; }
     if (st.hasHr){ ctx.fillStyle = cssVar('--hr'); ctx.fillText('心拍', tx, 10); }
   }
 }
