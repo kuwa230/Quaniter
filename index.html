@@ -6,6 +6,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <title>区間分析 — FITファイル インターバルアナライザー</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/maplibre-gl@5.24.0/dist/maplibre-gl.css">
+<script src="https://cdn.jsdelivr.net/npm/maplibre-gl@5.24.0/dist/maplibre-gl.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <style>
@@ -178,6 +180,19 @@ td.num{ text-align:right; font-variant-numeric:tabular-nums; }
 .p2Block{ min-height:0; overflow:hidden; }
 /* vertical ratio (of 40): map 17 / status 3 / timeline 13 / back+results buttons 3 / footer 4 */
 #p2Map{ flex:17 1 0; position:relative; border-radius:8px; overflow:hidden; background:var(--surface-2); }
+/* map markers (MapLibre DOM markers) and dark controls */
+.mapDot{ width:12px; height:12px; border-radius:50%; border:1.5px solid #fff; box-sizing:border-box; pointer-events:none; }
+.mapDotStart{ background:#3fbf6a; } .mapDotEnd{ background:var(--hr); }
+.mapDotSmall{ width:10px; height:10px; }
+.mapBadgeNum{ width:18px; height:18px; border-radius:50%; background:var(--accent); border:1.5px solid #fff; color:#08211d; box-sizing:border-box;
+  font-size:10.5px; font-weight:700; display:flex; align-items:center; justify-content:center; pointer-events:none; }
+.mapBadgeSmall{ width:14px; height:14px; font-size:8.5px; }
+.mapCursor{ width:16px; height:16px; border-radius:50%; background:#fff; border:3px solid var(--power); box-sizing:border-box; pointer-events:none; }
+.maplibregl-ctrl-attrib, .maplibregl-ctrl-attrib.maplibregl-compact{ background:rgba(0,0,0,.6) !important; color:#c8ccd2; }
+.maplibregl-ctrl-attrib a{ color:#c8ccd2 !important; }
+.maplibregl-ctrl-attrib-button{ filter:invert(1); }
+.maplibregl-ctrl-scale{ background:rgba(0,0,0,.6) !important; color:#e6e8eb; border-color:#e6e8eb !important; font-size:10.5px; }
+#routePreviewWrap .maplibregl-canvas, #routeWrap .maplibregl-canvas{ outline:none; }
 #p2Map #routeWrap{ position:absolute; inset:0; aspect-ratio:auto; border-radius:0; }
 #p2Status{ flex:3 1 0; display:flex; align-items:center; }
 #p2StatusRow{ display:flex; align-items:center; width:100%; text-align:center; }
@@ -513,7 +528,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
 // (this session's own publish count so far) is reconstructed from the
 // conversation itself rather than mechanically verified — best-effort, not
 // guaranteed exact. Increment by exactly 1 on every future publish.
-const APP_VERSION = 148;
+const APP_VERSION = 149;
 
 /* ============ FIT PARSER ============ */
 const FIT_EPOCH = 631065600; // seconds between 1970-01-01 and 1989-12-31 (FIT epoch)
@@ -791,73 +806,6 @@ drop.addEventListener('click', ()=>fileInput.click());
 drop.addEventListener('drop', e=>{ const f=e.dataTransfer.files[0]; if(f) handleFile(f); });
 fileInput.addEventListener('change', e=>{ const f=e.target.files[0]; if(f) handleFile(f); });
 
-function renderRoutePreview(){
-  const el = $('#routePreviewWrap');
-  if (!el) return;
-  if (!S.hasGps){
-    el.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-faint);font-size:13px;">この記録には位置情報(GPS)がありません</div>';
-    return;
-  }
-  const gpsRecs = S.records.filter(r=>r.lat!=null && r.lon!=null);
-  let minLat=90,maxLat=-90,minLon=180,maxLon=-180;
-  gpsRecs.forEach(r=>{
-    if (r.lat<minLat) minLat=r.lat; if (r.lat>maxLat) maxLat=r.lat;
-    if (r.lon<minLon) minLon=r.lon; if (r.lon>maxLon) maxLon=r.lon;
-  });
-  const rect = el.getBoundingClientRect();
-  const vw = rect.width || 300, vh = rect.height || 170;
-  const zoom = fitZoomLevel(minLat,maxLat,minLon,maxLon, vw, vh);
-  const midLat=(minLat+maxLat)/2, midLon=(minLon+maxLon)/2;
-  const [cx,cy] = lonLatToWorld(midLon, midLat, zoom);
-  const topLeftX = cx - vw/2, topLeftY = cy - vh/2;
-  const n = Math.pow(2, zoom);
-  const txMin = Math.floor(topLeftX/TILE_SIZE), txMax = Math.floor((topLeftX+vw)/TILE_SIZE);
-  const tyMin = Math.max(0, Math.floor(topLeftY/TILE_SIZE)), tyMax = Math.min(n-1, Math.floor((topLeftY+vh)/TILE_SIZE));
-  let tilesHtml = '';
-  for (let tx=txMin; tx<=txMax; tx++){
-    const wrappedX = ((tx % n)+n) % n;
-    for (let ty=tyMin; ty<=tyMax; ty++){
-      const left = tx*TILE_SIZE - topLeftX, top = ty*TILE_SIZE - topLeftY;
-      tilesHtml += '<img src="'+mapTileUrl(zoom,wrappedX,ty)+'" '+
-        'style="position:absolute;left:'+left+'px;top:'+top+'px;width:'+TILE_SIZE+'px;height:'+TILE_SIZE+'px;pointer-events:none;" '+
-        'draggable="false" loading="lazy" alt="">';
-    }
-  }
-  const step = Math.max(1, Math.floor(gpsRecs.length/800));
-  let d = '';
-  for (let i=0;i<gpsRecs.length;i+=step){
-    const r = gpsRecs[i];
-    const [wx,wy] = lonLatToWorld(r.lon, r.lat, zoom);
-    d += (d?'L':'M')+(wx-topLeftX)+' '+(wy-topLeftY)+' ';
-  }
-  const first = gpsRecs[0], last = gpsRecs[gpsRecs.length-1];
-  const [sx0,sy0] = lonLatToWorld(first.lon, first.lat, zoom);
-  const [sx1,sy1] = lonLatToWorld(last.lon, last.lat, zoom);
-  // numbered markers at each interval's starting position — these reflect
-  // S.intervals (which, after loading a JSON project, are whatever that
-  // project actually defines, not necessarily the file's own laps) rather
-  // than S.laps directly, so this stays correct after a JSON import too
-  let lapMarkersHtml = '';
-  if (S.intervals.length){
-    S.intervals.forEach((iv,i)=>{
-      const rec = nearestRecordByElapsedIn(gpsRecs, iv.start);
-      if (!rec || rec.lat==null || rec.lon==null) return;
-      const [lx,ly] = lonLatToWorld(rec.lon, rec.lat, zoom);
-      const x = lx-topLeftX, y = ly-topLeftY;
-      lapMarkersHtml += '<circle cx="'+x+'" cy="'+y+'" r="7" fill="'+cssVar('--accent')+'" stroke="#fff" stroke-width="1.5"/>'+
-        '<text x="'+x+'" y="'+(y+0.5)+'" text-anchor="middle" dominant-baseline="middle" font-size="8.5" font-weight="700" fill="#08211d">'+(i+1)+'</text>';
-    });
-  }
-  const svgHtml = '<svg viewBox="0 0 '+vw+' '+vh+'" width="'+vw+'" height="'+vh+'" style="position:absolute;top:0;left:0;pointer-events:none;" xmlns="http://www.w3.org/2000/svg">'+
-    '<path d="'+d+'" fill="none" stroke="'+cssVar('--speed')+'" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" opacity="0.92"/>'+
-    '<circle cx="'+(sx0-topLeftX)+'" cy="'+(sy0-topLeftY)+'" r="5" fill="#3fbf6a" stroke="#fff" stroke-width="1.5"/>'+
-    '<circle cx="'+(sx1-topLeftX)+'" cy="'+(sy1-topLeftY)+'" r="5" fill="'+cssVar('--hr')+'" stroke="#fff" stroke-width="1.5"/>'+
-    lapMarkersHtml+
-    '</svg>';
-  el.innerHTML = tilesHtml + svgHtml +
-    '<div style="position:absolute;bottom:4px;right:6px;font-size:9px;background:rgba(0,0,0,.6);color:#c8ccd2;padding:1px 5px;border-radius:4px;">© OpenStreetMap contributors</div>';
-}
-
 let rideSummaryLoadSeq = 0; // bumped on every renderRideSummary() call, so an in-flight
                             // geocode request can reliably tell whether it's still for
                             // the currently-loaded file (robust against any incidental
@@ -1131,6 +1079,7 @@ function showPage(n){
   document.querySelector('.wrap').classList.toggle('p2Active', n===2);
   document.documentElement.classList.toggle('noPageZoom', n===2);
   window.scrollTo(0,0);
+  if (n===1 && S.previewMap) requestAnimationFrame(()=> S.previewMap && S.previewMap.resize());
   if (n===2 && S.records.length){
     // the map/chart containers are display:none until this page is shown, so
     // building them earlier would measure a zero-size box. Do the full (and
@@ -1142,7 +1091,7 @@ function showPage(n){
       buildChart();
       mapChartInitialized = true;
     } else {
-      if (S.hasGps && S.mapView) renderMapFrame();
+      if (S.mapView && S.mapView.map){ S.mapView.map.resize(); renderMapFrame(); }
       if (S.chartView) redrawChart();
     }
     renderTimeline(); // its container is width:0 while hidden, so (re)build once actually visible
@@ -1776,430 +1725,162 @@ $('#importSettingsFile').addEventListener('change', e=>{
   e.target.value = '';
 });
 
-/* ============ MAP (slippy tile map, OSM raster tiles) ============ */
+/* ============ MAP (MapLibre GL JS) ============ */
+// The map is MapLibre GL JS (BSD licence, no vendor lock-in): the basemap is
+// just a style, so it can be swapped without touching the rest of the app.
+//   'japan' – 国土地理院「淡色地図」 raster tiles (free, commercial use OK,
+//             attribution "地理院タイル" with a link to the tile list page).
+//             Inverted/desaturated through raster paint props for the dark UI.
+//   'world' – OpenFreeMap vector style (free, no key, commercial use OK,
+//             © OpenStreetMap contributors); falls back to its "liberty" style
+//             if the dark one can't be loaded.
+// The base is chosen from where the ride is (override with ?map=japan|world).
+// Everything the rest of the app needs from the map goes through the small
+// set of functions below (renderRoute / renderMapFrame / mapCenterOn /
+// selectFromMap / renderRoutePreview), so the map can be replaced as a whole.
 const routeWrap = $('#routeWrap');
 const mapBadge = $('#mapBadge');
-const TILE_SIZE = 256;
-// Map tiles: the standard OpenStreetMap tiles (© OpenStreetMap contributors).
-// Kept behind one function so the source can be swapped in a single place.
-function mapTileUrl(z, x, y){
-  return 'https://tile.openstreetmap.org/'+z+'/'+x+'/'+y+'.png';
+const MAP_DARK_BG = '#101114';
+const GSI_ATTRIBUTION = '<a href="https://maps.gsi.go.jp/development/ichiran.html" target="_blank" rel="noopener">地理院タイル</a>';
+// URL options for comparing looks on a real device: ?gsi=pale|std (which GSI
+// map), ?look=dark|plain (inverted dark treatment or the tiles as published).
+function mapStyleFor(base){
+  if (base==='japan'){
+    const q = new URLSearchParams(location.search);
+    const layer = q.get('gsi')==='std' ? 'std' : 'pale';
+    const dark = q.get('look')!=='plain';
+    const paint = dark
+      // grey-scale then invert the brightness range: light land -> dark, dark labels -> light
+      ? { 'raster-saturation':-1, 'raster-brightness-min':0.9, 'raster-brightness-max':0.05, 'raster-contrast':0.15, 'raster-fade-duration':0 }
+      : { 'raster-fade-duration':0 };
+    return {
+      version: 8,
+      sources: { gsi: { type:'raster', tiles:['https://cyberjapandata.gsi.go.jp/xyz/'+layer+'/{z}/{x}/{y}.png'], tileSize:256, minzoom:2, maxzoom:18, attribution: GSI_ATTRIBUTION } },
+      layers: [
+        { id:'bg', type:'background', paint:{ 'background-color': dark ? MAP_DARK_BG : '#e9e9e9' } },
+        { id:'gsi', type:'raster', source:'gsi', paint },
+      ],
+    };
+  }
+  return 'https://tiles.openfreemap.org/styles/dark';
+}
+function chooseMapBase(lat, lon){
+  const q = new URLSearchParams(location.search).get('map');
+  if (q==='japan' || q==='world') return q;
+  return (lat>=20 && lat<=46.5 && lon>=122 && lon<=154) ? 'japan' : 'world';
 }
 let tileErrorShown = false;
-
-function lonLatToWorld(lon, lat, zoom){
-  const scale = TILE_SIZE * Math.pow(2, zoom);
-  const x = (lon+180)/360*scale;
-  const sinLat = Math.max(-0.9999, Math.min(0.9999, Math.sin(lat*Math.PI/180)));
-  const y = (0.5 - Math.log((1+sinLat)/(1-sinLat))/(4*Math.PI)) * scale;
-  return [x,y];
+function mapErrorBanner(){
+  if (tileErrorShown) return;
+  tileErrorShown = true;
+  showHeaderMsg('地図を読み込めませんでした(ネットワーク制限、または配信サーバー側の一時的な問題の可能性があります)', true);
 }
-function worldToLonLat(x, y, zoom){
-  const scale = TILE_SIZE * Math.pow(2, zoom);
-  const lon = x/scale*360 - 180;
-  const n = Math.PI - 2*Math.PI*y/scale;
-  const lat = 180/Math.PI*Math.atan(0.5*(Math.exp(n)-Math.exp(-n)));
-  return [lon, lat];
+function mapLibreMissing(el){
+  el.classList.add('empty');
+  el.innerHTML = '<span>地図ライブラリ(MapLibre)を読み込めませんでした</span>';
 }
-function fitZoomLevel(minLat,maxLat,minLon,maxLon, vw, vh){
-  const pad = 50;
-  for (let z=18; z>=2; z--){
-    const p1 = lonLatToWorld(minLon, maxLat, z);
-    const p2 = lonLatToWorld(maxLon, minLat, z);
-    if (Math.abs(p2[0]-p1[0]) <= vw-pad*2 && Math.abs(p2[1]-p1[1]) <= vh-pad*2) return z;
-  }
-  return 2;
+function destroyMainMap(){
+  if (S.mapView && S.mapView.map){ try{ S.mapView.ro && S.mapView.ro.disconnect(); S.mapView.map.remove(); }catch(e){} }
+  S.mapView = null;
+}
+function gpsRecords(){ return S.records.filter(r=>r.lat!=null && r.lon!=null); }
+function routeBounds(recs){
+  let minLat=90,maxLat=-90,minLon=180,maxLon=-180;
+  recs.forEach(r=>{
+    if (r.lat<minLat) minLat=r.lat; if (r.lat>maxLat) maxLat=r.lat;
+    if (r.lon<minLon) minLon=r.lon; if (r.lon>maxLon) maxLon=r.lon;
+  });
+  return {minLat,maxLat,minLon,maxLon, midLat:(minLat+maxLat)/2, midLon:(minLon+maxLon)/2};
+}
+function routeCoords(recs, maxPts){
+  const stride = Math.max(1, Math.floor(recs.length/maxPts));
+  const out = [];
+  recs.forEach((r,i)=>{ if (i%stride===0 || i===recs.length-1) out.push([r.lon, r.lat, r]); });
+  return out;
+}
+// the route line (dark casing + coloured line), re-added whenever a style loads
+function addRouteLayers(map, coords){
+  const data = { type:'Feature', geometry:{ type:'LineString', coordinates: coords.map(c=>[c[0],c[1]]) } };
+  if (map.getSource('route')) return;
+  map.addSource('route', { type:'geojson', data });
+  map.addLayer({ id:'route-casing', type:'line', source:'route', layout:{'line-cap':'round','line-join':'round'}, paint:{'line-color':'#000000','line-opacity':.55,'line-width':6.5} });
+  map.addLayer({ id:'route-line', type:'line', source:'route', layout:{'line-cap':'round','line-join':'round'}, paint:{'line-color':cssVar('--speed'),'line-width':3.5,'line-opacity':.95} });
+}
+function mapDot(cls, text){
+  const el = document.createElement('div');
+  el.className = cls;
+  if (text!=null) el.textContent = text;
+  return el;
+}
+function addMarker(map, el, lon, lat){
+  return new maplibregl.Marker({ element: el, anchor:'center' }).setLngLat([lon, lat]).addTo(map);
+}
+function standardMapControls(map){
+  map.dragRotate.disable();
+  map.touchZoomRotate.disableRotation();
+  map.keyboard.disable();
+  map.addControl(new maplibregl.AttributionControl({ compact:true }), 'top-right');
+  map.addControl(new maplibregl.ScaleControl({ maxWidth:110, unit:'metric' }), 'bottom-left');
+}
+// 500 m scale-bar reading at this latitude and viewport width, as a (fractional) MapLibre zoom
+function zoomForScaleMeters(targetMeters, lat, vw){
+  const maxWidthPx = Math.max(40, Math.min(110, vw*0.35));
+  const metersPerPixel = targetMeters*1.2 / maxWidthPx;
+  const z256 = Math.log2(156543.03392 * Math.cos(lat*Math.PI/180) / metersPerPixel);
+  return Number.isFinite(z256) ? z256-1 : 14; // MapLibre's world is 512px wide at zoom 0 (one level above 256px tiles)
 }
 
 function renderRoute(){
+  destroyMainMap();
   if (!S.hasGps){
     routeWrap.classList.add('empty');
     routeWrap.innerHTML = '<span>この記録には位置情報(GPS)がありません</span>';
     return;
   }
+  if (!window.maplibregl){ mapLibreMissing(routeWrap); return; }
   routeWrap.classList.remove('empty');
   tileErrorShown = false;
-  tileElements = new Map(); // the tileLayer div below is rebuilt fresh, so any cached elements from before are gone
-  window.__mapTileError = function(){
-    if (tileErrorShown) return;
-    tileErrorShown = true;
-    showHeaderMsg('地図タイルを読み込めませんでした(ネットワーク制限、またはOSMサーバー側の一時的なブロックの可能性があります)', true);
-  };
-  window.__mapTileSuccess = function(){
-    if (!tileErrorShown) return;
-    tileErrorShown = false;
-    hideHeaderMsg();
-  };
-  const pts = S.records.filter(r=>r.lat!=null && r.lon!=null);
-  const lats = pts.map(p=>p.lat), lons = pts.map(p=>p.lon);
-  const minLat=Math.min(...lats), maxLat=Math.max(...lats), minLon=Math.min(...lons), maxLon=Math.max(...lons);
-  const midLat=(minLat+maxLat)/2, midLon=(minLon+maxLon)/2;
-
   routeWrap.innerHTML =
-    '<div id="mapViewport" style="position:absolute;inset:0;overflow:hidden;cursor:grab;">'+
-      '<div id="tileLayer" style="position:absolute;top:0;left:0;width:0;height:0;transition:transform .18s ease-out;"></div>'+
-      '<svg id="routeSvg" style="position:absolute;top:0;left:0;pointer-events:none;transition:transform .18s ease-out;"></svg>'+
-    '</div>'+
-    '<div style="position:absolute;top:6px;right:6px;font-size:10px;background:rgba(0,0,0,.6);color:#c8ccd2;padding:1px 6px;border-radius:5px;">© OpenStreetMap contributors</div>'+
-    '<div id="mapScale" style="position:absolute;bottom:8px;left:6px;pointer-events:none;">'+
-      '<div id="mapScaleBar" style="height:4px;border:1.5px solid #e6e8eb;border-top:none;background:rgba(0,0,0,.4);"></div>'+
-      '<div id="mapScaleLabel" style="font-size:10.5px;color:#e6e8eb;background:rgba(0,0,0,.6);display:inline-block;padding:0 4px;border-radius:3px;margin-top:2px;"></div>'+
-    '</div>'+
-    '<div style="position:absolute;bottom:8px;right:6px;display:flex;flex-direction:column;gap:5px;">'+
+    '<div id="mapGL" style="position:absolute;inset:0;"></div>'+
+    '<div style="position:absolute;bottom:8px;right:6px;display:flex;flex-direction:column;gap:5px;z-index:2;">'+
       '<button id="mapGoogleSearch" class="small mapCtrlBtn" type="button" title="Google マップで検索">📍</button>'+
     '</div>';
-
+  const recs = gpsRecords();
+  const b = routeBounds(recs);
+  const coords = routeCoords(recs, 3000);
+  S.routeLonLat = coords.map(c=>({lon:c[0], lat:c[1], idx:S.records.indexOf(c[2])}));
+  S.routeStartEnd = { start:{lon:recs[0].lon, lat:recs[0].lat}, end:{lon:recs[recs.length-1].lon, lat:recs[recs.length-1].lat} };
+  const base = chooseMapBase(b.midLat, b.midLon);
   const rect = routeWrap.getBoundingClientRect();
-  // If a selection is already set (e.g. right after a fresh FIT import,
-  // which pre-selects the very start of the ride), open the map centred on
-  // that point at a 500m scale-bar reading, rather than the whole-route
-  // overview — the person can always zoom back out from there.
-  let zoom, cx, cy;
+  // If a selection is already set (e.g. right after a fresh FIT import, which
+  // pre-selects the very start of the ride), open centred on that point at a
+  // 500 m scale-bar reading rather than the whole-route overview.
   const selRec = S.selection ? S.records[S.selection.idx] : null;
+  const opts = { container:'mapGL', style:mapStyleFor(base), attributionControl:false, minZoom:2, maxZoom:19, fadeDuration:0,
+    dragRotate:false, pitchWithRotate:false, touchPitch:false };
   if (selRec && selRec.lat!=null && selRec.lon!=null){
-    zoom = zoomForScaleMeters(500, selRec.lat, rect.width);
-    [cx, cy] = lonLatToWorld(selRec.lon, selRec.lat, zoom);
+    opts.center = [selRec.lon, selRec.lat];
+    opts.zoom = zoomForScaleMeters(500, selRec.lat, rect.width);
   } else {
-    zoom = fitZoomLevel(minLat, maxLat, minLon, maxLon, rect.width, rect.height);
-    [cx, cy] = lonLatToWorld(midLon, midLat, zoom);
+    opts.bounds = [[b.minLon,b.minLat],[b.maxLon,b.maxLat]];
+    opts.fitBoundsOptions = { padding:50, animate:false };
   }
-  S.mapView = {cx, cy, zoom, minZoom: Math.max(2, zoom-3), maxZoom: 18};
-
-  const stride = Math.max(1, Math.floor(S.records.length/3000));
-  const routeLonLat = [];
-  S.records.forEach((r,idx)=>{
-    if (r.lat==null || r.lon==null) return;
-    if (idx % stride !== 0 && idx !== S.records.length-1) return;
-    routeLonLat.push({lon:r.lon, lat:r.lat, idx});
+  const map = new maplibregl.Map(opts);
+  standardMapControls(map);
+  const mv = { map, base, ready:false, markers:{ivs:[]}, styleFallbackDone:false };
+  S.mapView = mv;
+  map.on('style.load', ()=>{ addRouteLayers(map, coords); mv.ready = true; renderMapFrame(); });
+  map.on('click', e=> selectFromMap(e.point));
+  map.on('error', e=>{
+    const err = e && e.error;
+    // a vector style that can't be fetched: fall back once to OpenFreeMap's "liberty" style
+    if (base==='world' && !mv.styleFallbackDone && !mv.ready){
+      mv.styleFallbackDone = true; map.setStyle('https://tiles.openfreemap.org/styles/liberty'); return;
+    }
+    if (err) mapErrorBanner();
   });
-  S.routeLonLat = routeLonLat;
-  S.routeStartEnd = {
-    start: {lon: S.records.find(r=>r.lat!=null).lon, lat: S.records.find(r=>r.lat!=null).lat},
-    end: (()=>{ const r=[...S.records].reverse().find(r=>r.lat!=null); return {lon:r.lon, lat:r.lat}; })()
-  };
-  S.routeWorldZoom = null;
-  renderMapFrame();
-  attachMapInteraction();
-}
-
-function computeRouteWorldPts(zoom){
-  S.routeWorldPts = S.routeLonLat.map(p=>{
-    const [wx,wy] = lonLatToWorld(p.lon, p.lat, zoom);
-    return {wx,wy,idx:p.idx};
-  });
-  S.routeWorldZoom = zoom;
-}
-
-const SCALE_NICE_METERS = [1,2,5,10,20,50,100,200,500,1000,2000,5000,10000,20000,50000,100000,200000,500000,1000000,2000000];
-// Inverse of the scale-bar logic below: what zoom level makes the scale
-// bar's own "nice" chosen value read as targetMeters, at this latitude and
-// viewport width (aiming comfortably inside the range that would choose
-// targetMeters rather than the next value up or down).
-function zoomForScaleMeters(targetMeters, lat, vw){
-  // Guard against vw being 0 (the map container's flex-computed size not
-  // having settled yet the very first time this runs) — dividing by a
-  // near-zero maxWidthPx would send zoom to -Infinity, which then silently
-  // broke every tile coordinate computed from it, including on later pans/
-  // zooms, since S.mapView.zoom itself started out invalid.
-  const maxWidthPx = Math.max(40, Math.min(110, vw*0.35));
-  const targetMaxMeters = targetMeters * 1.2; // safely inside [targetMeters, 2*targetMeters)
-  const metersPerPixel = targetMaxMeters / maxWidthPx;
-  const z = Math.log2(156543.03392 * Math.cos(lat*Math.PI/180) / metersPerPixel);
-  // OSM tile URLs need an *integer* zoom (fractional zoom isn't a thing this
-  // app's tile-fetching supports) — a fractional value here silently made
-  // every tile request 404, which is why nothing loaded even after the
-  // earlier -Infinity fix.
-  return Number.isFinite(z) ? Math.round(z) : 15;
-}
-function updateScaleBar(zoom, centerLat, vw){
-  const bar = $('#mapScaleBar'), label = $('#mapScaleLabel');
-  if (!bar || !label) return;
-  const maxWidthPx = Math.min(110, vw*0.35);
-  const metersPerPixel = 156543.03392 * Math.cos(centerLat*Math.PI/180) / Math.pow(2, zoom);
-  const maxMeters = maxWidthPx * metersPerPixel;
-  let chosen = SCALE_NICE_METERS[0];
-  for (const v of SCALE_NICE_METERS){ if (v <= maxMeters) chosen = v; else break; }
-  const widthPx = chosen / metersPerPixel;
-  bar.style.width = widthPx.toFixed(1)+'px';
-  label.textContent = chosen>=1000 ? (chosen/1000)+' km' : chosen+' m';
-}
-
-// Persistent map of "z_x_y" -> <img> element, reused across renderMapFrame
-// calls during a pan/zoom gesture. Previously every frame rebuilt the whole
-// tile layer's innerHTML from scratch, discarding and recreating an <img>
-// for every visible tile — including ones that hadn't actually moved —
-// which meant a brief blank flash for tiles that were already loaded and
-// on screen a moment earlier. Reusing the same element for a tile that's
-// still visible (just repositioning it) keeps it painted continuously.
-let tileElements = new Map();
-
-function renderMapFrame(){
-  const tileLayer = $('#tileLayer');
-  const svg = $('#routeSvg');
-  if (!tileLayer || !svg) return;
-  tileLayer.style.transform=''; svg.style.transform='';
-  const rect = routeWrap.getBoundingClientRect();
-  const vw = rect.width, vh = rect.height;
-  const {cx, cy, zoom} = S.mapView;
-  const topLeftX = cx - vw/2, topLeftY = cy - vh/2;
-  const n = Math.pow(2, zoom);
-
-  const txMin = Math.floor(topLeftX/TILE_SIZE), txMax = Math.floor((topLeftX+vw)/TILE_SIZE);
-  const tyMin = Math.max(0, Math.floor(topLeftY/TILE_SIZE)), tyMax = Math.min(n-1, Math.floor((topLeftY+vh)/TILE_SIZE));
-  const neededKeys = new Set();
-  for (let tx=txMin; tx<=txMax; tx++){
-    const wrappedX = ((tx % n)+n) % n;
-    for (let ty=tyMin; ty<=tyMax; ty++){
-      const key = zoom+'_'+wrappedX+'_'+ty;
-      neededKeys.add(key);
-      const left = tx*TILE_SIZE - topLeftX, top = ty*TILE_SIZE - topLeftY;
-      let img = tileElements.get(key);
-      if (!img){
-        img = document.createElement('img');
-        img.src = mapTileUrl(zoom, wrappedX, ty);
-        img.draggable = false;
-        img.loading = 'lazy';
-        img.alt = '';
-        img.style.position = 'absolute';
-        img.style.width = TILE_SIZE+'px'; img.style.height = TILE_SIZE+'px';
-        img.style.pointerEvents = 'none';
-        img.onerror = ()=>{ window.__mapTileError && window.__mapTileError(); };
-        img.onload = ()=>{ window.__mapTileSuccess && window.__mapTileSuccess(); };
-        tileLayer.appendChild(img);
-        tileElements.set(key, img);
-      }
-      img.style.left = left+'px';
-      img.style.top = top+'px';
-    }
-  }
-  // drop tiles that scrolled out of view, so the cache doesn't grow forever
-  for (const [key, img] of tileElements){
-    if (!neededKeys.has(key)){ img.remove(); tileElements.delete(key); }
-  }
-
-  if (S.routeWorldZoom !== zoom) computeRouteWorldPts(zoom);
-  svg.setAttribute('width', vw); svg.setAttribute('height', vh);
-  svg.setAttribute('viewBox', '0 0 '+vw+' '+vh);
-  let d = '';
-  S.routeWorldPts.forEach(p=>{
-    const x=(p.wx-topLeftX).toFixed(1), y=(p.wy-topLeftY).toFixed(1);
-    d += (d?' L ':'M ') + x+' '+y;
-  });
-  const [sx0,sy0] = lonLatToWorld(S.routeStartEnd.start.lon, S.routeStartEnd.start.lat, zoom);
-  const [sx1,sy1] = lonLatToWorld(S.routeStartEnd.end.lon, S.routeStartEnd.end.lat, zoom);
-  let cursorHtml = '';
-  if (S.selection){
-    const r = S.records[S.selection.idx];
-    if (r.lat!=null && r.lon!=null){
-      const [wx,wy] = lonLatToWorld(r.lon, r.lat, zoom);
-      cursorHtml = '<circle cx="'+(wx-topLeftX)+'" cy="'+(wy-topLeftY)+'" r="7" fill="#fff" stroke="'+cssVar('--power')+'" stroke-width="3"/>';
-    }
-  }
-  // number markers at each interval's start point, matching the numbered
-  // badges shown on the interval cards in the sidebar
-  let ivMarkersHtml = '';
-  S.intervals.forEach((iv,i)=>{
-    let r = nearestRecordByElapsed(iv.start);
-    let approximate = false;
-    if (!r) return;
-    if (r.lat==null || r.lon==null){
-      const fallback = nearestGpsRecordTo(r);
-      if (!fallback) return;
-      r = fallback; approximate = true;
-    }
-    const [wx,wy] = lonLatToWorld(r.lon, r.lat, zoom);
-    const x=(wx-topLeftX), y=(wy-topLeftY);
-    ivMarkersHtml += '<g'+(approximate?' opacity="0.5"':'')+'>'+
-      '<circle cx="'+x+'" cy="'+y+'" r="9" fill="'+cssVar('--accent')+'" stroke="#fff" stroke-width="1.5"/>'+
-      '<text x="'+x+'" y="'+y+'" text-anchor="middle" dominant-baseline="central" font-size="10.5" font-weight="700" fill="#08211d">'+(i+1)+'</text>'+
-      '</g>';
-  });
-  svg.innerHTML =
-    '<path d="'+d+'" fill="none" stroke="'+cssVar('--speed')+'" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" opacity="0.92"/>'+
-    '<circle cx="'+(sx0-topLeftX)+'" cy="'+(sy0-topLeftY)+'" r="6" fill="#3fbf6a" stroke="#fff" stroke-width="1.5"/>'+
-    '<circle cx="'+(sx1-topLeftX)+'" cy="'+(sy1-topLeftY)+'" r="6" fill="'+cssVar('--hr')+'" stroke="#fff" stroke-width="1.5"/>'+
-    ivMarkersHtml+
-    cursorHtml;
-
-  const [, centerLat] = worldToLonLat(cx, cy, zoom);
-  updateScaleBar(zoom, centerLat, vw);
-}
-
-let mapFrameQueued = false;
-function scheduleMapFrame(){
-  if (mapFrameQueued) return;
-  mapFrameQueued = true;
-  requestAnimationFrame(()=>{ mapFrameQueued=false; renderMapFrame(); });
-}
-
-function computeZoomedCenter(anchorX, anchorY, fromCx, fromCy, fromZoom, toZoom, vw, vh){
-  const topLeftX = fromCx - vw/2, topLeftY = fromCy - vh/2;
-  const worldX = topLeftX+anchorX, worldY = topLeftY+anchorY;
-  const ratio = Math.pow(2, toZoom-fromZoom);
-  return [worldX*ratio - anchorX + vw/2, worldY*ratio - anchorY + vh/2];
-}
-
-function zoomMapAt(screenX, screenY, dz){
-  const rect = routeWrap.getBoundingClientRect();
-  const vw = rect.width, vh = rect.height;
-  const v = S.mapView;
-  const newZoom = Math.max(v.minZoom, Math.min(v.maxZoom, v.zoom + dz));
-  if (newZoom === v.zoom) return;
-  const [ncx, ncy] = computeZoomedCenter(screenX, screenY, v.cx, v.cy, v.zoom, newZoom, vw, vh);
-  v.cx = ncx; v.cy = ncy; v.zoom = newZoom;
-  scheduleMapFrame();
-}
-
-function attachMapInteraction(){
-  const vp = $('#mapViewport');
-  const tileLayer = $('#tileLayer'), svg = $('#routeSvg');
-  if (!vp) return;
-  // damping: a full doubling of pinch finger-distance moves the zoom by
-  // PINCH_SENSITIVITY levels rather than a full level — lower this to make
-  // pinch feel less twitchy, raise it to make pinch more responsive.
-  const PINCH_SENSITIVITY = 1.0;
-  let dragging=false, lastX=0, lastY=0, moved=false;
-  // pinch state: gesture anchored at start, live visual scale only, snapped to a
-  // discrete zoom level on release — this keeps small finger movements from
-  // causing large jumps, since the map only re-renders once per gesture.
-  let pinch = null;
-  // Track how many pointers (fingers) are currently down, so a second finger
-  // touching down mid-drag hands control over to the two-finger pinch
-  // handler below instead of also panning via this single-pointer drag.
-  const activePointers = new Set();
-
-  // 2D momentum for map panning — mirrors the chart/timeline's "recent
-  // window" velocity approach (last ~80ms before release, not a long-memory
-  // average), since this app never had any map momentum at all before.
-  let mapMoveHistory = [], mapMomentumRAF = null;
-  function pushMapSample(x,y,t){
-    mapMoveHistory.push({x,y,t});
-    const cutoff = t-80;
-    while (mapMoveHistory.length>2 && mapMoveHistory[0].t<cutoff) mapMoveHistory.shift();
-  }
-  function mapRecentVelocity(){
-    if (mapMoveHistory.length<2) return {vx:0, vy:0};
-    const a=mapMoveHistory[0], b=mapMoveHistory[mapMoveHistory.length-1];
-    const dt=b.t-a.t;
-    return dt>0 ? {vx:(b.x-a.x)/dt, vy:(b.y-a.y)/dt} : {vx:0, vy:0};
-  }
-  function stopMapMomentum(){ if (mapMomentumRAF!=null){ cancelAnimationFrame(mapMomentumRAF); mapMomentumRAF=null; } }
-  function startMapMomentum(vx0, vy0){
-    // same iOS UIScrollView-derived physics as startMomentum() (2D version)
-    let vx=vx0, vy=vy0, lastT=performance.now();
-    function step(t){
-      const dt = Math.min(48, t-lastT); lastT=t;
-      vx *= Math.pow(MOMENTUM_DECELERATION, dt); vy *= Math.pow(MOMENTUM_DECELERATION, dt);
-      if (Math.abs(vx)<MOMENTUM_STOP_THRESHOLD && Math.abs(vy)<MOMENTUM_STOP_THRESHOLD){ mapMomentumRAF=null; return; }
-      S.mapView.cx -= vx*dt; S.mapView.cy -= vy*dt;
-      scheduleMapFrame();
-      mapMomentumRAF = requestAnimationFrame(step);
-    }
-    mapMomentumRAF = requestAnimationFrame(step);
-  }
-  vp.addEventListener('pointerdown', e=>{
-    activePointers.add(e.pointerId);
-    if (activePointers.size > 1){ dragging=false; return; }
-    stopMapMomentum();
-    dragging=true; moved=false; lastX=e.clientX; lastY=e.clientY;
-    mapMoveHistory = [{x:e.clientX, y:e.clientY, t:performance.now()}];
-    vp.style.cursor='grabbing';
-    vp.setPointerCapture(e.pointerId);
-  });
-  vp.addEventListener('pointermove', e=>{
-    if (!dragging || activePointers.size>1) return;
-    const dx=e.clientX-lastX, dy=e.clientY-lastY;
-    if (Math.abs(dx)+Math.abs(dy) > 3) moved=true;
-    S.mapView.cx -= dx; S.mapView.cy -= dy;
-    lastX=e.clientX; lastY=e.clientY;
-    pushMapSample(e.clientX, e.clientY, performance.now());
-    scheduleMapFrame();
-  });
-  vp.addEventListener('pointerup', e=>{
-    activePointers.delete(e.pointerId);
-    const wasDragging = dragging;
-    dragging=false; vp.style.cursor='grab';
-    if (wasDragging && !moved && activePointers.size===0) selectFromMap(e.clientX, e.clientY);
-    else if (wasDragging && moved){
-      const {vx,vy} = mapRecentVelocity();
-      if (Math.abs(vx)>0.02 || Math.abs(vy)>0.02) startMapMomentum(vx, vy);
-    }
-  });
-  vp.addEventListener('pointercancel', e=>{ activePointers.delete(e.pointerId); dragging=false; });
-  // wheel: covers both a real mouse wheel AND a trackpad pinch gesture (the
-  // browser reports trackpad pinch as wheel events, never as touch events,
-  // on non-touchscreen laptops) — so it gets the same damping + smoothing
-  // + snap-on-pause treatment as touch pinch below.
-  const WHEEL_SENSITIVITY = 0.012;
-  const WHEEL_NOISE_FLOOR = 2.2; // ignore tiny trailing deltaY from trackpad momentum/inertia
-  let wheelGesture = null, wheelTimer = null;
-  vp.addEventListener('wheel', e=>{
-    e.preventDefault();
-    if (Math.abs(e.deltaY) < WHEEL_NOISE_FLOOR) return;
-    const rect = vp.getBoundingClientRect();
-    const x = e.clientX-rect.left, y = e.clientY-rect.top;
-    if (!wheelGesture){
-      wheelGesture = { anchorX:x, anchorY:y, startZoom:S.mapView.zoom, startCx:S.mapView.cx, startCy:S.mapView.cy, accum:0 };
-    }
-    wheelGesture.accum += -e.deltaY;
-    const zoomDelta = wheelGesture.accum * WHEEL_SENSITIVITY;
-    const visualScale = Math.pow(2, zoomDelta);
-    const t = 'scale('+visualScale+')';
-    const origin = wheelGesture.anchorX+'px '+wheelGesture.anchorY+'px';
-    if (tileLayer){ tileLayer.style.transformOrigin = origin; tileLayer.style.transform = t; }
-    if (svg){ svg.style.transformOrigin = origin; svg.style.transform = t; }
-    clearTimeout(wheelTimer);
-    wheelTimer = setTimeout(()=>{
-      const v = S.mapView;
-      const rawZoom = wheelGesture.startZoom + wheelGesture.accum * WHEEL_SENSITIVITY;
-      const newZoom = Math.max(v.minZoom, Math.min(v.maxZoom, Math.round(rawZoom)));
-      const [ncx, ncy] = computeZoomedCenter(wheelGesture.anchorX, wheelGesture.anchorY, wheelGesture.startCx, wheelGesture.startCy, wheelGesture.startZoom, newZoom, rect.width, rect.height);
-      v.cx = ncx; v.cy = ncy; v.zoom = newZoom;
-      wheelGesture = null;
-      renderMapFrame();
-    }, 160);
-  }, {passive:false});
-
-  vp.addEventListener('touchstart', e=>{
-    if (e.touches.length===2){
-      const rect = vp.getBoundingClientRect();
-      pinch = {
-        startDist: touchDist(e.touches),
-        midX: (e.touches[0].clientX+e.touches[1].clientX)/2-rect.left,
-        midY: (e.touches[0].clientY+e.touches[1].clientY)/2-rect.top,
-        startZoom: S.mapView.zoom, startCx: S.mapView.cx, startCy: S.mapView.cy,
-        ratio: 1
-      };
-    }
-  }, {passive:true});
-  vp.addEventListener('touchmove', e=>{
-    if (e.touches.length===2 && pinch){
-      e.preventDefault();
-      const nd = touchDist(e.touches);
-      pinch.ratio = nd/pinch.startDist;
-      const zoomDelta = Math.log2(pinch.ratio) * PINCH_SENSITIVITY;
-      const visualScale = Math.pow(2, zoomDelta);
-      const t = 'scale('+visualScale+')';
-      const origin = pinch.midX+'px '+pinch.midY+'px';
-      if (tileLayer){ tileLayer.style.transformOrigin = origin; tileLayer.style.transform = t; }
-      if (svg){ svg.style.transformOrigin = origin; svg.style.transform = t; }
-    }
-  }, {passive:false});
-  vp.addEventListener('touchend', e=>{
-    if (pinch && e.touches.length<2){
-      const rect = vp.getBoundingClientRect();
-      const v = S.mapView;
-      const rawZoom = pinch.startZoom + Math.log2(pinch.ratio) * PINCH_SENSITIVITY;
-      const newZoom = Math.max(v.minZoom, Math.min(v.maxZoom, Math.round(rawZoom)));
-      const [ncx, ncy] = computeZoomedCenter(pinch.midX, pinch.midY, pinch.startCx, pinch.startCy, pinch.startZoom, newZoom, rect.width, rect.height);
-      v.cx = ncx; v.cy = ncy; v.zoom = newZoom;
-      pinch = null;
-      renderMapFrame();
-    }
-  });
-
-  function touchDist(t){ return Math.hypot(t[0].clientX-t[1].clientX, t[0].clientY-t[1].clientY); }
-
+  map.on('data', e=>{ if (tileErrorShown && e.dataType==='source' && e.tile){ tileErrorShown = false; hideHeaderMsg(); } });
+  if (typeof ResizeObserver!=='undefined'){ mv.ro = new ResizeObserver(()=>map.resize()); mv.ro.observe(routeWrap); }
   $('#mapGoogleSearch').addEventListener('click', (e)=>{
     const btn = e.currentTarget;
     if (!S.selection){ flashBtn(btn, '先に地点を選択'); return; }
@@ -2214,19 +1895,92 @@ function flashBtn(btn, msg){
   showHeaderMsg(msg, false);
 }
 
-
-function selectFromMap(clientX, clientY){
-  const rect = routeWrap.getBoundingClientRect();
-  const vw = rect.width, vh = rect.height;
-  const v = S.mapView;
-  const topLeftX = v.cx - vw/2, topLeftY = v.cy - vh/2;
-  const worldX = topLeftX + (clientX-rect.left), worldY = topLeftY + (clientY-rect.top);
+// Refresh everything drawn on top of the map: start/end dots, the numbered
+// interval-start badges and the seek cursor. The route line itself only
+// changes with the ride, so it is not touched here.
+function renderMapFrame(){
+  const mv = S.mapView;
+  if (!mv || !mv.ready) return;
+  const map = mv.map, m = mv.markers;
+  if (!m.start){
+    m.start = addMarker(map, mapDot('mapDot mapDotStart'), S.routeStartEnd.start.lon, S.routeStartEnd.start.lat);
+    m.end = addMarker(map, mapDot('mapDot mapDotEnd'), S.routeStartEnd.end.lon, S.routeStartEnd.end.lat);
+  }
+  // numbered badges at each interval's start point
+  const pts = [];
+  S.intervals.forEach((iv,i)=>{
+    let r = nearestRecordByElapsed(iv.start);
+    if (!r) return;
+    let approximate = false;
+    if (r.lat==null || r.lon==null){
+      const fallback = nearestGpsRecordTo(r);
+      if (!fallback) return;
+      r = fallback; approximate = true;
+    }
+    pts.push({lon:r.lon, lat:r.lat, n:i+1, approximate});
+  });
+  while (m.ivs.length>pts.length){ m.ivs.pop().marker.remove(); }
+  pts.forEach((p,i)=>{
+    let item = m.ivs[i];
+    if (!item){ item = { marker: addMarker(map, mapDot('mapBadgeNum'), p.lon, p.lat), n:null }; m.ivs.push(item); }
+    if (item.n!==p.n){ item.marker.getElement().textContent = p.n; item.n = p.n; }
+    item.marker.getElement().style.opacity = p.approximate ? '.5' : '1';
+    item.marker.setLngLat([p.lon, p.lat]);
+  });
+  // seek cursor
+  const r = S.selection ? S.records[S.selection.idx] : null;
+  if (r && r.lat!=null && r.lon!=null){
+    if (!m.cursor) m.cursor = addMarker(map, mapDot('mapCursor'), r.lon, r.lat);
+    m.cursor.setLngLat([r.lon, r.lat]);
+  } else if (m.cursor){ m.cursor.remove(); m.cursor = null; }
+}
+function mapCenterOn(lon, lat){
+  const mv = S.mapView;
+  if (mv && mv.map) mv.map.jumpTo({ center:[lon, lat] });
+}
+// tap on the map -> select the nearest point of the route
+function selectFromMap(point){
+  const mv = S.mapView;
+  if (!mv || !mv.map || !S.routeLonLat) return;
   let nearest=null, nearestD=Infinity;
-  for (const p of S.routeWorldPts){
-    const dd = (p.wx-worldX)**2 + (p.wy-worldY)**2;
+  for (const p of S.routeLonLat){
+    const s = mv.map.project([p.lon, p.lat]);
+    const dd = (s.x-point.x)**2 + (s.y-point.y)**2;
     if (dd<nearestD){ nearestD=dd; nearest=p; }
   }
-  if (nearest) setSelection(nearest.idx, {clientX, clientY}, 'map');
+  if (nearest) setSelection(nearest.idx, null, 'map');
+}
+
+// Page 1's overview: the same map, not interactive, fitted to the route and
+// showing the numbered interval starts.
+function renderRoutePreview(){
+  const el = $('#routePreviewWrap');
+  if (!el) return;
+  if (S.previewMap){ try{ S.previewMap.remove(); }catch(e){} S.previewMap = null; }
+  if (!S.hasGps){
+    el.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-faint);font-size:13px;">この記録には位置情報(GPS)がありません</div>';
+    return;
+  }
+  if (!window.maplibregl){ el.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-faint);font-size:13px;">地図ライブラリ(MapLibre)を読み込めませんでした</div>'; return; }
+  el.innerHTML = '';
+  const recs = gpsRecords();
+  const b = routeBounds(recs);
+  const coords = routeCoords(recs, 800);
+  const map = new maplibregl.Map({ container:el, style:mapStyleFor(chooseMapBase(b.midLat, b.midLon)), interactive:false, attributionControl:false,
+    bounds:[[b.minLon,b.minLat],[b.maxLon,b.maxLat]], fitBoundsOptions:{ padding:28, animate:false }, fadeDuration:0 });
+  map.addControl(new maplibregl.AttributionControl({ compact:true }), 'bottom-right');
+  S.previewMap = map;
+  map.on('style.load', ()=>{
+    addRouteLayers(map, coords);
+    addMarker(map, mapDot('mapDot mapDotStart mapDotSmall'), recs[0].lon, recs[0].lat);
+    addMarker(map, mapDot('mapDot mapDotEnd mapDotSmall'), recs[recs.length-1].lon, recs[recs.length-1].lat);
+    // numbered markers at each interval's starting position (S.intervals, so this stays right after a JSON import too)
+    S.intervals.forEach((iv,i)=>{
+      const rec = nearestRecordByElapsedIn(recs, iv.start);
+      if (!rec) return;
+      addMarker(map, mapDot('mapBadgeNum mapBadgeSmall', i+1), rec.lon, rec.lat);
+    });
+  });
 }
 
 /* ============ CHART ============ */
@@ -2517,8 +2271,7 @@ function setSelection(idx, clientPos, source){
 
   // graph click (or explicit jump/step) -> recentre the map on that point (same zoom level)
   if ((source==='chart' || source==='both') && S.hasGps && S.mapView && rec.lat!=null && rec.lon!=null){
-    const [wx, wy] = lonLatToWorld(rec.lon, rec.lat, S.mapView.zoom);
-    S.mapView.cx = wx; S.mapView.cy = wy;
+    mapCenterOn(rec.lon, rec.lat);
   }
   if (S.hasGps && S.mapView){ if (seekDragActive || scrollSeeking) renderMapFrameThrottled(); else renderMapFrame(); }
 
