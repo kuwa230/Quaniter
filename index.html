@@ -528,7 +528,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
 // (this session's own publish count so far) is reconstructed from the
 // conversation itself rather than mechanically verified — best-effort, not
 // guaranteed exact. Increment by exactly 1 on every future publish.
-const APP_VERSION = 150;
+const APP_VERSION = 151;
 
 /* ============ FIT PARSER ============ */
 const FIT_EPOCH = 631065600; // seconds between 1970-01-01 and 1989-12-31 (FIT epoch)
@@ -1742,7 +1742,9 @@ const routeWrap = $('#routeWrap');
 const mapBadge = $('#mapBadge');
 const MAP_DARK_BG = '#101114';
 const GSI_ATTRIBUTION = '<a href="https://maps.gsi.go.jp/development/ichiran.html" target="_blank" rel="noopener">地理院タイル</a>';
-// URL options for comparing looks on a real device: ?gsi=std|pale (which GSI
+// URL options for comparing looks on a real device: ?map=world|japan|osm (default
+// world = OpenFreeMap), ?style=liberty|bright|positron|dark (OpenFreeMap style),
+// ?gsi=std|pale (which GSI
 // map, default std), ?look=dark (inverted dark treatment; default is the tiles
 // as published, which read much better), ?map=osm (plain OpenStreetMap raster
 // tiles — for personal testing only, not for a commercial release).
@@ -1771,12 +1773,12 @@ function mapStyleFor(base){
       ],
     };
   }
-  return 'https://tiles.openfreemap.org/styles/dark';
+  return 'https://tiles.openfreemap.org/styles/'+(q.get('style') || 'liberty');
 }
 function chooseMapBase(lat, lon){
   const q = new URLSearchParams(location.search).get('map');
   if (q==='japan' || q==='world' || q==='osm') return q;
-  return (lat>=20 && lat<=46.5 && lon>=122 && lon<=154) ? 'japan' : 'world';
+  return 'world'; // OpenFreeMap everywhere by default (GSI is opt-in with ?map=japan)
 }
 let tileErrorShown = false;
 function mapErrorBanner(){
@@ -1883,7 +1885,7 @@ function renderRoute(){
   map.on('error', e=>{
     const err = e && e.error;
     // a vector style that can't be fetched: fall back once to OpenFreeMap's "liberty" style
-    if (base==='world' && !mv.styleFallbackDone && !mv.ready){
+    if (base==='world' && !mv.styleFallbackDone && !mv.ready && (new URLSearchParams(location.search).get('style')||'liberty')!=='liberty'){
       mv.styleFallbackDone = true; map.setStyle('https://tiles.openfreemap.org/styles/liberty'); return;
     }
     if (err) mapErrorBanner();
