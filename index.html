@@ -528,7 +528,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
 // (this session's own publish count so far) is reconstructed from the
 // conversation itself rather than mechanically verified — best-effort, not
 // guaranteed exact. Increment by exactly 1 on every future publish.
-const APP_VERSION = 154;
+const APP_VERSION = 155;
 
 /* ============ FIT PARSER ============ */
 const FIT_EPOCH = 631065600; // seconds between 1970-01-01 and 1989-12-31 (FIT epoch)
@@ -1201,12 +1201,15 @@ const AUTO_SPLIT = {
   // than REST_GAP_S), continuously for >= REST_MIN_S, with every record
   // staying within REST_RADIUS_M of the stop's centre. A burst of movement
   // lasting up to REST_BLIP_S inside a rest does not end it.
-  REST_SPEED_KMH: 3.0, REST_MIN_S: 250, REST_RADIUS_M: 100, REST_GAP_S: 10, REST_BLIP_S: 30,
-  // The records right before/after an unrecorded gap (auto-pause) are often
-  // MOVING ones: the device only starts recording again some distance after
-  // the rider has set off (150 m away at 15-25 km/h on a real ride). They are
-  // allowed this far from the stop instead of REST_RADIUS_M.
-  REST_RESUME_M: 250,
+  REST_SPEED_KMH: 3.0, REST_MIN_S: 250, REST_RADIUS_M: 100, REST_GAP_S: 10, REST_BLIP_S: 30, REST_BLIP_MAX_KMH: 10,
+  // An unrecorded gap (auto-pause) is often followed by a restart some distance
+  // from where the rider stopped: on real rides 150-570 m (rolling off from an
+  // aid station before the device resumes). So a gap is not tested against
+  // the 100 m radius; the position jump across it only has to be plausible
+  // for someone who stayed put: at most REST_RESUME_M plus walking pace
+  // (REST_WALK_MPS) for the length of the gap. Someone riding through a gap
+  // (device off, GPS lost) covers far more than that and is not a rest.
+  REST_RESUME_M: 150, REST_WALK_MPS: 1.4,
   // Stopped at the very END of the recording (arrived, then stopped the
   // device): cut it after this much stillness, without waiting for REST_MIN_S.
   REST_END_MIN_S: 30,
@@ -1252,32 +1255,52 @@ function detectRests(recs){
   //    seconds of movement are one rest. (The distance between the two runs
   //    is measured slow-sample to slow-sample, so it is one sample interval
   //    longer on each side than the burst of moving samples itself.)
-  const merged = [];
+  const groups = [];
   raw.forEach(r=>{
-    const prev = merged[merged.length-1];
-    if (prev && r.start-prev.end <= P.REST_BLIP_S+2){ prev.end = r.end; prev.last = r.last; }
-    else merged.push({...r});
+    const prev = groups[groups.length-1];
+    if (prev && r.start-prev[prev.length-1].end <= P.REST_BLIP_S+2) prev.push(r);
+    else groups.push([r]);
   });
-  // 3) keep the long enough ones that stayed put: the stationary records
-  //    (slow ones) must all lie within REST_RADIUS_M of their centre, and the
-  //    moving ones at the edges of a gap (see REST_RESUME_M) within that
-  //    larger allowance
+  // ... but a short stop at the END of a group, reached only after riding off
+  // (the burst before it peaks above REST_BLIP_MAX_KMH), is not part of the
+  // rest: a 3 s stop right after setting off from an aid station must not
+  // drag the end of the rest along across the 30 s of riding before it.
+  // (Walking the bike about, at 3-5 km/h, is still a fluctuation; and a
+  // short stop at the START of a rest belongs to it: the rider has stopped.)
+  const peakSpeed = (a, b)=>{ let m = 0; for (let k=a+1; k<b; k++){ const v = recs[k].speed!=null ? recs[k].speed*3.6 : 0; if (v>m) m = v; } return m; };
+  const merged = groups.map(g=>{
+    const m = g.slice();
+    while (m.length>1 && m[m.length-1].end-m[m.length-1].start < P.REST_BLIP_S &&
+           peakSpeed(m[m.length-2].last, m[m.length-1].first) > P.REST_BLIP_MAX_KMH) m.pop();
+    return { start:m[0].start, first:m[0].first, end:m[m.length-1].end, last:m[m.length-1].last };
+  });
+  // 3) keep the long enough ones that stayed put: within each recorded stretch
+  //    the stationary (slow) records must all lie within REST_RADIUS_M of their
+  //    centre, and the jump across each gap must be one a person standing
+  //    around could make (see REST_RESUME_M / REST_WALK_MPS)
   merged.forEach(r=>{
     const atEnd = r.last >= n-1;                       // runs on to the last record
     if (r.end-r.start < (atEnd ? P.REST_END_MIN_S : P.REST_MIN_S)) return;
-    const still = [], moving = [];
-    for (let k=r.first; k<=r.last; k++){
+    let ok = true, seg = [];
+    const checkSeg = ()=>{
+      if (seg.length>1){
+        const clat = seg.reduce((a,x)=>a+x.lat,0)/seg.length, clon = seg.reduce((a,x)=>a+x.lon,0)/seg.length;
+        if (!seg.every(x=>haversineM(clat, clon, x.lat, x.lon) <= P.REST_RADIUS_M)) ok = false;
+      }
+      seg = [];
+    };
+    for (let k=r.first; k<=r.last && ok; k++){
       const x = recs[k];
-      if (x.lat==null || x.lon==null) continue;
-      (slow(x) ? still : moving).push(x);
+      if (k>r.first){
+        const pv = recs[k-1], g = x.elapsed-pv.elapsed;
+        if (g>P.REST_GAP_S){
+          checkSeg();
+          if (pv.lat!=null && x.lat!=null && haversineM(pv.lat, pv.lon, x.lat, x.lon) > P.REST_RESUME_M + P.REST_WALK_MPS*g) ok = false;
+        }
+      }
+      if (x.lat!=null && slow(x)) seg.push(x);
     }
-    const base = still.length ? still : moving;
-    let ok = true;
-    if (base.length){
-      const clat = base.reduce((a,x)=>a+x.lat,0)/base.length, clon = base.reduce((a,x)=>a+x.lon,0)/base.length;
-      const within = (list, m)=> list.every(x=>haversineM(clat, clon, x.lat, x.lon) <= m);
-      ok = within(still, P.REST_RADIUS_M) && within(moving, P.REST_RESUME_M);
-    }
+    checkSeg();
     if (ok) out.push({start:r.start, end:r.end});
   });
   return out;
@@ -1422,6 +1445,7 @@ async function processFitData(arrayBuffer, displayName){
     renderRideSummary();
     renderRoutePreview();
     $('#resultsWrap').innerHTML = '';
+    lastResults = null; // results belong to the previous ride; an exported JSON must not carry them over
     setExportEnabled(false);
     // renderTimeline() (and some of the above) call saveState(), which marks
     // S.dirty=true as a side effect — but this is the initial render of a
