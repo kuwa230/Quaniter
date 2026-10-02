@@ -528,7 +528,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
 // (this session's own publish count so far) is reconstructed from the
 // conversation itself rather than mechanically verified — best-effort, not
 // guaranteed exact. Increment by exactly 1 on every future publish.
-const APP_VERSION = 151;
+const APP_VERSION = 152;
 
 /* ============ FIT PARSER ============ */
 const FIT_EPOCH = 631065600; // seconds between 1970-01-01 and 1989-12-31 (FIT epoch)
@@ -1202,6 +1202,11 @@ const AUTO_SPLIT = {
   // staying within REST_RADIUS_M of the stop's centre. A burst of movement
   // lasting up to REST_BLIP_S inside a rest does not end it.
   REST_SPEED_KMH: 3.0, REST_MIN_S: 250, REST_RADIUS_M: 100, REST_GAP_S: 10, REST_BLIP_S: 30,
+  // The records right before/after an unrecorded gap (auto-pause) are often
+  // MOVING ones: the device only starts recording again some distance after
+  // the rider has set off (150 m away at 15-25 km/h on a real ride). They are
+  // allowed this far from the stop instead of REST_RADIUS_M.
+  REST_RESUME_M: 250,
   // climb: a net rise (valley to top) of >= CLIMB_MIN_GAIN_M, or an average
   // gradient >= CLIMB_MIN_GRADE over >= CLIMB_MIN_DIST_M.
   // A climb is not broken by dips/flats that scale with its size: while
@@ -1250,16 +1255,24 @@ function detectRests(recs){
     if (prev && r.start-prev.end <= P.REST_BLIP_S+2){ prev.end = r.end; prev.last = r.last; }
     else merged.push({...r});
   });
-  // 3) keep the long enough ones whose positioned records all stay within
-  //    the radius of their centre
+  // 3) keep the long enough ones that stayed put: the stationary records
+  //    (slow ones) must all lie within REST_RADIUS_M of their centre, and the
+  //    moving ones at the edges of a gap (see REST_RESUME_M) within that
+  //    larger allowance
   merged.forEach(r=>{
     if (r.end-r.start < P.REST_MIN_S) return;
-    const pts = [];
-    for (let k=r.first; k<=r.last; k++) if (recs[k].lat!=null && recs[k].lon!=null) pts.push(recs[k]);
+    const still = [], moving = [];
+    for (let k=r.first; k<=r.last; k++){
+      const x = recs[k];
+      if (x.lat==null || x.lon==null) continue;
+      (slow(x) ? still : moving).push(x);
+    }
+    const base = still.length ? still : moving;
     let ok = true;
-    if (pts.length>1){
-      const clat = pts.reduce((a,x)=>a+x.lat,0)/pts.length, clon = pts.reduce((a,x)=>a+x.lon,0)/pts.length;
-      ok = pts.every(x=>haversineM(clat, clon, x.lat, x.lon) <= P.REST_RADIUS_M);
+    if (base.length){
+      const clat = base.reduce((a,x)=>a+x.lat,0)/base.length, clon = base.reduce((a,x)=>a+x.lon,0)/base.length;
+      const within = (list, m)=> list.every(x=>haversineM(clat, clon, x.lat, x.lon) <= m);
+      ok = within(still, P.REST_RADIUS_M) && within(moving, P.REST_RESUME_M);
     }
     if (ok) out.push({start:r.start, end:r.end});
   });
@@ -2912,23 +2925,36 @@ function tlBuckets(view, W){
   const out = [];
   for (let i=Math.floor(i0/stride)*stride; i<=i1; i+=stride){
     const j = Math.min(i+stride-1, n-1);
-    let sx=0, ss=0, ns=0, sa=0, na=0, sh=0, nh=0;
+    let sx=0, ss=0, ns=0, sa=0, na=0, sh=0, nh=0, cnt=0, first=i;
+    const flush = (last)=>{
+      if (!cnt) return;
+      out.push({x: sx/cnt, spd: ns?ss/ns:null, alt: na?sa/na:null, hr: nh?sh/nh:null, tFirst:recs[first].elapsed, tLast:recs[last].elapsed});
+      sx=ss=sa=sh=0; ns=na=nh=cnt=0;
+    };
     for (let k=i; k<=j; k++){
       const r = recs[k];
-      sx += xVal(r);
+      // a recording gap inside the bucket ends it there, so the two sides are
+      // never averaged together (and tlSegments can break the line)
+      if (k>i && r.elapsed-recs[k-1].elapsed > TL_GAP_BREAK_S){ flush(k-1); first = k; }
+      sx += xVal(r); cnt++;
       if (r.speed!=null){ ss += r.speed*3.6; ns++; }
       if (r.alt!=null){ sa += r.alt; na++; }
       if (r.hr!=null && r.hr>0){ sh += r.hr; nh++; }
     }
-    out.push({x: sx/(j-i+1), spd: ns?ss/ns:null, alt: na?sa/na:null, hr: nh?sh/nh:null});
+    flush(j);
   }
   return out;
 }
-// Connected runs of [x,y] points (a null value breaks the run).
+const TL_GAP_BREAK_S = 10; // no records for longer than this = a gap in the graph
+// Connected runs of [x,y] points (a null value or a recording gap breaks the run).
 function tlSegments(buckets, key, xPx, yPx){
-  const segs = []; let cur = null;
+  const segs = []; let cur = null, prev = null;
   buckets.forEach(b=>{
     const v = b[key];
+    // a recording gap (e.g. an auto-pause) must not be bridged by a straight
+    // line: the speed shown across a rest would be pure interpolation
+    if (prev && b.tFirst-prev.tLast > TL_GAP_BREAK_S) cur = null;
+    prev = b;
     if (v==null){ cur = null; return; }
     if (!cur){ cur = []; segs.push(cur); }
     cur.push([xPx(b.x), yPx(v)]);
