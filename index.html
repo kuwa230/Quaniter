@@ -190,8 +190,9 @@ td.num{ text-align:right; font-variant-numeric:tabular-nums; }
    plot, a shared x-axis label strip, and the timeline tracks stacked
    directly beneath it with no visual seam between them. */
 #p2ChartTimeline{ flex:13 1 0; display:flex; flex-direction:column; min-height:0; position:relative;
-  border:1px solid var(--border); border-radius:8px; overflow:hidden; background:var(--surface-2); }
-#xAxisLabels{ flex:none; height:24px; position:relative; width:100%; border:none; padding:0; overflow:hidden;
+  border:1px solid var(--border); border-radius:8px; overflow:visible; background:var(--surface-2); } /* visible: the reset button straddles the top frame line */
+#tlInner{ flex:1 1 0; min-height:0; display:flex; flex-direction:column; overflow:hidden; border-radius:7px; }
+#xAxisLabels{ flex:none; height:18px; position:relative; width:100%; border:none; padding:0; overflow:hidden;
   background:transparent; }
 /* tick marks + labels scroll with the chart: each tick is a 1px line (the
    chart's vertical gridline continued through this strip) with its label to
@@ -218,7 +219,7 @@ td.num{ text-align:right; font-variant-numeric:tabular-nums; }
 #tlVBar{ position:absolute; right:1px; width:6px; z-index:7; display:none; border-radius:3px; background:rgba(128,128,128,.12); touch-action:none; }
 #tlVThumb{ position:absolute; left:0; right:0; top:0; border-radius:3px; background:var(--text-faint); opacity:.75; }
 .tlSeekLine{ position:absolute; top:0; bottom:0; width:2px; background:#e08a1e; z-index:5; pointer-events:none; display:none; }
-#zoomReset{ position:absolute; top:1px; right:3px; z-index:8; width:22px; height:22px; padding:0; border-radius:50%;
+#zoomReset{ position:absolute; top:-11.5px; right:6px; z-index:8; width:22px; height:22px; padding:0; border-radius:50%;
   display:flex; align-items:center; justify-content:center; font-size:14px; line-height:1;
   background:var(--surface); border:1px solid var(--border); color:var(--text); }
 /* clips are translucent so the speed graph shows through them */
@@ -230,7 +231,7 @@ td.num{ text-align:right; font-variant-numeric:tabular-nums; }
 .tlClip.tlLocked .tlClipHandle{ opacity:.35; } /* only the highlighted clip's edges are editable */
 /* handles sit at the clip's real start/end, so they only appear once that
    edge scrolls into view (the clip itself extends past the visible window) */
-.tlClipHandle{ position:absolute; top:0; bottom:0; width:28px; display:flex; align-items:center; justify-content:center; font-size:10px;
+.tlClipHandle{ position:absolute; top:0; bottom:0; width:24px; display:flex; align-items:center; justify-content:center; font-size:10px;
   font-weight:700; color:#fff; background:rgba(255,255,255,.16); touch-action:none; z-index:1; }
 .tlClipHandle[data-edge="start"]{ left:0; }
 .tlClipHandle[data-edge="end"]{ right:0; }
@@ -410,14 +411,16 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
       </div>
     </div>
     <div id="p2ChartTimeline" class="p2Block">
-      <button id="xAxisLabels" type="button" title="横軸を切り替え"></button>
       <button id="zoomReset" type="button" title="表示をリセット">⟲</button>
+      <div id="tlInner">
+      <button id="xAxisLabels" type="button" title="横軸を切り替え"></button>
       <div id="tlBody">
         <canvas id="tlGridCanvas"></canvas>
         <div id="tlRow1" class="tlRow"><canvas id="tlCanvas1"></canvas><div id="tlTrack0"></div></div>
         <div id="tlRows2"><div id="tlRowsInner"><div id="tlRow2" class="tlRow"><canvas id="tlCanvas2"></canvas></div><div id="tlExtra"></div></div></div>
         <div id="tlSeek" class="tlSeekLine"></div>
         <div id="tlVBar"><div id="tlVThumb"></div></div>
+      </div>
       </div>
       <div id="axisPicker" class="axisPicker hidden"></div>
       <div class="msg err hidden" id="intervalErr"></div>
@@ -510,7 +513,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
 // (this session's own publish count so far) is reconstructed from the
 // conversation itself rather than mechanically verified — best-effort, not
 // guaranteed exact. Increment by exactly 1 on every future publish.
-const APP_VERSION = 147;
+const APP_VERSION = 148;
 
 /* ============ FIT PARSER ============ */
 const FIT_EPOCH = 631065600; // seconds between 1970-01-01 and 1989-12-31 (FIT epoch)
@@ -815,7 +818,7 @@ function renderRoutePreview(){
     const wrappedX = ((tx % n)+n) % n;
     for (let ty=tyMin; ty<=tyMax; ty++){
       const left = tx*TILE_SIZE - topLeftX, top = ty*TILE_SIZE - topLeftY;
-      tilesHtml += '<img src="'+mapTileUrl(zoom,wrappedX,ty)+'" onerror="if(!this.dataset.fb){this.dataset.fb=1;this.src=\''+mapTileFallbackUrl(zoom,wrappedX,ty)+'\';}" '+
+      tilesHtml += '<img src="'+mapTileUrl(zoom,wrappedX,ty)+'" '+
         'style="position:absolute;left:'+left+'px;top:'+top+'px;width:'+TILE_SIZE+'px;height:'+TILE_SIZE+'px;pointer-events:none;" '+
         'draggable="false" loading="lazy" alt="">';
     }
@@ -852,7 +855,7 @@ function renderRoutePreview(){
     lapMarkersHtml+
     '</svg>';
   el.innerHTML = tilesHtml + svgHtml +
-    '<div style="position:absolute;bottom:4px;right:6px;font-size:9px;background:rgba(0,0,0,.6);color:#c8ccd2;padding:1px 5px;border-radius:4px;">© OpenStreetMap contributors © CARTO</div>';
+    '<div style="position:absolute;bottom:4px;right:6px;font-size:9px;background:rgba(0,0,0,.6);color:#c8ccd2;padding:1px 5px;border-radius:4px;">© OpenStreetMap contributors</div>';
 }
 
 let rideSummaryLoadSeq = 0; // bumped on every renderRideSummary() call, so an in-flight
@@ -1777,14 +1780,9 @@ $('#importSettingsFile').addEventListener('change', e=>{
 const routeWrap = $('#routeWrap');
 const mapBadge = $('#mapBadge');
 const TILE_SIZE = 256;
-// Map tiles: CARTO "Dark Matter" served as @2x (512px images drawn at 256 CSS
-// px), which is sharp on high-DPI screens where the plain OSM tiles looked
-// soft, and matches the dark UI. Data is © OpenStreetMap contributors.
-// If a tile fails to load it falls back once to the standard OSM tile.
+// Map tiles: the standard OpenStreetMap tiles (© OpenStreetMap contributors).
+// Kept behind one function so the source can be swapped in a single place.
 function mapTileUrl(z, x, y){
-  return 'https://'+'abcd'[(x+y)&3]+'.basemaps.cartocdn.com/dark_all/'+z+'/'+x+'/'+y+'@2x.png';
-}
-function mapTileFallbackUrl(z, x, y){
   return 'https://tile.openstreetmap.org/'+z+'/'+x+'/'+y+'.png';
 }
 let tileErrorShown = false;
@@ -1842,7 +1840,7 @@ function renderRoute(){
       '<div id="tileLayer" style="position:absolute;top:0;left:0;width:0;height:0;transition:transform .18s ease-out;"></div>'+
       '<svg id="routeSvg" style="position:absolute;top:0;left:0;pointer-events:none;transition:transform .18s ease-out;"></svg>'+
     '</div>'+
-    '<div style="position:absolute;top:6px;right:6px;font-size:10px;background:rgba(0,0,0,.6);color:#c8ccd2;padding:1px 6px;border-radius:5px;">© OpenStreetMap contributors © CARTO</div>'+
+    '<div style="position:absolute;top:6px;right:6px;font-size:10px;background:rgba(0,0,0,.6);color:#c8ccd2;padding:1px 6px;border-radius:5px;">© OpenStreetMap contributors</div>'+
     '<div id="mapScale" style="position:absolute;bottom:8px;left:6px;pointer-events:none;">'+
       '<div id="mapScaleBar" style="height:4px;border:1.5px solid #e6e8eb;border-top:none;background:rgba(0,0,0,.4);"></div>'+
       '<div id="mapScaleLabel" style="font-size:10.5px;color:#e6e8eb;background:rgba(0,0,0,.6);display:inline-block;padding:0 4px;border-radius:3px;margin-top:2px;"></div>'+
@@ -1965,10 +1963,7 @@ function renderMapFrame(){
         img.style.position = 'absolute';
         img.style.width = TILE_SIZE+'px'; img.style.height = TILE_SIZE+'px';
         img.style.pointerEvents = 'none';
-        img.onerror = ()=>{
-          if (!img.dataset.fb){ img.dataset.fb = '1'; img.src = mapTileFallbackUrl(zoom, wrappedX, ty); return; }
-          window.__mapTileError && window.__mapTileError();
-        };
+        img.onerror = ()=>{ window.__mapTileError && window.__mapTileError(); };
         img.onload = ()=>{ window.__mapTileSuccess && window.__mapTileSuccess(); };
         tileLayer.appendChild(img);
         tileElements.set(key, img);
@@ -3042,7 +3037,7 @@ function renderTimeline(){
       clips.push({ti, iv, L, R, isActive: !!(activeIv && activeIv.id===iv.id), label});
     });
   });
-  const HANDLE_PX = 30;
+  const HANDLE_PX = 26;
   clips.forEach(c=>{ c.name = tlNameGeometry(c, W, HANDLE_PX); });
   const seekX = seekRec ? xOf(xVal(seekRec)) : null;
   const seekVisible = seekX!=null && seekX>=0 && seekX<=W;
