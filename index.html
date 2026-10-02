@@ -528,7 +528,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
 // (this session's own publish count so far) is reconstructed from the
 // conversation itself rather than mechanically verified — best-effort, not
 // guaranteed exact. Increment by exactly 1 on every future publish.
-const APP_VERSION = 149;
+const APP_VERSION = 150;
 
 /* ============ FIT PARSER ============ */
 const FIT_EPOCH = 631065600; // seconds between 1970-01-01 and 1989-12-31 (FIT epoch)
@@ -1734,7 +1734,7 @@ $('#importSettingsFile').addEventListener('change', e=>{
 //   'world' – OpenFreeMap vector style (free, no key, commercial use OK,
 //             © OpenStreetMap contributors); falls back to its "liberty" style
 //             if the dark one can't be loaded.
-// The base is chosen from where the ride is (override with ?map=japan|world).
+// The base is chosen from where the ride is (override with ?map=japan|world|osm).
 // Everything the rest of the app needs from the map goes through the small
 // set of functions below (renderRoute / renderMapFrame / mapCenterOn /
 // selectFromMap / renderRoutePreview), so the map can be replaced as a whole.
@@ -1742,13 +1742,22 @@ const routeWrap = $('#routeWrap');
 const mapBadge = $('#mapBadge');
 const MAP_DARK_BG = '#101114';
 const GSI_ATTRIBUTION = '<a href="https://maps.gsi.go.jp/development/ichiran.html" target="_blank" rel="noopener">地理院タイル</a>';
-// URL options for comparing looks on a real device: ?gsi=pale|std (which GSI
-// map), ?look=dark|plain (inverted dark treatment or the tiles as published).
+// URL options for comparing looks on a real device: ?gsi=std|pale (which GSI
+// map, default std), ?look=dark (inverted dark treatment; default is the tiles
+// as published, which read much better), ?map=osm (plain OpenStreetMap raster
+// tiles — for personal testing only, not for a commercial release).
 function mapStyleFor(base){
+  const q = new URLSearchParams(location.search);
+  if (base==='osm'){
+    return {
+      version: 8,
+      sources: { osm: { type:'raster', tiles:['https://tile.openstreetmap.org/{z}/{x}/{y}.png'], tileSize:256, maxzoom:19, attribution:'© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors' } },
+      layers: [ { id:'bg', type:'background', paint:{ 'background-color':'#e9e9e9' } }, { id:'osm', type:'raster', source:'osm', paint:{ 'raster-fade-duration':0 } } ],
+    };
+  }
   if (base==='japan'){
-    const q = new URLSearchParams(location.search);
-    const layer = q.get('gsi')==='std' ? 'std' : 'pale';
-    const dark = q.get('look')!=='plain';
+    const layer = q.get('gsi')==='pale' ? 'pale' : 'std';
+    const dark = q.get('look')==='dark';
     const paint = dark
       // grey-scale then invert the brightness range: light land -> dark, dark labels -> light
       ? { 'raster-saturation':-1, 'raster-brightness-min':0.9, 'raster-brightness-max':0.05, 'raster-contrast':0.15, 'raster-fade-duration':0 }
@@ -1766,7 +1775,7 @@ function mapStyleFor(base){
 }
 function chooseMapBase(lat, lon){
   const q = new URLSearchParams(location.search).get('map');
-  if (q==='japan' || q==='world') return q;
+  if (q==='japan' || q==='world' || q==='osm') return q;
   return (lat>=20 && lat<=46.5 && lon>=122 && lon<=154) ? 'japan' : 'world';
 }
 let tileErrorShown = false;
