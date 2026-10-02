@@ -108,7 +108,6 @@ label.field{ display:flex; flex-direction:column; gap:3px; font-size:11.5px; col
 }
 .crosshair-badge b{ font-weight:700; }
 
-#chartWrap{ position:relative; height:230px; padding-top:30px; box-sizing:border-box; touch-action:none; -webkit-touch-callout:none; -webkit-user-select:none; user-select:none; }
 .chart-toolbar{ display:flex; justify-content:space-between; align-items:center; gap:8px; margin-top:8px; flex-wrap:wrap;}
 .chart-toolbar-scroll{ flex-wrap:nowrap; overflow-x:auto; justify-content:center; padding-bottom:2px; }
 .chart-toolbar-scroll button{ flex:none; }
@@ -174,37 +173,24 @@ td.num{ text-align:right; font-variant-numeric:tabular-nums; }
    20-unit ratio, so #p2Layout's height is reduced by its own height (52px
    + safe-area) on top of the header's footprint */
 /* no more header to subtract — just the bottom toolbar's own footprint and the top safe area */
-#p2Layout{ display:flex; flex-direction:column; height:calc(100dvh - env(safe-area-inset-top,0px) - 12px - 52px - env(safe-area-inset-bottom,0px)); min-height:420px; gap:4px; }
-.wrap.p2Active{ padding-bottom:8px; }
+#p2Layout{ display:flex; flex-direction:column; height:calc(100dvh - env(safe-area-inset-top,0px) - 8px); min-height:420px; gap:0; }
+.wrap.p2Active{ padding-bottom:0; }
 .p2Block{ min-height:0; overflow:hidden; }
-#p2Map{ flex:6 1 0; position:relative; border-radius:8px; overflow:hidden; background:var(--surface-2); }
+/* vertical ratio (of 20): map 9 / status 1 / timeline 7 / back+results buttons 1 / footer 2 */
+#p2Map{ flex:9 1 0; position:relative; border-radius:8px; overflow:hidden; background:var(--surface-2); }
 #p2Map #routeWrap{ position:absolute; inset:0; aspect-ratio:auto; border-radius:0; }
-#p2Status{ flex:2 1 0; display:flex; align-items:center; }
+#p2Status{ flex:1 1 0; display:flex; align-items:center; }
 #p2StatusRow{ display:flex; align-items:center; width:100%; text-align:center; }
 #p2StatusRow > div{ width:25%; flex:none; } /* fixed equal width per slot, so digit-count changes never shift positions */
-#p2StatusRow .k{ display:block; font-size:10px; color:var(--text-dim); }
-#p2StatusRow .v{ display:block; font-size:15px; font-weight:700; font-variant-numeric:tabular-nums; }
-#p2StatusRow .vSub{ display:block; font-size:10px; font-weight:600; color:var(--text-dim); font-variant-numeric:tabular-nums; }
+#p2StatusRow .k{ display:block; line-height:1.1; font-size:10px; color:var(--text-dim); }
+#p2StatusRow .v{ display:block; line-height:1.15; font-size:14px; font-weight:700; font-variant-numeric:tabular-nums; }
+#p2StatusRow .vSub{ display:block; line-height:1.1; font-size:10px; font-weight:600; color:var(--text-dim); font-variant-numeric:tabular-nums; }
 /* Chart (speed/elevation lines) and timeline (interval tracks) merged into
    one visually continuous block: a single bordered container holding the
    plot, a shared x-axis label strip, and the timeline tracks stacked
    directly beneath it with no visual seam between them. */
-#p2ChartTimeline{ flex:10 1 0; display:flex; flex-direction:column; min-height:0; position:relative;
+#p2ChartTimeline{ flex:7 1 0; display:flex; flex-direction:column; min-height:0; position:relative;
   border:1px solid var(--border); border-radius:8px; overflow:hidden; background:var(--surface-2); }
-#chartWrap{ flex:1 1 0; min-height:0; }
-#p2ChartTimeline #chartWrap{ height:auto; padding-top:0; }
-/* invisible, reliable tap targets over each axis title/label — a plain
-   HTML button click, not a canvas gesture, so it never competes with the
-   seek-drag or momentum-scroll logic. Sized generously but kept out of the
-   plot's central/lower area where seek-drag needs to work freely. */
-/* top-center, clear of the left/right axis-switch overlays (each 26%
-   width) and the center 48% gap between them, and below the title row. */
-.chartResetBtn{ position:absolute; top:2px; left:50%; transform:translateX(-50%); z-index:4; width:24px; height:24px; border-radius:50%;
-  display:flex; align-items:center; justify-content:center; font-size:13px; padding:0;
-  background:var(--surface); border:1px solid var(--border); color:var(--text); }
-/* the shared x-axis time strip — sits between the chart and the timeline
-   tracks, doubling as the x-axis mode switch button (tap to change
-   clock/elapsed/distance), replacing the old axisBottomBtn overlay */
 #xAxisLabels{ flex:none; height:18px; position:relative; width:100%; border:none; padding:0; overflow:hidden;
   background:transparent; }
 /* tick marks + labels scroll with the chart: each tick is a 1px line (the
@@ -213,34 +199,48 @@ td.num{ text-align:right; font-variant-numeric:tabular-nums; }
 #xAxisLabels .xTickLine{ position:absolute; top:0; bottom:0; width:1px; background:var(--border); pointer-events:none; }
 #xAxisLabels .xTickLabel{ position:absolute; top:50%; transform:translateY(-50%); padding-left:3px; font-size:10px;
   color:var(--text-faint); white-space:nowrap; pointer-events:none; }
-#p2SeekCtrl{ flex:1 1 0; display:flex; align-items:center; }
-#p2SeekCtrl .chart-toolbar{ width:100%; }
-#timelineScroll{ flex:1 1 0; min-height:0; overflow:hidden; position:relative;
+/* the timeline: strip (x labels) on top, then #tlBody = grid + rows + seek line */
+#tlBody{ flex:1 1 0; min-height:0; position:relative; overflow:hidden;
   touch-action:none; -webkit-touch-callout:none; -webkit-user-select:none; user-select:none; } /* this page has no vertical scroll by design — the browser must never claim a swipe here as a page-scroll attempt */
-#timelineTracks{ position:relative; height:100%; z-index:1; }
-/* canvases behind (gridlines) and in front of (heart-rate fill) the clips */
-#tlGridCanvas, #tlHrCanvas{ position:absolute; left:0; top:0; width:100%; height:100%; pointer-events:none; }
-#tlGridCanvas{ z-index:0; }
-#tlHrCanvas{ z-index:2; }
+#tlGridCanvas{ position:absolute; left:0; top:0; z-index:0; pointer-events:none; }
+.tlRow{ position:absolute; left:0; right:0; }
+#tlRow1{ top:0; height:50%; z-index:1; }
+#tlRow1 canvas, #tlRow2 canvas{ position:absolute; left:0; top:0; pointer-events:none; }
+#tlTrack0{ position:absolute; inset:0; }
+/* rows 2+: vertically scrollable (scrollbar is the custom thumb at the right edge) once overlaps need > 3 rows */
+#tlRows2{ position:absolute; left:0; right:0; z-index:1; overflow-y:hidden; overflow-x:hidden; scrollbar-width:none; -ms-overflow-style:none; }
+#tlRows2::-webkit-scrollbar{ display:none; }
+#tlRows2.tlScrollable{ overflow-y:scroll; touch-action:pan-y; }
+#tlRowsInner{ position:relative; width:100%; }
+#tlRow2{ position:absolute; left:0; right:0; top:0; }
+#tlExtra{ position:absolute; left:0; right:0; }
 .tlTrack{ position:absolute; left:0; right:0; box-sizing:border-box; }
-.tlSeekLine{ position:absolute; top:0; bottom:0; width:2px; background:#e08a1e; z-index:5; pointer-events:none; }
-.tlClip{ position:absolute; top:2px; bottom:2px; display:flex; align-items:stretch; border-radius:5px; box-sizing:border-box;
-  background:var(--accent); opacity:.4; border:1.5px solid var(--accent); overflow:hidden; touch-action:none; }
-.tlClip.tlHighlight{ opacity:1; box-shadow:0 0 0 2px #08211d inset; }
+#tlVBar{ position:absolute; right:1px; width:6px; z-index:7; display:none; border-radius:3px; background:rgba(128,128,128,.12); touch-action:none; }
+#tlVThumb{ position:absolute; left:0; right:0; top:0; border-radius:3px; background:var(--text-faint); opacity:.75; }
+.tlSeekLine{ position:absolute; top:0; bottom:0; width:2px; background:#e08a1e; z-index:5; pointer-events:none; display:none; }
+#zoomReset{ position:absolute; top:1px; right:2px; z-index:8; width:16px; height:16px; padding:0; border-radius:50%;
+  display:flex; align-items:center; justify-content:center; font-size:10px; line-height:1;
+  background:var(--surface); border:1px solid var(--border); color:var(--text); }
+/* clips are translucent so the speed graph shows through them */
+.tlClip{ position:absolute; top:2px; bottom:2px; border-radius:5px; box-sizing:border-box;
+  border:1.5px solid var(--accent); overflow:hidden; touch-action:none; }
+.tlClip::before{ content:''; position:absolute; inset:0; background:var(--accent); opacity:.14; pointer-events:none; }
+.tlClip.tlHighlight::before{ opacity:.3; }
+.tlClip.tlHighlight{ box-shadow:0 0 0 2px #08211d inset; }
 .tlClip.tlLocked .tlClipHandle{ opacity:.35; } /* only the highlighted clip's edges are editable */
 /* handles sit at the clip's real start/end, so they only appear once that
    edge scrolls into view (the clip itself extends past the visible window) */
 .tlClipHandle{ position:absolute; top:0; bottom:0; width:16px; display:flex; align-items:center; justify-content:center; font-size:10px;
-  font-weight:700; color:#08211d; background:rgba(255,255,255,.35); touch-action:none; }
-.tlClipName{ position:absolute; top:50%; transform:translateY(-50%); text-align:center; font-size:10.5px;
-  font-weight:700; color:#08211d; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; } /* left/width set per frame in renderTimeline */
+  font-weight:700; color:#08211d; background:rgba(255,255,255,.35); touch-action:none; z-index:1; }
 .tlClipHandle[data-edge="start"]{ left:0; }
 .tlClipHandle[data-edge="end"]{ right:0; }
+.tlClipName{ position:absolute; top:50%; transform:translateY(-50%); text-align:center; font-size:10.5px;
+  font-weight:700; color:#08211d; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; z-index:1; pointer-events:none; } /* left/width set per frame in renderTimeline */
 #p2Confirm{ flex:1 1 0; display:flex; align-items:stretch; gap:6px; }
-#p2Confirm .halfBtn{ flex:1; margin:0; }
+#p2Confirm .halfBtn{ flex:1; margin:2px 0; }
 #backToPage1Btn{ background:var(--surface-2); color:var(--text); border:1px solid var(--border); }
-#p2BottomToolbar{ position:fixed; left:0; right:0; bottom:0; z-index:15; display:flex; align-items:center;
-  justify-content:space-between; gap:6px; padding:6px 14px calc(6px + env(safe-area-inset-bottom,0px));
+#p2BottomToolbar{ flex:2 1 0; min-height:0; overflow:hidden; display:flex; align-items:center;
+  justify-content:space-around; gap:6px; padding:0 14px env(safe-area-inset-bottom,0px);
   background:var(--bg); border-top:1px solid var(--border); }
 .tbBtn{ flex:none; width:44px; height:44px; border-radius:50%; display:flex; align-items:center; justify-content:center;
   font-size:18px; background:var(--surface-2); border:1px solid var(--border); color:var(--text); padding:0; }
@@ -409,38 +409,29 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
       </div>
     </div>
     <div id="p2ChartTimeline" class="p2Block">
-      <div id="chartWrap">
-        <canvas id="chart"></canvas>
-        <button id="zoomReset" class="chartResetBtn" type="button" title="表示をリセット">⟲</button>
-        <div id="axisPicker" class="axisPicker hidden"></div>
-      </div>
       <button id="xAxisLabels" type="button" title="横軸を切り替え"></button>
-      <div id="timelineScroll"><canvas id="tlGridCanvas"></canvas><div id="timelineTracks"></div><canvas id="tlHrCanvas"></canvas></div>
-      <div class="msg err hidden" id="intervalErr"></div>
-    </div>
-    <div id="p2SeekCtrl" class="p2Block">
-      <div class="chart-toolbar chart-toolbar-scroll">
-        <button id="selPrevZero" class="small" type="button" title="前の時速0km/hの記録へ">◀0 km/h</button>
-        <button id="selPrev10Pt" class="small" type="button" title="10個前の記録点へ">◀◀</button>
-        <button id="selPrevPt" class="small" type="button" title="1つ前の記録点へ">◀</button>
-        <button id="selNextPt" class="small" type="button" title="1つ次の記録点へ">▶</button>
-        <button id="selNext10Pt" class="small" type="button" title="10個次の記録点へ">▶▶</button>
-        <button id="selNextZero" class="small" type="button" title="次の時速0km/hの記録へ">▶0 km/h</button>
+      <button id="zoomReset" type="button" title="表示をリセット">⟲</button>
+      <div id="tlBody">
+        <canvas id="tlGridCanvas"></canvas>
+        <div id="tlRow1" class="tlRow"><canvas id="tlCanvas1"></canvas><div id="tlTrack0"></div></div>
+        <div id="tlRows2"><div id="tlRowsInner"><div id="tlRow2" class="tlRow"><canvas id="tlCanvas2"></canvas></div><div id="tlExtra"></div></div></div>
+        <div id="tlSeek" class="tlSeekLine"></div>
+        <div id="tlVBar"><div id="tlVThumb"></div></div>
       </div>
+      <div id="axisPicker" class="axisPicker hidden"></div>
+      <div class="msg err hidden" id="intervalErr"></div>
     </div>
     <div id="p2Confirm" class="p2Block">
       <button id="backToPage1Btn" class="primary wideConfirm halfBtn" type="button">◀ 戻る</button>
       <button id="toPage3Btn" class="primary wideConfirm halfBtn" type="button">結果を見る</button>
     </div>
-  </div>
-  <div id="p2BottomToolbar">
-    <button id="tlSplit" class="tbBtn" type="button" title="シーク位置で2分割">✄</button>
-    <button id="tlJumpStart" class="tbBtn" type="button" title="前の始点/終点へ移動">◀🏃</button>
-    <button id="undoBtnBottom" class="tbBtn tbBtnSmall" type="button" title="取り消し" disabled>↶</button>
-    <button id="tlAdd" class="tbBtn tbBtnCenter" type="button" title="新規区間を追加">＋</button>
-    <button id="redoBtnBottom" class="tbBtn tbBtnSmall" type="button" title="やり直し" disabled>↷</button>
-    <button id="tlJumpEnd" class="tbBtn" type="button" title="次の始点/終点へ移動">🏃▶</button>
-    <button id="tlDelete" class="tbBtn" type="button" title="区間を削除">🗑</button>
+    <div id="p2BottomToolbar">
+      <button id="tlSplit" class="tbBtn" type="button" title="シーク位置で2分割">✄</button>
+      <button id="undoBtnBottom" class="tbBtn tbBtnSmall" type="button" title="取り消し" disabled>↶</button>
+      <button id="tlAdd" class="tbBtn tbBtnCenter" type="button" title="新規区間を追加">＋</button>
+      <button id="redoBtnBottom" class="tbBtn tbBtnSmall" type="button" title="やり直し" disabled>↷</button>
+      <button id="tlDelete" class="tbBtn" type="button" title="区間を削除">🗑</button>
+    </div>
   </div>
 </div>
 
@@ -516,7 +507,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
 // (this session's own publish count so far) is reconstructed from the
 // conversation itself rather than mechanically verified — best-effort, not
 // guaranteed exact. Increment by exactly 1 on every future publish.
-const APP_VERSION = 143;
+const APP_VERSION = 144;
 
 /* ============ FIT PARSER ============ */
 const FIT_EPOCH = 631065600; // seconds between 1970-01-01 and 1989-12-31 (FIT epoch)
@@ -1162,7 +1153,6 @@ $('#appVersionLabel').textContent = 'v'+APP_VERSION;
 });
 document.addEventListener('touchmove', e=>{ if (currentPageNum===2 && e.touches.length>1) e.preventDefault(); }, {passive:false});
 $('#toPage2Btn').addEventListener('click', ()=>{ showPage(2); });
-attachTimelinePan();
 
 async function handleFile(file){
   // Replacing an already-loaded, not-yet-saved analysis: offer to save it
@@ -1247,7 +1237,118 @@ function smoothAltitudes(records){
   }
 }
 
-function processFitData(arrayBuffer, displayName){
+
+/* ============ AUTO-SPLIT: hill climbs and rests ============ */
+// Thresholds for the cuts made when a FIT file is imported. Climbs and rests
+// become their own intervals (cut at their start and end).
+const AUTO_SPLIT = {
+  // rest: speed <= REST_SPEED_KMH, or no record being written (a gap longer
+  // than REST_GAP_S), continuously for >= REST_MIN_S, with every record
+  // staying within REST_RADIUS_M of the stop's centre
+  REST_SPEED_KMH: 3.0, REST_MIN_S: 300, REST_RADIUS_M: 100, REST_GAP_S: 10,
+  // climb: a net gain of >= CLIMB_MIN_GAIN_M, or >= CLIMB_MIN_GRADE average
+  // over >= CLIMB_MIN_DIST_M. A climb is not broken by dips of up to
+  // CLIMB_DROP_M below its highest point so far, nor by flat running of up
+  // to CLIMB_FLAT_M since that point; altitude is the smoothed trace
+  // (smoothAltitudes), and a rise of CLIMB_TRIGGER_M is needed to start
+  // tracking one at all, which filters out GPS/barometer noise.
+  CLIMB_MIN_GAIN_M: 50, CLIMB_MIN_GRADE: 0.03, CLIMB_MIN_DIST_M: 1000,
+  CLIMB_DROP_M: 10, CLIMB_FLAT_M: 150, CLIMB_TRIGGER_M: 10,
+  MIN_SEGMENT_S: 5, // cuts closer together than this are merged
+};
+function haversineM(lat1, lon1, lat2, lon2){
+  const R = 6371000, toRad = Math.PI/180;
+  const dLat = (lat2-lat1)*toRad, dLon = (lon2-lon1)*toRad;
+  const a = Math.sin(dLat/2)**2 + Math.cos(lat1*toRad)*Math.cos(lat2*toRad)*Math.sin(dLon/2)**2;
+  return 2*R*Math.asin(Math.min(1, Math.sqrt(a)));
+}
+// Returns [{start,end}] in elapsed seconds.
+function detectRests(recs){
+  const P = AUTO_SPLIT, n = recs.length, out = [];
+  const slow = r => r.speed!=null && r.speed*3.6 <= P.REST_SPEED_KMH;
+  // elementary stretches between consecutive records that count as "resting":
+  // both ends slow, or an unrecorded gap (the device wrote nothing for a while)
+  let runStart = null, runEndIdx = null, runFirstIdx = null;
+  const close = ()=>{
+    if (runStart==null) return;
+    const end = recs[runEndIdx].elapsed;
+    if (end-runStart >= P.REST_MIN_S){
+      // every positioned record in the run must stay within the radius of its centre
+      const pts = [];
+      for (let k=runFirstIdx; k<=runEndIdx; k++) if (recs[k].lat!=null && recs[k].lon!=null) pts.push(recs[k]);
+      let ok = true;
+      if (pts.length>1){
+        const clat = pts.reduce((a,r)=>a+r.lat,0)/pts.length, clon = pts.reduce((a,r)=>a+r.lon,0)/pts.length;
+        ok = pts.every(r=>haversineM(clat, clon, r.lat, r.lon) <= P.REST_RADIUS_M);
+      }
+      if (ok) out.push({start:runStart, end});
+    }
+    runStart = null;
+  };
+  for (let i=1;i<n;i++){
+    const gap = recs[i].elapsed-recs[i-1].elapsed;
+    const resting = gap>P.REST_GAP_S || (slow(recs[i-1]) && slow(recs[i]));
+    if (resting){
+      if (runStart==null){ runStart = recs[i-1].elapsed; runFirstIdx = i-1; }
+      runEndIdx = i;
+    } else close();
+  }
+  close();
+  return out;
+}
+// Returns [{start,end,gain,dist}] in elapsed seconds.
+function detectClimbs(recs){
+  const P = AUTO_SPLIT, A = [], D = [], T = [];
+  recs.forEach(r=>{ if (r.altSmooth!=null){ A.push(r.altSmooth); D.push(r.dist); T.push(r.elapsed); } });
+  const m = A.length, out = [];
+  if (m<2) return out;
+  const flush = (s,e)=>{
+    const gain = A[e]-A[s], dist = D[e]-D[s];
+    if (gain>=P.CLIMB_MIN_GAIN_M || (dist>=P.CLIMB_MIN_DIST_M && gain/dist>=P.CLIMB_MIN_GRADE)) out.push({start:T[s], end:T[e], gain, dist});
+  };
+  let valley = 0, peak = 0, inClimb = false;
+  for (let i=1;i<m;i++){
+    if (!inClimb){
+      if (A[i]<=A[valley]) valley = i;                        // latest lowest point = where the rise really begins
+      else if (A[i]-A[valley]>=P.CLIMB_TRIGGER_M){ inClimb = true; peak = i; }
+    } else {
+      if (A[i]>A[peak]) peak = i;                             // earliest highest point = where it tops out
+      if (A[peak]-A[i]>P.CLIMB_DROP_M || D[i]-D[peak]>P.CLIMB_FLAT_M){
+        flush(valley, peak); inClimb = false;
+        let v = peak;                                         // next search starts from the bottom of the descent
+        for (let j=peak;j<=i;j++) if (A[j]<=A[v]) v = j;
+        valley = v;
+      }
+    }
+  }
+  if (inClimb) flush(valley, peak);
+  return out;
+}
+// Builds the initial intervals: cuts at the start/end of every climb and
+// rest (and at the FIT laps, if asked), named after what they cover.
+function buildAutoIntervals(recs, laps, useLaps){
+  const total = recs[recs.length-1].elapsed;
+  const rests = detectRests(recs), climbs = detectClimbs(recs);
+  const cuts = [];
+  rests.forEach(r=>{ cuts.push(r.start, r.end); });
+  climbs.forEach(c=>{ cuts.push(c.start, c.end); });
+  if (useLaps) laps.forEach(l=> cuts.push(l.elapsed));
+  const sorted = cuts.filter(t=>t>0 && t<total).sort((a,b)=>a-b);
+  const bounds = [0];
+  sorted.forEach(t=>{ if (t-bounds[bounds.length-1] >= AUTO_SPLIT.MIN_SEGMENT_S && total-t >= AUTO_SPLIT.MIN_SEGMENT_S) bounds.push(t); });
+  bounds.push(total);
+  const within = (list, mid)=> list.some(x=>mid>=x.start-1 && mid<=x.end+1);
+  const ivs = [];
+  for (let i=0;i<bounds.length-1;i++){
+    const mid = (bounds[i]+bounds[i+1])/2;
+    const name = within(rests, mid) ? '休憩' : within(climbs, mid) ? 'ヒルクライム' : '';
+    ivs.push({ id:S.nextId++, name, nameType:'a', start:bounds[i], end:bounds[i+1], startSet:true, endSet:true });
+  }
+  if (ivs.length===1){ ivs[0].startSet = false; ivs[0].endSet = false; }
+  return {ivs, nRests:rests.length, nClimbs:climbs.length};
+}
+
+async function processFitData(arrayBuffer, displayName){
   try{
     const records = parseFit(arrayBuffer);
     smoothAltitudes(records);
@@ -1259,7 +1360,16 @@ function processFitData(arrayBuffer, displayName){
       showHeaderMsg('このファイルは総時間96時間または総距離4800kmの上限を超えているため解析できません。', true);
       return;
     }
+    // A file that already carries lap markers: ask before splitting it
+    // automatically (laps + hill climbs + rests). Without laps the split by
+    // climbs and rests simply runs.
+    let autoSplit = true;
+    if (records.laps && records.laps.length){
+      const ans = await askChoice('このFITファイルにはラップ情報があります。区間を自動で分割しますか？(ラップ・ヒルクライム・休憩の位置で分割します)', ['はい','いいえ']);
+      autoSplit = ans==='はい';
+    }
     S.records = records;
+    S.chartView = null; scrollState = null; // a new ride starts from its own full-length view
     // the raw .fit bytes themselves (already unzipped, if the upload was a
     // .zip) — kept so "保存" can bundle the original recording back
     // together with the interval-analysis JSON into one .zip, without
@@ -1279,21 +1389,15 @@ function processFitData(arrayBuffer, displayName){
       durationSec: records[records.length-1].elapsed,
       distanceM: Math.round(records[records.length-1].dist),
     };
-    // importing a file always starts from a clean, default analysis state —
-    // except that if the FIT file itself already has lap markers (manual or
-    // auto-lap from the head unit), seed the intervals from those instead of
-    // one single span covering the whole ride
+    // importing a file always starts from a clean, default analysis state:
+    // one interval over the whole ride, or — unless declined above — cut at
+    // climbs, rests and (if present) laps
     const totalEnd = records[records.length-1].elapsed;
-    if (S.laps.length){
-      const bounds = [0, ...S.laps.map(l=>l.elapsed).filter(e=>e>0 && e<totalEnd), totalEnd];
-      const uniqueBounds = [...new Set(bounds)].sort((a,b)=>a-b);
-      S.intervals = [];
-      for (let i=0;i<uniqueBounds.length-1;i++){
-        S.intervals.push({ id:S.nextId++, name:'', nameType:'a', start:uniqueBounds[i], end:uniqueBounds[i+1], startSet:true, endSet:true });
-      }
-      if (!S.intervals.length) S.intervals = [{id:S.nextId++, name:'', nameType:'a', start:0, end:totalEnd, startSet:false, endSet:false}];
-    } else {
-      S.intervals = [{id:S.nextId++, name:'', nameType:'a', start:0, end:totalEnd, startSet:false, endSet:false}];
+    S.intervals = [{id:S.nextId++, name:'', nameType:'a', start:0, end:totalEnd, startSet:false, endSet:false}];
+    let autoInfo = null;
+    if (autoSplit){
+      autoInfo = buildAutoIntervals(records, S.laps, true);
+      S.intervals = autoInfo.ivs;
     }
     S.resultColumns = COLUMN_DEFS.map(d=>({key:d.k, enabled:DEFAULT_ENABLED_COLUMNS.includes(d.k)}));
     S.metrics = ['speed','elevation']; S.xMode = 'clock'; S.ftp = null; S.weight = null; S.numberingStyle = 'circled'; S.summaryRowMode = 'last';
@@ -1325,6 +1429,7 @@ function processFitData(arrayBuffer, displayName){
     // S.dirty=true as a side effect — but this is the initial render of a
     // freshly-loaded, unmodified file, not a user change, so clear it again.
     S.dirty = false;
+    if (autoInfo) showHeaderMsg('自動分割: ヒルクライム'+autoInfo.nClimbs+'件・休憩'+autoInfo.nRests+'件を検出し、'+S.intervals.length+'区間に分割しました。', false);
   } catch(err){
     showHeaderMsg('解析エラー: '+err.message, true);
   }
@@ -2169,47 +2274,6 @@ function chartMetricRange(m){
   if (mn===mx){ mn-=1; mx+=1; }
   return {min:mn, max:mx};
 }
-function chartCanvasSetup(canvas){
-  // Measure the PARENT container (#chartWrap), not the canvas element
-  // itself. This was the actual, persistent cause of the right-edge gap
-  // that survived every earlier attempt: #chartWrap is a plain block
-  // container (not flex), and nothing in the CSS forces the <canvas> to
-  // 100% width — its on-screen size is controlled entirely by this
-  // function via style.width. Measuring canvas.getBoundingClientRect()
-  // was self-referential: once style.width got set once (to whatever was
-  // measured, including the browser's tiny ~300px default on the very
-  // first call before any width had ever been assigned), every later call
-  // measured that SAME already-set width right back again — the canvas
-  // could never grow to match its container no matter how many times or
-  // how much later it was re-measured, which is exactly why a fixed
-  // right-side gap persisted at every scroll position rather than only
-  // appearing once or correcting itself. Measuring the parent breaks the
-  // loop, since #chartWrap's own size is governed by flexbox (#p2ChartTimeline),
-  // never by anything this function writes.
-  const rect = canvas.parentElement.getBoundingClientRect();
-  const dpr = window.devicePixelRatio || 1;
-  const w = Math.max(1, Math.round(rect.width)), h = Math.max(1, Math.round(rect.height));
-  canvas.style.width = w+'px';
-  canvas.style.height = h+'px';
-  if (canvas.width !== Math.round(w*dpr) || canvas.height !== Math.round(h*dpr)){
-    canvas.width = Math.round(w*dpr); canvas.height = Math.round(h*dpr);
-  }
-  const ctx = canvas.getContext('2d');
-  ctx.setTransform(dpr,0,0,dpr,0,0);
-  return {ctx, w, h};
-}
-// redrawChart() calls this on every single frame during an active pan or
-// momentum glide (up to 60x/sec). Rebuilding 5 positioned <span> elements
-// via innerHTML is real DOM work — parsing markup and triggering layout —
-// far more expensive than the pure canvas drawing redrawChart() otherwise
-// does, and doing it synchronously every frame was very likely dropping
-// frames during fast flicks (video analysis showed bursty jumps separated
-// by up to a full second of zero movement, the classic signature of a
-// render call taking longer than one frame's budget). Deferring the DOM
-// update to its own rAF decouples it from the synchronous canvas redraw
-// and naturally coalesces rapid repeated calls into one DOM update per
-// frame at most — the label text itself doesn't need per-frame precision,
-// unlike the chart line, which still redraws every call as before.
 // Round-number x ticks for the visible window [view.min, view.max], shared
 // by the chart's vertical gridlines, the label strip and the timeline's
 // gridlines. Ticks sit at fixed data values (multiples of a "nice" step), so
@@ -2273,371 +2337,49 @@ function renderXAxisLabels(view, ticks, W){
     if (p.text!==ticks[i].label){ p.lab.textContent = ticks[i].label; p.text = ticks[i].label; }
   });
 }
-function redrawChart(){
-  const canvas = $('#chart');
-  if (!canvas || !S.chartView || !S.records.length) return;
-  const {ctx, w, h} = chartCanvasSetup(canvas);
-  ctx.clearRect(0,0,w,h);
-  const padTop = 16, padBottom = 0; // no bottom gap: the gridlines run on unbroken into the label strip and timeline
-  const plotTop = padTop, plotBottom = Math.max(padTop+10, h-padBottom);
-  const plotLeft = 0, plotRight = w; // spans the canvas's full width — exactly matches the timeline below
-  const view = S.chartView;
-  const span = Math.max(1e-6, view.max-view.min);
-  const xPx = v => plotLeft + (v-view.min)/span*(plotRight-plotLeft);
-  S.chartPlotTop = plotTop; S.chartPlotBottom = plotBottom;
-
-  // vertical gridlines at round x values — they scroll with the data
-  const xTicks = computeXTicks(view, plotRight-plotLeft);
-  ctx.save();
-  ctx.strokeStyle = cssVar('--border'); ctx.lineWidth = 1;
-  xTicks.forEach(tk=>{
-    const px = Math.round(xPx(tk.v))+0.5;
-    if (px<0 || px>w) return;
-    ctx.beginPath(); ctx.moveTo(px, plotTop); ctx.lineTo(px, plotBottom); ctx.stroke();
-  });
-  ctx.restore();
-
-  // each metric's line/area, plus its own title and tick values
-  S.metrics.forEach((m,i)=>{
-    const meta = METRIC_META[m];
-    const range = S.chartMetricRanges[m] || (S.chartMetricRanges[m]=chartMetricRange(m));
-    const isSpeed = m==='speed';
-    const yPx = v => plotBottom - (v-range.min)/((range.max-range.min)||1)*(plotBottom-plotTop);
-    const pts = [];
-    (S.chartDs||[]).forEach(r=>{
-      const v = meta.get(r);
-      if (v==null) return;
-      const xv = xVal(r);
-      pts.push([xv, v]);
-    });
-    if (pts.length){
-      ctx.save();
-      ctx.beginPath();
-      let started = false;
-      pts.forEach(([xv,v])=>{
-        const x = xPx(xv), y = yPx(v);
-        if (!started){ ctx.moveTo(x,y); started=true; } else ctx.lineTo(x,y);
-      });
-      ctx.strokeStyle = cssVar(meta.color);
-      ctx.lineWidth = 1.6;
-      ctx.lineJoin = 'round';
-      ctx.stroke();
-      if (isSpeed && pts.length>1){
-        ctx.lineTo(xPx(pts[pts.length-1][0]), plotBottom);
-        ctx.lineTo(xPx(pts[0][0]), plotBottom);
-        ctx.closePath();
-        ctx.fillStyle = cssVar(meta.color)+'33';
-        ctx.fill();
-      }
-      ctx.restore();
-    }
-    // title (top, horizontal) + tick values (inset from the edge)
-    const position = i%2===0 ? 'left' : 'right';
-    ctx.save();
-    ctx.font = '700 11px sans-serif';
-    ctx.fillStyle = cssVar(meta.color);
-    ctx.textAlign = position==='left' ? 'left' : 'right';
-    ctx.textBaseline = 'alphabetic';
-    const titleX = position==='left' ? plotLeft : plotRight;
-    ctx.fillText(meta.label, titleX, plotTop-6);
-    ctx.restore();
-  });
-
-  renderXAxisLabels(view, xTicks, w);
-
-  // dashed selection line
-  if (S.selection && !chartIsPanning){
-    const rec = S.records[S.selection.idx];
-    if (rec){
-      const xv = xVal(rec);
-      if (xv>=view.min && xv<=view.max){
-        const px = Math.round(xPx(xv)); // whole pixel: matches the timeline's seek bar column exactly
-        ctx.save();
-        ctx.strokeStyle = cssVar('--power');
-        ctx.lineWidth = 2;
-        ctx.setLineDash([5,4]);
-        ctx.beginPath(); ctx.moveTo(px, plotTop); ctx.lineTo(px, plotBottom); ctx.stroke();
-        ctx.restore();
-      }
-    }
-  }
-}
+// ============ TIMELINE: graph + tracks as ONE surface ============
+// The old separate chart and the clip tracks are now a single "timeline":
+//   row 1  – speed graph with the interval clips on top of it
+//   row 2  – elevation (pale grey fill) with the heart-rate line over it;
+//            the main surface for scrolling
+//   row 3+ – only when intervals overlap: extra clip rows (rows 2+ scroll
+//            vertically once there are more than 3 rows in total)
+// S.chartView={min,max} remains the single source of truth for the visible
+// x-range (in xVal() units), and every x position is a whole pixel in one
+// shared pixel space so gridlines, clips and the seek bar line up exactly.
+function redrawChart(){ renderTimeline(); }
 let chartZoomAttached = false;
 let chartResizeObserverAttached = false;
-// Chart.js used to handle resize itself (responsive:true) — this custom
-// renderer needs its own watch for container size changes (orientation
-// change, layout shifts), since the canvas's pixel dimensions are set
-// explicitly in chartCanvasSetup() rather than being automatically managed.
 function attachChartResizeObserver(){
   if (chartResizeObserverAttached || typeof ResizeObserver==='undefined') return;
-  const canvas = $('#chart');
-  if (!canvas) return;
-  const ro = new ResizeObserver(()=>{ if (S.chartView) redrawChart(); });
-  ro.observe(canvas);
+  const body = $('#tlBody');
+  if (!body) return;
+  new ResizeObserver(()=>{ if (S.chartView) renderTimeline(); }).observe(body);
   chartResizeObserverAttached = true;
 }
-function buildChart(){
-  const canvas = $('#chart');
-  if (!canvas) return;
-  S.chartDs = downsampleForChart(S.records, 1500);
-  S.chartMetricRanges = {};
-  S.metrics.forEach(m=> S.chartMetricRanges[m] = chartMetricRange(m));
-  if (!S.chartView) S.chartView = { min: xVal(S.records[0]), max: xVal(S.records[S.records.length-1]) };
-  redrawChart();
-  if (!chartZoomAttached){ attachChartZoom(); chartZoomAttached = true; }
-  attachChartResizeObserver();
-  // Defensive: the very first redraw can measure a layout that hasn't
-  // fully settled yet (flexbox sizing right as the page becomes visible),
-  // which would bake a stale, possibly-too-narrow width into the canvas
-  // with nothing to correct it afterward unless ResizeObserver happens to
-  // catch a subsequent change. The double-rAF alone didn't fully fix this
-  // in practice, so this also retries at a few short delays afterward —
-  // whatever the exact timing quirk is, one of these is virtually
-  // guaranteed to land after layout has genuinely finished. Logs each
-  // measured width to the console (visible via Safari's remote Web
-  // Inspector, if available) so a real mismatch can be confirmed directly
-  // rather than guessed at.
-  const logChartWidth = (label)=>{
-    const r = canvas.getBoundingClientRect();
-    console.log('[chart width check] '+label+': canvas='+Math.round(r.width)+'px, timeline='+Math.round(($('#timelineScroll')?.getBoundingClientRect().width)||0)+'px');
-  };
-  logChartWidth('initial');
-  requestAnimationFrame(()=> requestAnimationFrame(()=>{
-    logChartWidth('double-rAF');
-    if (S.chartView) redrawChart();
-  }));
-  [60, 150, 350].forEach(delay=>{
-    setTimeout(()=>{
-      logChartWidth('t+'+delay+'ms');
-      if (S.chartView) redrawChart();
-    }, delay);
+function computeTimelineStats(){
+  let spdMax=0, altMin=Infinity, altMax=-Infinity, hrMin=Infinity, hrMax=-Infinity;
+  S.records.forEach(r=>{
+    if (r.speed!=null && r.speed*3.6>spdMax) spdMax = r.speed*3.6;
+    if (r.alt!=null){ if (r.alt<altMin) altMin=r.alt; if (r.alt>altMax) altMax=r.alt; }
+    if (r.hr!=null && r.hr>0){ if (r.hr<hrMin) hrMin=r.hr; if (r.hr>hrMax) hrMax=r.hr; }
   });
+  return {
+    spdMax: Math.max(1, spdMax),
+    hasAlt: isFinite(altMin), altMin, altMax: altMax>altMin ? altMax : altMin+1,
+    hasHr: isFinite(hrMin), hrMin, hrMax: hrMax>hrMin ? hrMax : hrMin+1,
+  };
 }
-
-function attachChartZoom(){
-  const canvas = $('#chart');
-
-  function xFromPixel(px){
-    const rect = canvas.getBoundingClientRect();
-    const view = S.chartView;
-    return view.min + (px/(rect.width||1))*(view.max-view.min);
-  }
-
-  let dragging=false, startX=0, lastX=0, moved=false, dragStartC=0, pinchDist=null;
-  const activeChartPointers = new Set();
-  let longPressTimer = null, longPressFired = false;
-  let lastPressX = 0, lastPressY = 0;
-  // a long-press inside the plot area (not near an axis) starts a seek-bar
-  // hold-drag instead of panning: dragging moves the selection continuously,
-  // and holding near either edge auto-scrolls the chart while doing so.
-  let edgeScrollRAF = null;
-  function stopEdgeScroll(){ if (edgeScrollRAF!=null){ cancelAnimationFrame(edgeScrollRAF); edgeScrollRAF=null; } }
-  function updateSeekAtCanvasX(canvasPx){
-    const val = xFromPixel(canvasPx);
-    const rec = nearestRecordByX(val);
-    if (rec) setSelection(S.records.indexOf(rec), null, 'chart');
-  }
-  function updateSeekDrag(canvasPx, canvasWidth){
-    const EDGE = 28;
-    stopEdgeScroll();
-    if (canvasPx < EDGE || canvasPx > canvasWidth-EDGE){
-      const dir = canvasPx < EDGE ? -1 : 1;
-      const step = (S.chartView.max-S.chartView.min)*0.015;
-      const scrollStep = ()=>{
-        if (!seekDragActive) return;
-        const xs = S.chartView;
-        clampAndSetX(xs.min+dir*step, xs.max+dir*step);
-        updateSeekAtCanvasX(canvasPx);
-        edgeScrollRAF = requestAnimationFrame(scrollStep);
-      };
-      edgeScrollRAF = requestAnimationFrame(scrollStep);
-    }
-    updateSeekAtCanvasX(canvasPx);
-  }
-  // momentum after a swipe: track recent finger velocity (px/ms) while
-  // dragging, then keep panning at that speed on release, decelerating with
-  // friction each frame until it settles or hits the data's edge.
-  let velocityX = 0, lastMoveTime = 0, lastMoveX = 0;
-  // Recent-window velocity instead of a long-memory exponential average: a
-  // flick's true speed is whatever happened in roughly the last ~80ms
-  // before release. An EMA built up over a whole (possibly slower) drag
-  // was under-reading fast flicks at the very end, since earlier slower
-  // samples still had lingering weight — this only looks at recent history.
-  const chartVelocity = createVelocityTracker();
-
-  canvas.addEventListener('pointerdown', e=>{
-    activeChartPointers.add(e.pointerId);
-    if (activeChartPointers.size > 1){ dragging=false; chartIsPanning=false; seekDragActive=false; stopEdgeScroll(); clearTimeout(longPressTimer); if (S.chartView) redrawChart(); return; }
-    stopMomentum(); endScrollSeeking();
-    const rect = canvas.getBoundingClientRect();
-    startX = e.clientX-rect.left; lastX=startX; moved=false; dragging=true; longPressFired=false; chartIsPanning=false;
-    dragStartC = currentScrollCenter();
-    lastMoveTime = performance.now(); lastMoveX = startX; velocityX = 0;
-    chartVelocity.reset(startX, e.timeStamp || performance.now());
-    canvas.setPointerCapture(e.pointerId);
-    const pressX = e.clientX-rect.left, pressY = e.clientY-rect.top;
-    lastPressX = pressX; lastPressY = pressY;
-    clearTimeout(longPressTimer);
-    longPressTimer = setTimeout(()=>{
-      if (moved) return;
-      longPressFired = true;
-      handleChartLongPress(pressX, pressY);
-    }, 500);
-  });
-  canvas.addEventListener('pointermove', e=>{
-    if (!dragging || activeChartPointers.size>1) return;
-    const rect = canvas.getBoundingClientRect();
-    const curX = e.clientX-rect.left;
-    if (seekDragActive){ updateSeekDrag(curX, rect.width); return; }
-    const now = performance.now();
-    chartVelocity.add(e, rect.left);
-    // Matches the map's own gesture model exactly: panning starts the
-    // instant there's real movement (3px, same threshold the map uses),
-    // with no waiting period — the long-press timer doesn't need to be
-    // cancelled here at all, since it already self-checks "if (moved)
-    // return" the moment it fires (see pointerdown above). That self-check
-    // is what safely lets both gestures share one finger: a genuine
-    // stationary hold never sets moved, so the timer fires normally into
-    // seek-drag; any real movement sets moved immediately, so the timer
-    // becomes a no-op when it eventually fires. The old design instead
-    // delayed "moved" until 14px specifically to stop jitter from
-    // cancelling a pending long-press — but that delay was exactly the
-    // dead zone making every pan/flick on the chart feel laggy compared to
-    // the map, which has no such delay at all.
-    if (Math.abs(curX-startX)>3 && !moved){ moved=true; }
-    if (!moved || longPressFired) return;
-    lastMoveTime=now; lastMoveX=curX;
-    // scroll live by the same pixel distance dragged (the seek bar follows
-    // the centre of the screen — see scrollCenterTo)
-    const totalDx = curX - startX;
-    const range = S.chartView.max - S.chartView.min;
-    scrollCenterTo(dragStartC - totalDx * range / (rect.width || 1));
-  });
-  canvas.addEventListener('pointerup', e=>{
-    clearTimeout(longPressTimer);
-    activeChartPointers.delete(e.pointerId);
-    const wasDragging = dragging;
-    dragging=false;
-    if (seekDragActive){
-      seekDragActive=false; stopEdgeScroll(); longPressFired=false;
-      if (S.hasGps && S.mapView) renderMapFrame(); // catch the map up once, now that the drag is over
-      return;
-    }
-    if (longPressFired){ longPressFired=false; chartIsPanning=false; if (S.chartView) redrawChart(); return; } // picker already shown by the timer
-    if (!wasDragging || activeChartPointers.size>0){
-      // this pointer wasn't the one panning, or others are still down — but
-      // if a pan really was in progress and everything's now lifted, don't
-      // leave the selection marker stuck hidden
-      if (chartIsPanning && activeChartPointers.size===0){ chartIsPanning=false; if (S.chartView) redrawChart(); }
-      endScrollSeeking();
-      return;
-    }
-    const finalVelocity = chartVelocity.velocity(e.timeStamp || performance.now());
-    if (!moved){
-      // genuinely a tap — never moved past the 3px pan threshold (a flick
-      // that short glides only a few pixels anyway, and with the
-      // event-timestamp velocity a slightly jittery tap could otherwise
-      // read as a "flick" and lose its selection). A tap landing in the
-      // top-left/top-right corner (where the axis titles are drawn) opens
-      // that axis's picker instead of selecting a point — this check lives
-      // here, in the canvas's own handler, rather than as a separate
-      // overlay button, specifically so a DRAG starting from that same
-      // corner is never intercepted and can still pan/flick normally.
-      const rect = canvas.getBoundingClientRect();
-      const relY = e.clientY-rect.top;
-      if (relY < 32 && lastPressX < rect.width*0.26){
-        showAxisPicker(Object.keys(METRIC_META).map(k=>({value:k, label:METRIC_META[k].label})), v=>changeMetricSlot(0, v));
-      } else if (relY < 32 && lastPressX > rect.width*0.74){
-        showAxisPicker(Object.keys(METRIC_META).map(k=>({value:k, label:METRIC_META[k].label})), v=>changeMetricSlot(1, v));
-      } else {
-        const val = xFromPixel(e.clientX-rect.left);
-        const rec = nearestRecordByX(val);
-        if (rec) setSelection(S.records.indexOf(rec), null, 'chart');
-      }
-    } else if (Math.abs(finalVelocity) > MOMENTUM_TRIGGER_THRESHOLD){
-      startMomentum(finalVelocity, canvas.getBoundingClientRect().width);
-    } else {
-      chartIsPanning = false;
-      endScrollSeeking();
-      redrawChart();
-    }
-  });
-  canvas.addEventListener('pointercancel', e=>{ clearTimeout(longPressTimer); activeChartPointers.delete(e.pointerId); dragging=false; chartIsPanning=false; seekDragActive=false; stopEdgeScroll(); stopMomentum(); endScrollSeeking(); if (S.chartView) redrawChart(); });
-  // helper: zoom operations center on the currently selected point (if any)
-  // instead of the cursor/midpoint, so zooming keeps the highlighted point in view.
-  function zoomCenterX(fallback){
-    if (S.selection){
-      const rec = S.records[S.selection.idx];
-      if (rec) return xVal(rec);
-    }
-    return fallback;
-  }
-
-  // wheel: covers both a real mouse wheel AND a trackpad two-finger gesture (the
-  // browser reports both as wheel events, never as touch events, on non-touchscreen
-  // laptops). A gesture's pan/zoom mode is decided once (from its first event) and
-  // locked until the gesture pauses — otherwise natural diagonal finger drift during
-  // a horizontal-scroll gesture flips some events into zoom mid-pan.
-  let chartWheelGesture = null, chartWheelTimer = null;
-  canvas.addEventListener('wheel', e=>{
-    e.preventDefault();
-    const xs = S.chartView;
-    if (!chartWheelGesture){
-      const isPan = (e.ctrlKey && e.deltaY !== 0) || Math.abs(e.deltaX) > Math.abs(e.deltaY);
-      chartWheelGesture = { mode: isPan ? 'pan' : 'zoom' };
-    }
-    clearTimeout(chartWheelTimer);
-    chartWheelTimer = setTimeout(()=>{ chartWheelGesture = null; }, 250);
-
-    if (chartWheelGesture.mode === 'pan'){
-      const driveDelta = e.ctrlKey ? e.deltaY : e.deltaX;
-      const range = xs.max - xs.min;
-      const shift = driveDelta / (canvas.getBoundingClientRect().width || 1) * range;
-      clampAndSetX(xs.min + shift, xs.max + shift);
-      return;
-    }
-    const rect = canvas.getBoundingClientRect();
-    const px = e.clientX-rect.left;
-    const cx = zoomCenterX(xFromPixel(px));
-    const factor = e.deltaY<0 ? 0.8 : 1.25;
-    let min = xs.min, max = xs.max;
-    min = cx-(cx-min)*factor; max = cx+(max-cx)*factor;
-    clampAndSetX(min,max);
-  }, {passive:false});
-
-  canvas.addEventListener('touchstart', e=>{
-    if (e.touches.length===2) pinchDist = Math.hypot(e.touches[0].clientX-e.touches[1].clientX, e.touches[0].clientY-e.touches[1].clientY);
-  }, {passive:true});
-  canvas.addEventListener('touchmove', e=>{
-    if (e.touches.length===2 && pinchDist){
-      e.preventDefault();
-      const nd = Math.hypot(e.touches[0].clientX-e.touches[1].clientX, e.touches[0].clientY-e.touches[1].clientY);
-      const factor = pinchDist/nd;
-      const xs = S.chartView;
-      const rect = canvas.getBoundingClientRect();
-      const midPx = (e.touches[0].clientX+e.touches[1].clientX)/2 - rect.left;
-      const cx = zoomCenterX(xFromPixel(midPx));
-      let min = cx-(cx-xs.min)*factor, max = cx+(xs.max-cx)*factor;
-      clampAndSetX(min,max);
-      pinchDist = nd;
-    }
-  }, {passive:false});
-  canvas.addEventListener('touchend', ()=>{ pinchDist=null; });
-
-  // zoom is pinch-only now (the +/- buttons were removed); the reset button
-  // remains, and also resets the timeline's own zoom since it always
-  // mirrors the chart's visible range (see getTimelineTimeRange)
-  $('#zoomReset').onclick = ()=>{
-    S.chartView.min = xVal(S.records[0]);
-    S.chartView.max = xVal(S.records[S.records.length-1]);
-    redrawChart();
-    renderTimeline();
-  };
-  $('#xAxisLabels').addEventListener('click', ()=>{
-    showAxisPicker([
-      {value:'clock', label:'時刻'}, {value:'elapsed', label:'経過時間'}, {value:'dist', label:'距離'},
-    ], changeXMode);
-  });
+function buildChart(){
+  S.tlStats = computeTimelineStats();
+  if (!S.chartView) S.chartView = { min: xVal(S.records[0]), max: xVal(S.records[S.records.length-1]) };
+  renderTimeline();
+  if (!chartZoomAttached){ attachTimelineGestures(); chartZoomAttached = true; }
+  attachChartResizeObserver();
+  // The first render can measure a layout that hasn't fully settled yet
+  // (flexbox sizing right as the page becomes visible); retry shortly after.
+  requestAnimationFrame(()=> requestAnimationFrame(()=>{ if (S.chartView) renderTimeline(); }));
+  [60, 150, 350].forEach(delay=> setTimeout(()=>{ if (S.chartView) renderTimeline(); }, delay));
 }
 // Shifts the requested [min,max] window into the data bounds while preserving
 // its width wherever possible (only shrinking it if it's wider than the full
@@ -2651,8 +2393,7 @@ function clampAndSetX(min,max){
   if (newMin < lo){ newMin = lo; newMax = lo+width; }
   if (newMax > hi){ newMax = hi; newMin = hi-width; }
   S.chartView.min = newMin; S.chartView.max = newMax;
-  redrawChart();
-  if (typeof renderTimeline==='function') renderTimeline(); // synchronous (it's cheap now), so the timeline never lags the chart by a frame — keep the timeline's own visible window matching the chart's pinch/pan zoom
+  renderTimeline();
 }
 
 /* metric/x-axis pickers, triggered by long-pressing the chart's axes
@@ -2669,29 +2410,6 @@ function changeXMode(newMode){
     if (newMode==='dist' || prevMode==='dist'){ S.chartView = null; buildChart(); }
     else redrawChart();
   }
-  saveState();
-}
-function changeMetricSlot(slot, newMetric){
-  if (S.metrics[slot] === newMetric) return;
-  const other = slot===0 ? 1 : 0;
-  const metrics = S.metrics.slice();
-  metrics[slot] = newMetric;
-  if (metrics[other] === newMetric){
-    // avoid ending up with the same metric on both sides — swap them instead
-    metrics[other] = S.metrics[slot];
-  }
-  S.metrics = metrics;
-  // buildChart() recomputes each metric's data range from scratch; it
-  // preserves S.chartView if already set, so no need to save/restore it
-  // here — kept as a no-op-safe read for clarity.
-  const prevXs = S.chartView ? {min:S.chartView.min, max:S.chartView.max} : null;
-  buildChart();
-  if (prevXs){
-    S.chartView.min = prevXs.min;
-    S.chartView.max = prevXs.max;
-    redrawChart();
-  }
-  if (S.selection) updateSelBubble();
   saveState();
 }
 // A small modal with up to 3 buttons, left to right in the order given.
@@ -2754,16 +2472,6 @@ function showAxisPicker(items, onSelect){
   picker.onclick = e=>{ if (e.target===picker) hideAxisPicker(); }; // tap backdrop to cancel
 }
 function hideAxisPicker(){ $('#axisPicker').classList.add('hidden'); $('#axisPicker').innerHTML=''; }
-function handleChartLongPress(px, py){
-  // Axis switching is now handled entirely by the dedicated overlay buttons
-  // (#axisLeftBtn/#axisRightBtn/#xAxisLabels) — a real HTML button click
-  // that can never compete with or get lost to this canvas gesture. A
-  // long-press anywhere on the canvas itself simply starts the seek-drag.
-  if (!S.chartView) return;
-  seekDragActive = true;
-  updateSeekAtCanvasX(px);
-}
-
 /* ============ SELECTION ============ */
 function setSelection(idx, clientPos, source){
   S.selection = {idx};
@@ -2803,43 +2511,6 @@ function updateSelBubble(){
   if (m1){ $('#sMetric2Label').textContent = m1.label; $('#sMetric2').textContent = m1.fmt(m1.get(r))+(m1.get(r)!=null?' '+m1.unit:''); }
   if (typeof renderTimeline==='function') renderTimeline(); // keep the seek line/highlight in sync with the current selection
 }
-// RESTORED: the seek-control button handlers below (◀0km/h ◀◀ ◀ ▶ ▶▶
-// ▶0km/h) — another casualty of the earlier accidental deletion. The
-// buttons themselves were still in the HTML, just silently wired to
-// nothing.
-function stepSelection(delta){
-  if (!S.selection || !S.records.length) return;
-  const newIdx = Math.max(0, Math.min(S.records.length-1, S.selection.idx+delta));
-  if (newIdx===S.selection.idx) return;
-  setSelection(newIdx, null, 'both');
-}
-function stepToZeroSpeed(dir){
-  if (!S.selection || !S.records.length) return;
-  const MOVING_THRESHOLD = 0.5; // m/s — matches the "stopped" definition used elsewhere in this app
-  for (let i=S.selection.idx+dir; i>=0 && i<S.records.length; i+=dir){
-    const spd = S.records[i].speed;
-    if (spd!=null && spd<MOVING_THRESHOLD){ setSelection(i, null, 'both'); return; }
-  }
-}
-// Holding a seek button down repeats its action, like a typical "press and
-// hold" spinner/stepper control — the first repeat waits a bit longer than
-// the rest so a normal tap doesn't accidentally fire a second step.
-function attachHoldRepeat(el, fn){
-  let timer = null, count = 0;
-  function tick(){ fn(); count++; timer = setTimeout(tick, count===1?450:90); }
-  function start(e){ e.preventDefault(); if (timer) return; count=0; tick(); }
-  function stop(){ if (timer){ clearTimeout(timer); timer=null; } }
-  el.addEventListener('pointerdown', start);
-  el.addEventListener('pointerup', stop);
-  el.addEventListener('pointerleave', stop);
-  el.addEventListener('pointercancel', stop);
-}
-attachHoldRepeat($('#selPrevPt'), ()=> stepSelection(-1));
-attachHoldRepeat($('#selNextPt'), ()=> stepSelection(1));
-attachHoldRepeat($('#selPrev10Pt'), ()=> stepSelection(-10));
-attachHoldRepeat($('#selNext10Pt'), ()=> stepSelection(10));
-attachHoldRepeat($('#selPrevZero'), ()=> stepToZeroSpeed(-1));
-attachHoldRepeat($('#selNextZero'), ()=> stepToZeroSpeed(1));
 
 /* ============ INTERVALS ============ */
 const COLUMN_DEFS = [
@@ -3083,26 +2754,25 @@ function getActiveInterval(){
   const seekT = S.records[S.selection.idx].elapsed;
   return S.intervals.find(iv=>seekT>=iv.start && seekT<=iv.end) || null;
 }
-// Dragging the timeline pans the chart's visible range the same way
-// dragging the chart itself does — the timeline just re-renders to follow,
-// since it always mirrors the chart's current window (getTimelineTimeRange).
-function attachTimelinePan(){
-  const scroll = $('#timelineScroll');
-  if (!scroll) return;
-  // Pan and pinch both run on pointer events captured to #timelineScroll.
-  // The old pinch listened to touchmove on #timelineScroll, but touch events
-  // stay bound to the element the finger first landed on — a .tlTrack /
-  // .tlClip that renderTimeline() then replaced via innerHTML. Once that
-  // element was detached, its touchmoves no longer bubbled up here, so the
-  // pinch only updated sporadically (and the browser was free to handle the
-  // gesture itself). Captured pointers are always delivered to `scroll`,
-  // whatever happens to the DOM underneath.
+// interval boundaries are stored as elapsed seconds; the timeline's x-axis
+// may be elapsed/clock (same numbers) or distance, so convert both ways
+function ivX(t){ return S.xMode==='dist' ? nearestRecordByElapsed(t).dist : t; }
+function elapsedFromX(xv){ return S.xMode==='dist' ? nearestRecordByDist(xv).elapsed : xv; }
+
+// Everything that scrolls the timeline (drag, flick, wheel, pinch) goes
+// through this one gesture handler on #tlBody.
+function attachTimelineGestures(){
+  const body = $('#tlBody');
+  if (!body) return;
+  // Pan and pinch both run on pointer events captured to #tlBody: renderTimeline()
+  // keeps replacing the clip elements under the fingers, and a captured
+  // pointer is always delivered here whatever happens to the DOM underneath.
   const pointers = new Map(); // pointerId -> clientX/clientY
   let startX=0, dragging=false, moved=false, dragStartC=0, lastWidth=0, panPointerId=null, noTap=false;
   let pinch = null;
   const tlVelocity = createVelocityTracker();
   function beginPan(id, clientX, t){
-    const rect = scroll.getBoundingClientRect();
+    const rect = body.getBoundingClientRect();
     panPointerId = id; dragging = true; lastWidth = rect.width;
     startX = clientX-rect.left;
     dragStartC = currentScrollCenter();
@@ -3110,15 +2780,10 @@ function attachTimelinePan(){
   }
   function beginPinch(){
     const [a, b] = [...pointers.values()];
-    const rect = scroll.getBoundingClientRect();
+    const rect = body.getBoundingClientRect();
     const xs = S.chartView;
     const midFrac = Math.max(0, Math.min(1, ((a.x+b.x)/2-rect.left)/(rect.width||1)));
-    // Anchored pinch: remember the data value under the fingers' midpoint
-    // and the range at the start, then derive each frame's window from the
-    // gesture's total scale. The old version multiplied in a fresh ratio on
-    // every touchmove, so rounding and the clamp at the data edges
-    // accumulated into drift; this also lets the window follow the
-    // midpoint, so pinch and two-finger pan work together like the map.
+    // anchored pinch: the data value under the fingers' midpoint stays put
     pinch = {
       startDist: Math.max(1, Math.hypot(a.x-b.x, a.y-b.y)),
       startRange: xs.max-xs.min,
@@ -3127,32 +2792,31 @@ function attachTimelinePan(){
   }
   function updatePinch(){
     const [a, b] = [...pointers.values()];
-    const rect = scroll.getBoundingClientRect();
+    const rect = body.getBoundingClientRect();
     const nd = Math.max(1, Math.hypot(a.x-b.x, a.y-b.y));
     const midFrac = Math.max(0, Math.min(1, ((a.x+b.x)/2-rect.left)/(rect.width||1)));
     const lo = xVal(S.records[0]), hi = xVal(S.records[S.records.length-1]);
     let range = pinch.startRange * pinch.startDist/nd;
-    range = Math.max((hi-lo)*0.0005, Math.min(hi-lo, range)); // same limits clampAndSetX enforces
+    range = Math.max((hi-lo)*0.0005, Math.min(hi-lo, range));
     const min = pinch.anchor - midFrac*range;
     clampAndSetX(min, min+range);
   }
-  scroll.addEventListener('pointerdown', e=>{
-    if (e.target.closest('.tlClipHandle') || !S.chartView) return; // edge handles run their own drag gesture
+  body.addEventListener('pointerdown', e=>{
+    if (e.target.closest('.tlClipHandle') || e.target.closest('#tlVBar') || !S.chartView) return; // handles / scrollbar run their own drag
     stopMomentum(); endScrollSeeking();
     pointers.set(e.pointerId, {x:e.clientX, y:e.clientY});
-    try{ scroll.setPointerCapture(e.pointerId); }catch(err){}
+    try{ body.setPointerCapture(e.pointerId); }catch(err){}
     if (pointers.size===1){
       moved = false; noTap = false;
       beginPan(e.pointerId, e.clientX, e.timeStamp || performance.now());
     } else if (pointers.size===2){
-      // a second finger means this is a pinch, not a pan
       dragging = false; panPointerId = null;
       noTap = true; // a pinch is never a tap, even if one finger stays down afterwards
       moved = false;
       beginPinch();
     }
   });
-  scroll.addEventListener('pointermove', e=>{
+  body.addEventListener('pointermove', e=>{
     if (!pointers.has(e.pointerId)) return;
     pointers.set(e.pointerId, {x:e.clientX, y:e.clientY});
     if (pinch){
@@ -3160,16 +2824,9 @@ function attachTimelinePan(){
       return;
     }
     if (!dragging || e.pointerId!==panPointerId) return;
-    const rect = scroll.getBoundingClientRect();
+    const rect = body.getBoundingClientRect();
     const curX = e.clientX-rect.left;
-    // sample velocity from the very start of the gesture (not gated by the
-    // "moved" threshold below) so that once a pan is confirmed, its
-    // velocity reading reflects the whole motion rather than only the part
-    // after crossing the threshold. Threshold matches the map's (3px) —
-    // the timeline has no competing long-press gesture on this element, so
-    // there's no reason to delay longer than that bare minimum needed to
-    // tell a pan apart from a stationary tap.
-    tlVelocity.add(e, rect.left);
+    tlVelocity.add(e, rect.left); // velocity from the very start of the gesture, not gated by the "moved" threshold
     if (Math.abs(curX-startX)>3) moved=true;
     if (!moved) return;
     const totalDx = curX-startX;
@@ -3183,8 +2840,7 @@ function attachTimelinePan(){
       if (pointers.size>=2){ beginPinch(); return; } // a third finger lifted — re-anchor on the remaining two
       pinch = null;
       if (pointers.size===1){
-        // one finger left after a pinch: carry on as a plain pan from here,
-        // re-based so the window doesn't jump
+        // one finger left after a pinch: carry on as a plain pan from here
         const [id, p] = [...pointers.entries()][0];
         moved = false;
         beginPan(id, p.x, e.timeStamp || performance.now());
@@ -3199,48 +2855,105 @@ function attachTimelinePan(){
       else endScrollSeeking();
     } else if (e.type==='pointerup' && !noTap){
       // A tap is resolved here, from the pointer's own release, rather than
-      // from a 'click' on whatever element was under the finger: the pointer
-      // is captured by #timelineScroll and renderTimeline() keeps replacing
-      // the clip/track elements, so click events were unreliable — and the
-      // old "swallow the next click after a pan" flag was left set whenever
-      // no click followed, which ate the next real tap (the "two taps to
-      // move the seek bar" bug).
+      // from a 'click' on whatever element was under the finger (the pointer
+      // is captured and the clip elements keep being replaced).
       handleTimelineTap(e);
     }
     moved=false;
   };
-  scroll.addEventListener('pointerup', endPointer);
-  scroll.addEventListener('pointercancel', endPointer);
-  // belt and braces for browsers that don't fully honour touch-action:none
-  // on multi-touch (older iOS Safari): never let a two-finger gesture here
-  // turn into a page zoom
-  scroll.addEventListener('touchmove', e=>{ if (e.touches.length>=2) e.preventDefault(); }, {passive:false});
+  body.addEventListener('pointerup', endPointer);
+  body.addEventListener('pointercancel', endPointer);
+  // never let a two-finger gesture here turn into a page zoom (older iOS)
+  body.addEventListener('touchmove', e=>{ if (e.touches.length>=2) e.preventDefault(); }, {passive:false});
+
+  // wheel: covers both a real mouse wheel AND a trackpad two-finger gesture. A
+  // gesture's pan/zoom mode is decided once and locked until it pauses.
+  let wheelGesture = null, wheelTimer = null;
+  body.addEventListener('wheel', e=>{
+    if (!S.chartView) return;
+    e.preventDefault();
+    stopMomentum();
+    const xs = S.chartView;
+    if (!wheelGesture){
+      const isPan = (e.ctrlKey && e.deltaY !== 0) || Math.abs(e.deltaX) > Math.abs(e.deltaY);
+      wheelGesture = { mode: isPan ? 'pan' : 'zoom' };
+    }
+    clearTimeout(wheelTimer);
+    wheelTimer = setTimeout(()=>{ wheelGesture = null; endScrollSeeking(); }, 250);
+    const rect = body.getBoundingClientRect();
+    if (wheelGesture.mode === 'pan'){
+      const driveDelta = e.ctrlKey ? e.deltaY : e.deltaX;
+      scrollCenterTo(currentScrollCenter() + driveDelta/(rect.width||1)*(xs.max-xs.min));
+      return;
+    }
+    const frac = (e.clientX-rect.left)/(rect.width||1);
+    const cx = xs.min + frac*(xs.max-xs.min);
+    const factor = e.deltaY<0 ? 0.8 : 1.25;
+    clampAndSetX(cx-(cx-xs.min)*factor, cx+(xs.max-cx)*factor);
+  }, {passive:false});
+
+  // vertical scrollbar thumb (rows 2+ only exist as a scrollable area when
+  // intervals overlap enough to need more than 3 rows)
+  const rows2 = $('#tlRows2'), thumb = $('#tlVThumb');
+  rows2.addEventListener('scroll', tlUpdateVBar);
+  let thumbDrag = null;
+  thumb.addEventListener('pointerdown', e=>{
+    e.preventDefault();
+    thumb.setPointerCapture(e.pointerId);
+    thumbDrag = {y:e.clientY, top:rows2.scrollTop};
+  });
+  thumb.addEventListener('pointermove', e=>{
+    if (!thumbDrag) return;
+    const bar = $('#tlVBar').getBoundingClientRect().height;
+    const th = thumb.getBoundingClientRect().height;
+    const ratio = (rows2.scrollHeight-rows2.clientHeight)/Math.max(1, bar-th);
+    rows2.scrollTop = thumbDrag.top + (e.clientY-thumbDrag.y)*ratio;
+  });
+  const endThumb = ()=>{ thumbDrag = null; };
+  thumb.addEventListener('pointerup', endThumb);
+  thumb.addEventListener('pointercancel', endThumb);
+
+  // the reset button: back to the whole ride
+  $('#zoomReset').onclick = ()=>{
+    S.chartView.min = xVal(S.records[0]);
+    S.chartView.max = xVal(S.records[S.records.length-1]);
+    scrollState = null;
+    renderTimeline();
+  };
+  $('#xAxisLabels').addEventListener('click', ()=>{
+    showAxisPicker([
+      {value:'clock', label:'時刻'}, {value:'elapsed', label:'経過時間'}, {value:'dist', label:'距離'},
+    ], changeXMode);
+  });
 }
-// The timeline's own visible window — always the same elapsed-time range
-// the chart above is currently showing, so pinch-zooming/panning the chart
-// moves the timeline in lockstep, rather than the timeline always showing
-// the whole ride regardless of the chart's own zoom.
-function getTimelineTimeRange(){
-  const totalDur = S.records[S.records.length-1].elapsed || 1;
-  if (!S.chartView) return {t0:0, t1:totalDur};
-  const xs = S.chartView;
-  if (xs.min==null || xs.max==null) return {t0:0, t1:totalDur};
-  if (S.xMode==='dist'){
-    const r0 = nearestRecordByDist(xs.min), r1 = nearestRecordByDist(xs.max);
-    return {t0:r0.elapsed, t1:r1.elapsed};
-  }
-  return {t0:xs.min, t1:xs.max};
+function tlUpdateVBar(){
+  const bar = $('#tlVBar'), thumb = $('#tlVThumb'), cont = $('#tlRows2');
+  if (!bar || bar.style.display==='none') return;
+  const barH = cont.clientHeight, total = cont.scrollHeight;
+  if (total<=barH+1){ return; }
+  const th = Math.max(18, barH*barH/total);
+  thumb.style.height = th+'px';
+  thumb.style.top = (cont.scrollTop/(total-barH)*(barH-th))+'px';
 }
+
+// The timeline's own visible window — always S.chartView, in xVal() units.
 function renderTimeline(){
-  const scroll = $('#timelineScroll');
-  const tracksWrap = $('#timelineTracks');
-  if (!scroll || !tracksWrap || !S.records.length) return;
-  const {t0, t1} = getTimelineTimeRange();
-  const span = Math.max(1, t1-t0);
+  const body = $('#tlBody');
+  if (!body || !S.records.length) return;
+  const view = S.chartView;
+  if (!view){ validateIntervals(); saveStateIfChanged(); return; }
+  const vspan = Math.max(1e-9, view.max-view.min);
+  const rect = body.getBoundingClientRect();
+  // All x positions are whole pixels in one shared pixel space (the same
+  // integer width for the strip, gridlines, graphs, clips and seek bar).
+  const W = Math.round(rect.width), H = Math.round(rect.height);
+  if (!(W>0) || !(H>8)){ validateIntervals(); saveStateIfChanged(); return; } // page hidden
+  const xOf = v => Math.round((v-view.min)/vspan*W);
+
   // greedy track assignment: earliest-start-first, each interval goes in
   // the first track whose last-placed interval already ended before it
-  // starts — considers every interval (not just currently-visible ones) so
-  // a given interval always lands on the same track regardless of zoom
+  // starts — considers every interval so a given interval always lands on
+  // the same track regardless of zoom
   const sorted = S.intervals.slice().sort((a,b)=>a.start-b.start);
   const tracks = [];
   sorted.forEach(iv=>{
@@ -3250,40 +2963,49 @@ function renderTimeline(){
     }
     if (!placed) tracks.push([iv]);
   });
-  while (tracks.length<2) tracks.push([]); // 2 tracks by default; more only appear when overlaps actually need them
+  if (!tracks.length) tracks.push([]);
   const trackCount = tracks.length;
-  const trackHeightPct = 100/trackCount;
+  // rows: 1 = speed + clips (track 0), 2 = elevation/HR graph, then one row
+  // per extra (overlap) track. The area never changes size: at most 3 rows
+  // are shown at once, rows 2+ scroll vertically beyond that.
+  const nRows = trackCount+1;
+  const rowH = Math.floor(H/Math.min(nRows,3));
+  const row2H = nRows===2 ? H-rowH : rowH;
+  const innerH = row2H + (trackCount-1)*rowH;
+  const rows2H = H-rowH;
+  const row1 = $('#tlRow1'), rows2 = $('#tlRows2'), inner = $('#tlRowsInner'), row2 = $('#tlRow2'), extra = $('#tlExtra');
+  row1.style.height = rowH+'px';
+  rows2.style.top = rowH+'px'; rows2.style.height = rows2H+'px';
+  inner.style.height = innerH+'px';
+  row2.style.height = row2H+'px';
+  extra.style.top = row2H+'px';
+  const bar = $('#tlVBar');
+  const scrollable = innerH>rows2H+1;
+  bar.style.display = scrollable ? 'block' : 'none';
+  bar.style.top = rowH+'px'; bar.style.height = rows2H+'px';
+  rows2.classList.toggle('tlScrollable', scrollable);
+  if (!scrollable && rows2.scrollTop) rows2.scrollTop = 0;
+
   const activeIv = getActiveInterval();
-  const seekT = S.selection ? S.records[S.selection.idx].elapsed : 0;
+  const seekRec = S.selection ? S.records[S.selection.idx] : null;
   const clips = [];
   tracks.forEach((track,ti)=>{
     track.forEach(iv=>{
-      if (iv.end<=t0 || iv.start>=t1) return; // entirely outside the current window — skip
       const idx = S.intervals.indexOf(iv);
-      // deliberately NOT clamped to the window: the clip keeps its true
-      // extent and the container's overflow:hidden crops it, so the edge
-      // handles stay at the real start/end and only show once those edges
-      // scroll into view
-      const x0 = (iv.start-t0)/span, x1 = (iv.end-t0)/span; // fractions of the width
-      const isActive = !!(activeIv && activeIv.id===iv.id);
+      const L = xOf(ivX(iv.start)), R = Math.max(L+4, xOf(ivX(iv.end)));
+      if (R<=0 || L>=W) return; // entirely outside the current window — skip
       const label = numberPrefix(idx+1)+intervalDisplayName(iv, idx);
-      clips.push({ti, iv, f0:x0, f1:x1, isActive, label});
+      clips.push({ti, iv, L, R, isActive: !!(activeIv && activeIv.id===iv.id), label});
     });
   });
-  // All x positions are whole pixels in one shared pixel space (the same
-  // integer width the chart canvas uses), so a gridline or the seek bar lands
-  // on exactly the same pixel column in the chart, the label strip and here.
-  const W = Math.round(scroll.getBoundingClientRect().width), H = scroll.clientHeight;
-  const xOf = f => Math.round(f*W);
   const HANDLE_PX = 18;
-  clips.forEach(c=>{
-    c.L = xOf(c.f0); c.R = Math.max(c.L+4, xOf(c.f1));
-    c.name = tlNameGeometry(c, W, HANDLE_PX);
-  });
-  const seekVisible = seekT>=t0 && seekT<=t1;
-  const seekPx = xOf((seekT-t0)/span);
+  clips.forEach(c=>{ c.name = tlNameGeometry(c, W, HANDLE_PX); });
+  const seekX = seekRec ? xOf(xVal(seekRec)) : null;
+  const seekVisible = seekX!=null && seekX>=0 && seekX<=W;
+
+  const trackEls = ()=> body.querySelectorAll('.tlClip');
   const placeClips = ()=>{
-    const els = tracksWrap.querySelectorAll('.tlClip');
+    const els = trackEls();
     clips.forEach((c,i)=>{
       const st = els[i].style;
       st.left = c.L+'px'; st.width = (c.R-c.L)+'px';
@@ -3292,42 +3014,43 @@ function renderTimeline(){
       nm.style.display = '';
       nm.style.left = (c.name.left-c.L-1.5)+'px'; nm.style.width = c.name.width+'px';
     });
-    const seekLine = tracksWrap.querySelector('.tlSeekLine');
-    if (seekLine) seekLine.style.left = (seekPx-1)+'px';
+    body.querySelectorAll('.tlTrack').forEach(t=>{
+      const ti = Number(t.dataset.track);
+      t.style.height = rowH+'px';
+      t.style.top = ti===0 ? '0px' : ((ti-1)*rowH)+'px';
+    });
   };
-  // Fast path: while scrolling (or gliding), only positions change — the
-  // same clips stay visible on the same tracks with the same labels.
-  // Rebuilding everything via innerHTML each frame was costly, so just move
-  // the existing elements.
-  const structKey = trackCount+'|'+(seekVisible?1:0)+'|'+clips.map(c=>c.ti+':'+c.iv.id+':'+(c.isActive?1:0)+':'+c.label).join('\u0001');
-  const existingClips = tracksWrap.querySelectorAll('.tlClip');
-  if (structKey===timelineStructKey && existingClips.length===clips.length){
+  // Fast path: while scrolling (or gliding) only positions change — the same
+  // clips stay on the same tracks with the same labels, so just move the
+  // existing elements instead of rebuilding them via innerHTML.
+  const structKey = trackCount+'|'+clips.map(c=>c.ti+':'+c.iv.id+':'+(c.isActive?1:0)+':'+c.label).join('\u0001');
+  if (structKey===timelineStructKey && trackEls().length===clips.length){
     placeClips();
   } else {
-    let html = '';
-    for (let ti=0; ti<trackCount; ti++){
-      html += '<div class="tlTrack" data-track="'+ti+'" style="top:'+(ti*trackHeightPct)+'%; height:'+trackHeightPct+'%;">';
-      clips.filter(c=>c.ti===ti).forEach(c=>{
-        const iv = c.iv;
-        html += '<div class="tlClip'+(c.isActive?' tlHighlight':' tlLocked')+'" data-id="'+iv.id+'">'+
-          '<div class="tlClipName" data-id="'+iv.id+'">'+escapeHtml(c.label)+'</div>'+
-          '<div class="tlClipHandle" data-edge="start" data-id="'+iv.id+'">◀</div>'+
-          '<div class="tlClipHandle" data-edge="end" data-id="'+iv.id+'">▶</div>'+
-        '</div>';
-      });
-      html += '</div>';
-    }
-    tracksWrap.innerHTML = html;
-    if (seekVisible){
-      const seekLine = document.createElement('div');
-      seekLine.className = 'tlSeekLine';
-      tracksWrap.appendChild(seekLine);
-    }
+    const htmlFor = ti => '<div class="tlTrack" data-track="'+ti+'">'+
+      clips.filter(c=>c.ti===ti).map(c=>
+        '<div class="tlClip'+(c.isActive?' tlHighlight':' tlLocked')+'" data-id="'+c.iv.id+'">'+
+          '<div class="tlClipName" data-id="'+c.iv.id+'">'+escapeHtml(c.label)+'</div>'+
+          '<div class="tlClipHandle" data-edge="start" data-id="'+c.iv.id+'">◀</div>'+
+          '<div class="tlClipHandle" data-edge="end" data-id="'+c.iv.id+'">▶</div>'+
+        '</div>').join('')+
+      '</div>';
+    $('#tlTrack0').innerHTML = htmlFor(0);
+    let ex = '';
+    for (let ti=1; ti<trackCount; ti++) ex += htmlFor(ti);
+    extra.innerHTML = ex;
     timelineStructKey = structKey;
     wireTimelineEvents();
     placeClips();
   }
-  drawTimelineCanvases(clips, W, H, t0, span, trackCount);
+  const seekLine = $('#tlSeek');
+  seekLine.style.display = seekVisible ? 'block' : 'none';
+  if (seekVisible) seekLine.style.left = (seekX-1)+'px';
+
+  const xTicks = computeXTicks(view, W);
+  renderXAxisLabels(view, xTicks, W);
+  drawTimelineCanvases(view, W, H, rowH, row2H, xTicks);
+  tlUpdateVBar();
   validateIntervals();
   saveStateIfChanged();
 }
@@ -3366,83 +3089,100 @@ function tlCanvasSetup(canvas, W, H){
   ctx.clearRect(0,0,W,H);
   return ctx;
 }
-// Per-ride heart-rate lookup for the clip backdrop: prefix sums over the
-// records (gaps carry the previous value) so the mean HR over any time
-// range is O(1) regardless of zoom, plus the ride's HR min/max.
-let tlHrCache = null;
-function getHrCache(){
-  const recs = S.records;
-  if (tlHrCache && tlHrCache.recs===recs) return tlHrCache;
-  const n = recs.length;
-  const el = new Float64Array(n), pre = new Float64Array(n+1);
-  let last = null, min = Infinity, max = -Infinity;
-  const firstValid = recs.find(r=>r.hr!=null && r.hr>0);
-  last = firstValid ? firstValid.hr : null;
-  for (let i=0;i<n;i++){
-    el[i] = recs[i].elapsed;
-    const h = recs[i].hr;
-    if (h!=null && h>0){ last = h; if (h<min) min=h; if (h>max) max=h; }
-    pre[i+1] = pre[i] + (last!=null ? last : 0);
-  }
-  tlHrCache = {recs, el, pre, min, max, valid: last!=null && max>min};
-  return tlHrCache;
-}
-function hrLowerBound(el, t){
-  let lo=0, hi=el.length;
-  while (lo<hi){ const mid=(lo+hi)>>1; if (el[mid]<t) lo=mid+1; else hi=mid; }
-  return lo;
-}
-// Gridlines (behind the clips) and a faint heart-rate area (in front of
-// them, clipped to each clip's visible span) for the timeline.
-function drawTimelineCanvases(clips, W, H, t0, span, trackCount){
-  const grid = $('#tlGridCanvas'), hrc = $('#tlHrCanvas');
-  if (!grid || !hrc || !(W>0) || !(H>0)) return;
-  const gctx = tlCanvasSetup(grid, W, H);
-  if (S.chartView){
-    // same fractions as the chart's gridlines, so the lines run unbroken
-    // from the chart through the label strip into the timeline
-    gctx.strokeStyle = cssVar('--border'); gctx.lineWidth = 1;
-    const view = S.chartView, vspan = view.max-view.min;
-    computeXTicks(view, W).forEach(tk=>{
-      const px = Math.round((tk.v-view.min)/vspan*W)+0.5;
-      if (px<0 || px>W) return;
-      gctx.beginPath(); gctx.moveTo(px,0); gctx.lineTo(px,H); gctx.stroke();
-    });
-  }
-  const ctx = tlCanvasSetup(hrc, W, H);
-  const hc = getHrCache();
-  if (!hc.valid) return;
-  const trackH = H/trackCount;
-  const COL = 2; // px per sample column
-  clips.forEach(c=>{
-    const xa = Math.max(0, c.L), xb = Math.min(W, c.R);
-    if (xb-xa<2) return;
-    const yTop = c.ti*trackH + 5, yBot = (c.ti+1)*trackH - 5;
-    if (yBot-yTop<6) return;
-    const pxToT = span/W;
-    ctx.beginPath();
-    let started = false, lastX = xa;
-    for (let x=xa; x<=xb+COL; x+=COL){
-      const xx = Math.min(x, xb);
-      const ta = t0 + (xx-COL/2)*pxToT, tb = t0 + (xx+COL/2)*pxToT;
-      let i0 = hrLowerBound(hc.el, ta), i1 = hrLowerBound(hc.el, tb);
-      // at least a few records per column so a deep zoom doesn't go blocky
-      if (i1-i0<4){ const mid=(i0+i1)>>1; i0=Math.max(0,mid-2); i1=Math.min(hc.el.length,mid+2); }
-      if (i1<=i0) continue;
-      const hr = (hc.pre[i1]-hc.pre[i0])/(i1-i0);
-      const frac = Math.max(0, Math.min(1, (hr-hc.min)/(hc.max-hc.min)));
-      const y = yBot - (0.1+0.8*frac)*(yBot-yTop);
-      if (!started){ ctx.moveTo(xx, yBot); ctx.lineTo(xx, y); started=true; } else ctx.lineTo(xx, y);
-      lastX = xx;
-      if (xx>=xb) break;
+// Down-sampled series for the visible window: at most ~1 bucket per 1.5px
+// (mean of each bucket), so cost stays flat however long the ride is.
+function tlBuckets(view, W){
+  const recs = S.records, n = recs.length;
+  const i0 = Math.max(0, nearestIndexByX(view.min)-1), i1 = Math.min(n-1, nearestIndexByX(view.max)+1);
+  const stride = Math.max(1, Math.floor((i1-i0+1)/(W/1.5)));
+  const out = [];
+  for (let i=i0; i<=i1; i+=stride){
+    const j = Math.min(i+stride-1, i1);
+    let sx=0, ss=0, ns=0, sa=0, na=0, sh=0, nh=0;
+    for (let k=i; k<=j; k++){
+      const r = recs[k];
+      sx += xVal(r);
+      if (r.speed!=null){ ss += r.speed*3.6; ns++; }
+      if (r.alt!=null){ sa += r.alt; na++; }
+      if (r.hr!=null && r.hr>0){ sh += r.hr; nh++; }
     }
-    if (!started) return;
-    ctx.lineTo(lastX, yBot); ctx.closePath();
-    // understated: dark tint, lighter on the non-highlighted clips (which
-    // are already faded)
-    ctx.fillStyle = c.isActive ? 'rgba(8,33,29,.2)' : 'rgba(8,33,29,.12)';
-    ctx.fill();
+    out.push({x: sx/(j-i+1), spd: ns?ss/ns:null, alt: na?sa/na:null, hr: nh?sh/nh:null});
+  }
+  return out;
+}
+// Connected runs of [x,y] points (a null value breaks the run).
+function tlSegments(buckets, key, xPx, yPx){
+  const segs = []; let cur = null;
+  buckets.forEach(b=>{
+    const v = b[key];
+    if (v==null){ cur = null; return; }
+    if (!cur){ cur = []; segs.push(cur); }
+    cur.push([xPx(b.x), yPx(v)]);
   });
+  return segs;
+}
+function tlStrokeSegs(ctx, segs, color, width){
+  ctx.save(); ctx.strokeStyle = color; ctx.lineWidth = width; ctx.lineJoin = 'round';
+  segs.forEach(s=>{
+    if (s.length<2) return;
+    ctx.beginPath(); ctx.moveTo(s[0][0], s[0][1]);
+    for (let i=1;i<s.length;i++) ctx.lineTo(s[i][0], s[i][1]);
+    ctx.stroke();
+  });
+  ctx.restore();
+}
+function tlFillSegs(ctx, segs, bottom, fill){
+  ctx.save(); ctx.fillStyle = fill;
+  segs.forEach(s=>{
+    if (s.length<2) return;
+    ctx.beginPath(); ctx.moveTo(s[0][0], bottom); ctx.lineTo(s[0][0], s[0][1]);
+    for (let i=1;i<s.length;i++) ctx.lineTo(s[i][0], s[i][1]);
+    ctx.lineTo(s[s.length-1][0], bottom); ctx.closePath(); ctx.fill();
+  });
+  ctx.restore();
+}
+function drawTimelineCanvases(view, W, H, rowH, row2H, xTicks){
+  const vspan = Math.max(1e-9, view.max-view.min);
+  const xPx = v => (v-view.min)/vspan*W;
+  const st = S.tlStats || (S.tlStats = computeTimelineStats());
+  // gridlines (behind everything, full height) — same snapping as the strip
+  const gctx = tlCanvasSetup($('#tlGridCanvas'), W, H);
+  gctx.strokeStyle = cssVar('--border'); gctx.lineWidth = 1;
+  xTicks.forEach(tk=>{
+    const px = Math.round(xPx(tk.v))+0.5;
+    if (px<0 || px>W) return;
+    gctx.beginPath(); gctx.moveTo(px,0); gctx.lineTo(px,H); gctx.stroke();
+  });
+  const buckets = tlBuckets(view, W);
+  const TOP = 13, PAD = 3;
+  // row 1: speed
+  {
+    const ctx = tlCanvasSetup($('#tlCanvas1'), W, rowH);
+    const bot = rowH-PAD;
+    const yPx = v => bot - Math.min(1, v/st.spdMax)*(bot-TOP);
+    const segs = tlSegments(buckets, 'spd', xPx, yPx);
+    tlFillSegs(ctx, segs, bot, cssVar('--speed')+'33');
+    tlStrokeSegs(ctx, segs, cssVar('--speed'), 1.5);
+    ctx.font = '700 10px sans-serif'; ctx.textBaseline = 'alphabetic';
+    ctx.fillStyle = cssVar('--speed'); ctx.fillText('速度', 4, 10);
+  }
+  // row 2: elevation (pale grey area) under the heart-rate line
+  {
+    const ctx = tlCanvasSetup($('#tlCanvas2'), W, row2H);
+    const bot = row2H-PAD;
+    if (st.hasAlt){
+      const yAlt = v => bot - (v-st.altMin)/(st.altMax-st.altMin)*(bot-TOP-4);
+      tlFillSegs(ctx, tlSegments(buckets, 'alt', xPx, yAlt), bot, 'rgba(128,136,148,.30)');
+    }
+    if (st.hasHr){
+      const yHr = v => bot - (v-st.hrMin)/(st.hrMax-st.hrMin)*(bot-TOP);
+      tlStrokeSegs(ctx, tlSegments(buckets, 'hr', xPx, yHr), cssVar('--hr'), 1.5);
+    }
+    ctx.font = '700 10px sans-serif'; ctx.textBaseline = 'alphabetic';
+    let tx = 4;
+    if (st.hasAlt){ ctx.fillStyle = 'rgba(110,118,130,.95)'; ctx.fillText('標高', tx, 10); tx += ctx.measureText('標高').width+8; }
+    if (st.hasHr){ ctx.fillStyle = cssVar('--hr'); ctx.fillText('心拍', tx, 10); }
+  }
 }
 function onClipTap(id){
   const wasHighlighted = getActiveInterval() && getActiveInterval().id===id;
@@ -3455,20 +3195,19 @@ function onClipTap(id){
   }
 }
 function handleTimelineTap(e){
-  const scroll = $('#timelineScroll');
+  const body = $('#tlBody');
   const el = document.elementFromPoint(e.clientX, e.clientY);
-  if (el && el.closest('.tlClipHandle')) return; // handles are for dragging (the highlighted clip's), not tapping
+  if (el && (el.closest('.tlClipHandle') || el.closest('#tlVBar'))) return; // handles are for dragging (the highlighted clip's), not tapping
   const clipEl = el && el.closest('.tlClip');
   if (clipEl){ onClipTap(Number(clipEl.dataset.id)); return; }
-  const rect = scroll.getBoundingClientRect();
-  const {t0, t1} = getTimelineTimeRange();
-  const span = Math.max(1, t1-t0);
+  const rect = body.getBoundingClientRect();
+  const view = S.chartView;
   const frac = Math.max(0, Math.min(1, (e.clientX-rect.left)/rect.width));
-  const rec = nearestRecordByElapsed(t0+frac*span);
-  if (rec) setSelection(S.records.indexOf(rec), null, 'chart'); // like a chart tap: recentres the map, doesn't force-pan the chart itself
+  const idx = nearestIndexByX(view.min+frac*(view.max-view.min));
+  setSelection(idx, null, 'chart'); // recentres the map, doesn't force-pan the timeline itself
 }
 function wireTimelineEvents(){
-  $$('#timelineTracks .tlClipHandle').forEach(el=>{
+  $$('#tlBody .tlClipHandle').forEach(el=>{
     el.addEventListener('pointerdown', onClipHandleDown);
   });
 }
@@ -3489,19 +3228,19 @@ function onClipHandleDown(e){
   document.addEventListener('pointercancel', onClipHandleUp);
 }
 function onClipHandleMove(e){
-  if (!boundaryDrag) return;
-  const scroll = $('#timelineScroll');
-  const rect = scroll.getBoundingClientRect();
+  if (!boundaryDrag || !S.chartView) return;
+  const rect = $('#tlBody').getBoundingClientRect();
   const totalDur = S.records[S.records.length-1].elapsed || 1;
-  const {t0, t1} = getTimelineTimeRange();
-  const span = Math.max(1, t1-t0);
-  const frac = Math.max(0, Math.min(1, (e.clientX-rect.left)/rect.width));
-  let t = t0 + frac*span;
+  const view = S.chartView, vspan = view.max-view.min;
+  const px = e.clientX-rect.left;
+  let t = elapsedFromX(view.min + Math.max(0, Math.min(1, px/rect.width))*vspan);
   // snap to the seekbar position when close, so a boundary can be dropped
   // exactly on it without needing pixel-perfect precision
-  const seekT = S.selection ? S.records[S.selection.idx].elapsed : 0;
-  const pxPerSec = rect.width/span;
-  if (Math.abs((t-seekT)*pxPerSec) < 10) t = seekT;
+  if (S.selection){
+    const seekRec = S.records[S.selection.idx];
+    const seekPx = (xVal(seekRec)-view.min)/vspan*rect.width;
+    if (Math.abs(px-seekPx) < 10) t = seekRec.elapsed;
+  }
   const iv = S.intervals.find(x=>x.id===boundaryDrag.id);
   if (!iv) return;
   if (boundaryDrag.edge==='start'){ iv.start = Math.max(0, Math.min(iv.end-1, t)); iv.startSet = true; }
@@ -3517,31 +3256,6 @@ function onClipHandleUp(){
 }
 $('#backToPage1Btn').addEventListener('click', ()=> showPage(1));
 $('#backToPage2Btn').addEventListener('click', ()=> showPage(2));
-// "◀🏃" / "🏃▶": jump to the nearest interval boundary point (any
-// interval's start OR end — not just the highlighted one) before/after the
-// current seek position, like a video editor's "next edit point" jump.
-function jumpToBoundaryPoint(dir){
-  if (!S.selection || !S.intervals.length) return;
-  const seekT = S.records[S.selection.idx].elapsed;
-  const points = [];
-  S.intervals.forEach(iv=>{ points.push(iv.start); points.push(iv.end); });
-  let best = null;
-  points.forEach(t=>{
-    if (dir<0 && t<seekT-1e-6 && (best==null || t>best)) best = t;
-    if (dir>0 && t>seekT+1e-6 && (best==null || t<best)) best = t;
-  });
-  if (best==null) return;
-  const rec = nearestRecordByElapsed(best);
-  if (S.hasGps && (rec.lat==null || rec.lon==null)){
-    showHeaderMsg('位置情報がありません。近接のGPS受信地点へ移動します。', true);
-    const nearGps = nearestGpsRecordTo(rec);
-    if (nearGps) setSelection(S.records.indexOf(nearGps), null, 'both');
-    return;
-  }
-  setSelection(S.records.indexOf(rec), null, 'both');
-}
-$('#tlJumpStart').addEventListener('click', ()=> jumpToBoundaryPoint(-1));
-$('#tlJumpEnd').addEventListener('click', ()=> jumpToBoundaryPoint(1));
 $('#tlSplit').addEventListener('click', ()=>{
   const iv = getActiveInterval(); if (!iv) return;
   if (!S.selection){ showHeaderMsg('先にシーク位置を決めてください', true); return; }
