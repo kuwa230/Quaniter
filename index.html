@@ -247,6 +247,7 @@ td.num{ text-align:right; font-variant-numeric:tabular-nums; }
 .tbBtnCenter{ width:58px; height:58px; font-size:26px; background:var(--accent); color:#08211d; border-color:var(--accent); }
 .tbBtnSmall{ width:26px; height:26px; font-size:12px; margin:0 -2px; }
 .tbBtnSmall:disabled{ opacity:.4; }
+.tbBtn.tbDim{ opacity:.4; } /* nothing selected to delete */
 #p2BottomToolbar{ padding-left:10px; padding-right:10px; }
 /* Phone-width layout: shrink everything enough that map + graph + at least
    one interval card are all visible together without scrolling, since that's
@@ -427,9 +428,11 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
     </div>
     <div id="p2BottomToolbar">
       <button id="tlSplit" class="tbBtn" type="button" title="シーク位置で2分割">✄</button>
+      <button id="tlJumpStart" class="tbBtn" type="button" title="前の始点/終点へ移動">◀🏃</button>
       <button id="undoBtnBottom" class="tbBtn tbBtnSmall" type="button" title="取り消し" disabled>↶</button>
       <button id="tlAdd" class="tbBtn tbBtnCenter" type="button" title="新規区間を追加">＋</button>
       <button id="redoBtnBottom" class="tbBtn tbBtnSmall" type="button" title="やり直し" disabled>↷</button>
+      <button id="tlJumpEnd" class="tbBtn" type="button" title="次の始点/終点へ移動">🏃▶</button>
       <button id="tlDelete" class="tbBtn" type="button" title="区間を削除">🗑</button>
     </div>
   </div>
@@ -507,7 +510,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
 // (this session's own publish count so far) is reconstructed from the
 // conversation itself rather than mechanically verified — best-effort, not
 // guaranteed exact. Increment by exactly 1 on every future publish.
-const APP_VERSION = 144;
+const APP_VERSION = 145;
 
 /* ============ FIT PARSER ============ */
 const FIT_EPOCH = 631065600; // seconds between 1970-01-01 and 1989-12-31 (FIT epoch)
@@ -1246,6 +1249,9 @@ const AUTO_SPLIT = {
   // than REST_GAP_S), continuously for >= REST_MIN_S, with every record
   // staying within REST_RADIUS_M of the stop's centre
   REST_SPEED_KMH: 3.0, REST_MIN_S: 300, REST_RADIUS_M: 100, REST_GAP_S: 10,
+  // a burst of movement (speed above the threshold) lasting up to this long
+  // inside a rest does not end it
+  REST_BLIP_S: 30,
   // climb: a net gain of >= CLIMB_MIN_GAIN_M, or >= CLIMB_MIN_GRADE average
   // over >= CLIMB_MIN_DIST_M. A climb is not broken by dips of up to
   // CLIMB_DROP_M below its highest point so far, nor by flat running of up
@@ -1266,34 +1272,43 @@ function haversineM(lat1, lon1, lat2, lon2){
 function detectRests(recs){
   const P = AUTO_SPLIT, n = recs.length, out = [];
   const slow = r => r.speed!=null && r.speed*3.6 <= P.REST_SPEED_KMH;
-  // elementary stretches between consecutive records that count as "resting":
-  // both ends slow, or an unrecorded gap (the device wrote nothing for a while)
-  let runStart = null, runEndIdx = null, runFirstIdx = null;
-  const close = ()=>{
-    if (runStart==null) return;
-    const end = recs[runEndIdx].elapsed;
-    if (end-runStart >= P.REST_MIN_S){
-      // every positioned record in the run must stay within the radius of its centre
-      const pts = [];
-      for (let k=runFirstIdx; k<=runEndIdx; k++) if (recs[k].lat!=null && recs[k].lon!=null) pts.push(recs[k]);
-      let ok = true;
-      if (pts.length>1){
-        const clat = pts.reduce((a,r)=>a+r.lat,0)/pts.length, clon = pts.reduce((a,r)=>a+r.lon,0)/pts.length;
-        ok = pts.every(r=>haversineM(clat, clon, r.lat, r.lon) <= P.REST_RADIUS_M);
-      }
-      if (ok) out.push({start:runStart, end});
-    }
-    runStart = null;
-  };
+  // 1) elementary stretches between consecutive records that count as
+  //    "resting": both ends slow, or an unrecorded gap (the device wrote
+  //    nothing for a while). Touching stretches form raw runs.
+  const raw = [];
+  let cur = null;
   for (let i=1;i<n;i++){
     const gap = recs[i].elapsed-recs[i-1].elapsed;
     const resting = gap>P.REST_GAP_S || (slow(recs[i-1]) && slow(recs[i]));
     if (resting){
-      if (runStart==null){ runStart = recs[i-1].elapsed; runFirstIdx = i-1; }
-      runEndIdx = i;
-    } else close();
+      if (!cur) cur = {start:recs[i-1].elapsed, first:i-1};
+      cur.end = recs[i].elapsed; cur.last = i;
+    } else if (cur){ raw.push(cur); cur = null; }
   }
-  close();
+  if (cur) raw.push(cur);
+  // 2) bridge short fluctuations: runs separated by at most REST_BLIP_S
+  //    seconds of movement are one rest. (The distance between the two runs
+  //    is measured slow-sample to slow-sample, so it is one sample interval
+  //    longer on each side than the burst of moving samples itself.)
+  const merged = [];
+  raw.forEach(r=>{
+    const prev = merged[merged.length-1];
+    if (prev && r.start-prev.end <= P.REST_BLIP_S+2){ prev.end = r.end; prev.last = r.last; }
+    else merged.push({...r});
+  });
+  // 3) keep the long enough ones whose positioned records all stay within
+  //    the radius of their centre
+  merged.forEach(r=>{
+    if (r.end-r.start < P.REST_MIN_S) return;
+    const pts = [];
+    for (let k=r.first; k<=r.last; k++) if (recs[k].lat!=null && recs[k].lon!=null) pts.push(recs[k]);
+    let ok = true;
+    if (pts.length>1){
+      const clat = pts.reduce((a,x)=>a+x.lat,0)/pts.length, clon = pts.reduce((a,x)=>a+x.lon,0)/pts.length;
+      ok = pts.every(x=>haversineM(clat, clon, x.lat, x.lon) <= P.REST_RADIUS_M);
+    }
+    if (ok) out.push({start:r.start, end:r.end});
+  });
   return out;
 }
 // Returns [{start,end,gain,dist}] in elapsed seconds.
@@ -2938,6 +2953,8 @@ function tlUpdateVBar(){
 
 // The timeline's own visible window — always S.chartView, in xVal() units.
 function renderTimeline(){
+  const delBtn = $('#tlDelete');
+  if (delBtn) delBtn.classList.toggle('tbDim', !S.records.length || !getActiveInterval() || S.intervals.length<=1);
   const body = $('#tlBody');
   if (!body || !S.records.length) return;
   const view = S.chartView;
@@ -3256,6 +3273,31 @@ function onClipHandleUp(){
 }
 $('#backToPage1Btn').addEventListener('click', ()=> showPage(1));
 $('#backToPage2Btn').addEventListener('click', ()=> showPage(2));
+// "◀🏃" / "🏃▶": jump to the nearest interval boundary point (any
+// interval's start OR end — not just the highlighted one) before/after the
+// current seek position, like a video editor's "next edit point" jump.
+function jumpToBoundaryPoint(dir){
+  if (!S.selection || !S.intervals.length) return;
+  const seekT = S.records[S.selection.idx].elapsed;
+  const points = [];
+  S.intervals.forEach(iv=>{ points.push(iv.start); points.push(iv.end); });
+  let best = null;
+  points.forEach(t=>{
+    if (dir<0 && t<seekT-1e-6 && (best==null || t>best)) best = t;
+    if (dir>0 && t>seekT+1e-6 && (best==null || t<best)) best = t;
+  });
+  if (best==null) return;
+  const rec = nearestRecordByElapsed(best);
+  if (S.hasGps && (rec.lat==null || rec.lon==null)){
+    showHeaderMsg('位置情報がありません。近接のGPS受信地点へ移動します。', true);
+    const nearGps = nearestGpsRecordTo(rec);
+    if (nearGps) setSelection(S.records.indexOf(nearGps), null, 'both');
+    return;
+  }
+  setSelection(S.records.indexOf(rec), null, 'both');
+}
+$('#tlJumpStart').addEventListener('click', ()=> jumpToBoundaryPoint(-1));
+$('#tlJumpEnd').addEventListener('click', ()=> jumpToBoundaryPoint(1));
 $('#tlSplit').addEventListener('click', ()=>{
   const iv = getActiveInterval(); if (!iv) return;
   if (!S.selection){ showHeaderMsg('先にシーク位置を決めてください', true); return; }
