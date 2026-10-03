@@ -578,7 +578,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
 // (this session's own publish count so far) is reconstructed from the
 // conversation itself rather than mechanically verified — best-effort, not
 // guaranteed exact. Increment by exactly 1 on every future publish.
-const APP_VERSION = 158;
+const APP_VERSION = 159;
 
 /* ============ FIT PARSER ============ */
 const FIT_EPOCH = 631065600; // seconds between 1970-01-01 and 1989-12-31 (FIT epoch)
@@ -1193,23 +1193,25 @@ async function handleFile(file){
         // matching -区間分析.json — if one is present, load and apply it
         // right after the .fit, same as opening them separately would
         const jsonEntry = Object.values(zip.files).find(f => !f.dir && /\.json$/i.test(f.name));
-        return entry.async('arraybuffer').then(ab => {
-          processFitData(ab, file.name);
+        return entry.async('arraybuffer').then(async ab => {
+          // a saved project brings its own intervals: no auto-split (and no lap question)
+          await processFitData(ab, file.name, { fromProject: !!jsonEntry });
           if (jsonEntry){
-            return jsonEntry.async('string').then(text => {
-              try{
-                const parsed = JSON.parse(text);
-                const state = parsed.settings ? parsed.settings : parsed;
-                const trimmed = applyState(state, 'elapsed');
-                syncControlsFromState();
-                buildMetricChecks();
-                renderTimeline();
-                renderRoutePreview();
-                if (trimmed) showHeaderMsg('ZIP内のJSONの一部区間が記録範囲外のため調整されました。', true);
-              }catch(err){
-                showHeaderMsg('ZIP内のJSONを読み込めませんでした: '+err.message, true);
-              }
-            });
+            const text = await jsonEntry.async('string');
+            try{
+              const parsed = JSON.parse(text);
+              const state = parsed.settings ? parsed.settings : parsed;
+              const trimmed = applyState(state, 'elapsed');
+              await restorePhotoImages(zip);
+              syncControlsFromState();
+              buildMetricChecks();
+              renderTimeline();
+              renderRoutePreview();
+              renderMapFrame();
+              if (trimmed) showHeaderMsg('ZIP内のJSONの一部区間が記録範囲外のため調整されました。', true);
+            }catch(err){
+              showHeaderMsg('ZIP内のJSONを読み込めませんでした: '+err.message, true);
+            }
           }
         });
       }).catch(err => {
@@ -1434,7 +1436,7 @@ function buildAutoIntervals(recs, laps, useLaps){
   return {ivs, nRests:rests.length, nClimbs:climbs.length};
 }
 
-async function processFitData(arrayBuffer, displayName){
+async function processFitData(arrayBuffer, displayName, opts){
   try{
     const records = parseFit(arrayBuffer);
     smoothAltitudes(records);
@@ -1449,8 +1451,8 @@ async function processFitData(arrayBuffer, displayName){
     // A file that already carries lap markers: ask before splitting it
     // automatically (laps + hill climbs + rests). Without laps the split by
     // climbs and rests simply runs.
-    let autoSplit = true;
-    if (records.laps && records.laps.length>=2){ // a single lap (the whole ride) is not lap information
+    let autoSplit = !(opts && opts.fromProject);
+    if (autoSplit && records.laps && records.laps.length>=2){ // a single lap (the whole ride) is not lap information
       const ans = await askChoice('このFITファイルにはラップ情報があります。区間を自動で分割しますか？(ラップ・ヒルクライム・休憩の位置で分割します)', ['はい','いいえ']);
       autoSplit = ans==='はい';
     }
@@ -1568,8 +1570,9 @@ function serializeState(){
     powerChartMetrics: S.powerChartMetrics,
     powerChartXMode: S.powerChartXMode,
     // photos/videos: metadata only — the pictures themselves are never exported
-    photos: S.photos.map(p=>({ name:p.name, kind:p.kind, takenAt:p.takenAt, hasSeconds:p.hasSeconds, hasGps:p.hasGps, lat:p.lat, lon:p.lon,
-      mode:p.mode, adjusted:!!p.adjusted, elapsed:p.elapsed-offset })),
+    // (the small preview pictures are only added when saving a .zip; `file` is where they sit inside it)
+    photos: S.photos.map((p,i)=>({ name:p.name, kind:p.kind, takenAt:p.takenAt, hasSeconds:p.hasSeconds, hasGps:p.hasGps, lat:p.lat, lon:p.lon,
+      mode:p.mode, adjusted:!!p.adjusted, elapsed:p.elapsed-offset, file:p.thumb ? 'photos/'+(i+1)+'.jpg' : null })),
   };
 }
 // what the last saveState() wrote — lets saveStateIfChanged() skip
@@ -1711,7 +1714,7 @@ function applyState(state, mode){
     // placeholders: the pictures aren't stored; they fill in when the same files are picked again
     S.photos = state.photos.map(p=>({ id:photoSeq++, name:p.name||'', kind:p.kind==='video'?'video':'image', takenAt:p.takenAt==null?null:Number(p.takenAt),
       hasSeconds:!!p.hasSeconds, hasGps:!!p.hasGps, lat:p.lat, lon:p.lon, mode:p.mode||4, adjusted:!!p.adjusted,
-      elapsed:Math.max(lo, Math.min(hi, (Number(p.elapsed)||0)+offset)), thumb:null }));
+      elapsed:Math.max(lo, Math.min(hi, (Number(p.elapsed)||0)+offset)), thumb:null, _file:p.file||null }));
     S.photoSelectedId = null;
   }
   return trimmed;
@@ -1779,6 +1782,23 @@ function buildProjectJson(){
   } : null;
   return JSON.stringify({ generatedAt: new Date().toISOString(), fitFile: S.fileBaseName, settings: serializeState(), results }, null, 2);
 }
+function thumbToBlob(th){
+  return new Promise(res=>{
+    const c = document.createElement('canvas'); c.width = th.width; c.height = th.height;
+    c.getContext('2d').drawImage(th, 0, 0);
+    c.toBlob(b=>res(b), 'image/jpeg', 0.82);
+  });
+}
+// after opening a saved .zip: put the stored previews back into the photo entries
+async function restorePhotoImages(zip){
+  let n = 0;
+  for (const p of S.photos){
+    if (!p._file) continue;
+    const ent = zip.file(p._file); if (!ent) continue;
+    try{ p.thumb = await createImageBitmap(await ent.async('blob')); n++; }catch(e){ console.warn('photo restore', p._file, e); }
+  }
+  return n;
+}
 // Just save — if a file with the same name already exists, the browser's
 // own download handling numbers the duplicate itself (or, in Chrome/Edge
 // via the File System Access API, its native picker asks to replace it).
@@ -1795,9 +1815,16 @@ async function saveProjectJsonFlow(btn){
   const zip = new JSZip();
   zip.file(S.fileBaseName+'.fit', S.rawFitBytes);
   zip.file(S.fileBaseName+'-区間分析.json', buildProjectJson());
+  // small previews of the photos/videos (the JSON's photos[i].file points at these)
+  let nPhotos = 0;
+  for (let i=0; i<S.photos.length; i++){
+    const th = S.photos[i].thumb; if (!th) continue;
+    const b = await thumbToBlob(th);
+    if (b){ zip.file('photos/'+(i+1)+'.jpg', b); nPhotos++; }
+  }
   const blob = await zip.generateAsync({type:'blob'});
   const ok = await saveAs('project', S.fileBaseName+'.zip', blob, 'application/zip', 'zip', 'ZIP', btn);
-  if (ok) S.dirty = false;
+  if (ok){ S.dirty = false; if (nPhotos) showHeaderMsg('写真・動画の縮小画像'+nPhotos+'枚を含めて保存しました', false); }
 }
 $('#saveProjectAsTop').addEventListener('click', (e)=> saveProjectJsonFlow(e.currentTarget));
 $('#importSettingsBtn').addEventListener('click', ()=>{ $('#importSettingsFile').click(); });
@@ -2753,10 +2780,11 @@ function deleteSelectedIntervals(){
 
 /* ============ PHOTOS & VIDEOS ============ */
 // Media is read from the device's photo library through the file picker (on
-// iOS: the Photos picker). Nothing is copied into exports: the saved state only
-// holds metadata (name, time, position, where it was placed). Pixels live in
-// memory for the session; after reloading a saved project the entries come
-// back as placeholders and fill in again when the same files are picked again.
+// iOS: the Photos picker). For the prototype the saved .zip carries a small
+// preview (≤200 px high JPEG) of each photo next to the JSON, so a reopened
+// project shows them again; a plain JSON holds only the metadata, and its
+// photos come back as placeholders that fill in when the same files are
+// picked again.
 // How a photo is placed depends on what it carries:
 //   ① date with seconds                    -> by time
 //   ② date without seconds, but a position -> by position (nearest recorded point)
