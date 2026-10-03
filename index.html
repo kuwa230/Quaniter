@@ -293,6 +293,16 @@ td.num{ text-align:right; font-variant-numeric:tabular-nums; }
 .photoPreview{ position:absolute; top:8px; left:8px; z-index:3; background:rgba(0,0,0,.78); border:1px solid var(--border); border-radius:8px; padding:6px; max-width:60%; }
 .photoPreview canvas{ display:block; max-width:100%; height:150px; border-radius:4px; }
 .photoPreview div{ font-size:10.5px; color:#d6d9de; margin-top:3px; }
+/* original-quality viewer */
+.photoViewer{ position:fixed; inset:0; z-index:70; background:#000; display:flex; flex-direction:column; }
+.photoViewer.hidden{ display:none; }
+.photoViewerBar{ display:flex; align-items:center; gap:10px; padding:calc(8px + env(safe-area-inset-top,0px)) 12px 8px; font-size:12px; color:#d6d9de; }
+.photoViewerBar span{ flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.tbBtnSmall2{ width:34px; height:34px; font-size:15px; }
+.photoViewerBody{ flex:1; min-height:0; display:flex; align-items:center; justify-content:center; padding:0 0 env(safe-area-inset-bottom,0px); }
+.photoViewerBody img, .photoViewerBody video, .photoViewerBody canvas{ max-width:100%; max-height:100%; object-fit:contain; }
+.pvNav{ position:absolute; top:50%; transform:translateY(-50%); width:40px; height:64px; background:rgba(0,0,0,.45); color:#fff; border:none; font-size:18px; }
+.pvPrev{ left:0; border-radius:0 8px 8px 0; } .pvNext{ right:0; border-radius:8px 0 0 8px; }
 /* a clip selected for merging / deleting */
 .tlClip.tlSelected{ box-shadow:0 0 0 2px #fff inset; border-color:#fff; }
 .tlClip.tlSelected::before{ opacity:.5; }
@@ -503,6 +513,12 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
   <div id="photoGrid" class="photoGrid"></div>
   <div class="photoSheetFoot"><button id="photoSheetCancel" type="button" class="ghost">キャンセル</button><button id="photoSheetOk" type="button" class="primary">追加</button></div>
 </div>
+<div id="photoViewer" class="photoViewer hidden" data-id="">
+  <div class="photoViewerBar"><button id="photoViewerClose" type="button" class="tbBtn tbBtnSmall2">✕</button><span id="photoViewerCap"></span></div>
+  <div id="photoViewerBody" class="photoViewerBody"></div>
+  <button id="photoViewerPrev" type="button" class="pvNav pvPrev">◀</button>
+  <button id="photoViewerNext" type="button" class="pvNav pvNext">▶</button>
+</div>
 <input type="file" id="photoInputAuto" accept="image/*,video/*" multiple hidden>
 <input type="file" id="photoInputSeek" accept="image/*,video/*" multiple hidden>
 
@@ -578,7 +594,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
 // (this session's own publish count so far) is reconstructed from the
 // conversation itself rather than mechanically verified — best-effort, not
 // guaranteed exact. Increment by exactly 1 on every future publish.
-const APP_VERSION = 159;
+const APP_VERSION = 160;
 
 /* ============ FIT PARSER ============ */
 const FIT_EPOCH = 631065600; // seconds between 1970-01-01 and 1989-12-31 (FIT epoch)
@@ -1572,7 +1588,8 @@ function serializeState(){
     // photos/videos: metadata only — the pictures themselves are never exported
     // (the small preview pictures are only added when saving a .zip; `file` is where they sit inside it)
     photos: S.photos.map((p,i)=>({ name:p.name, kind:p.kind, takenAt:p.takenAt, hasSeconds:p.hasSeconds, hasGps:p.hasGps, lat:p.lat, lon:p.lon,
-      mode:p.mode, adjusted:!!p.adjusted, elapsed:p.elapsed-offset, file:p.thumb ? 'photos/'+(i+1)+'.jpg' : null })),
+      mode:p.mode, adjusted:!!p.adjusted, elapsed:p.elapsed-offset, file:p.thumb ? 'photos/'+(i+1)+'.jpg' : null,
+      fileOrig:(p.kind==='image' && (p.orig||p._origEntry)) ? 'photos/'+(i+1)+'_orig.'+photoExt(p) : null })),
   };
 }
 // what the last saveState() wrote — lets saveStateIfChanged() skip
@@ -1714,7 +1731,7 @@ function applyState(state, mode){
     // placeholders: the pictures aren't stored; they fill in when the same files are picked again
     S.photos = state.photos.map(p=>({ id:photoSeq++, name:p.name||'', kind:p.kind==='video'?'video':'image', takenAt:p.takenAt==null?null:Number(p.takenAt),
       hasSeconds:!!p.hasSeconds, hasGps:!!p.hasGps, lat:p.lat, lon:p.lon, mode:p.mode||4, adjusted:!!p.adjusted,
-      elapsed:Math.max(lo, Math.min(hi, (Number(p.elapsed)||0)+offset)), thumb:null, _file:p.file||null }));
+      elapsed:Math.max(lo, Math.min(hi, (Number(p.elapsed)||0)+offset)), thumb:null, _file:p.file||null, _fileOrig:p.fileOrig||null }));
     S.photoSelectedId = null;
   }
   return trimmed;
@@ -1797,6 +1814,8 @@ async function restorePhotoImages(zip){
     const ent = zip.file(p._file); if (!ent) continue;
     try{ p.thumb = await createImageBitmap(await ent.async('blob')); n++; }catch(e){ console.warn('photo restore', p._file, e); }
   }
+  // the originals stay inside the opened zip and are only unpacked when viewed
+  for (const p of S.photos){ if (p._fileOrig){ const ent = zip.file(p._fileOrig); if (ent) p._origEntry = ent; } }
   return n;
 }
 // Just save — if a file with the same name already exists, the browser's
@@ -1816,15 +1835,28 @@ async function saveProjectJsonFlow(btn){
   zip.file(S.fileBaseName+'.fit', S.rawFitBytes);
   zip.file(S.fileBaseName+'-区間分析.json', buildProjectJson());
   // small previews of the photos/videos (the JSON's photos[i].file points at these)
-  let nPhotos = 0;
+  let nPhotos = 0, nOrig = 0, origBytes = 0;
+  const origs = [];
   for (let i=0; i<S.photos.length; i++){
-    const th = S.photos[i].thumb; if (!th) continue;
-    const b = await thumbToBlob(th);
-    if (b){ zip.file('photos/'+(i+1)+'.jpg', b); nPhotos++; }
+    const p = S.photos[i];
+    if (p.kind==='image' && (p.orig||p._origEntry)) origs.push(i);
+    if (p.orig && p.kind==='image') origBytes += p.orig.size||0;
+  }
+  if (origBytes > 300*1024*1024 && !confirm('写真の元画像が合計'+Math.round(origBytes/1048576)+'MBあります。ブラウザ内でZIPを作ると、メモリ不足で失敗することがあります。続けますか?')) return;
+  for (let i=0; i<S.photos.length; i++){
+    const p = S.photos[i];
+    if (p.thumb){
+      const b = await thumbToBlob(p.thumb);
+      if (b){ zip.file('photos/'+(i+1)+'.jpg', b); nPhotos++; }
+    }
+    if (origs.includes(i)){
+      const ob = await photoOriginalBlob(p);
+      if (ob){ zip.file('photos/'+(i+1)+'_orig.'+photoExt(p), ob, { compression:'STORE' }); nOrig++; } // JPEGs are already compressed
+    }
   }
   const blob = await zip.generateAsync({type:'blob'});
   const ok = await saveAs('project', S.fileBaseName+'.zip', blob, 'application/zip', 'zip', 'ZIP', btn);
-  if (ok){ S.dirty = false; if (nPhotos) showHeaderMsg('写真・動画の縮小画像'+nPhotos+'枚を含めて保存しました', false); }
+  if (ok){ S.dirty = false; if (nPhotos) showHeaderMsg('写真'+nOrig+'枚は元の画質で、'+nPhotos+'件の縮小画像を含めて保存しました'+(S.photos.some(p=>p.kind==='video')?'(動画の元ファイルは含みません)':''), false); }
 }
 $('#saveProjectAsTop').addEventListener('click', (e)=> saveProjectJsonFlow(e.currentTarget));
 $('#importSettingsBtn').addEventListener('click', ()=>{ $('#importSettingsFile').click(); });
@@ -2780,11 +2812,12 @@ function deleteSelectedIntervals(){
 
 /* ============ PHOTOS & VIDEOS ============ */
 // Media is read from the device's photo library through the file picker (on
-// iOS: the Photos picker). For the prototype the saved .zip carries a small
-// preview (≤200 px high JPEG) of each photo next to the JSON, so a reopened
-// project shows them again; a plain JSON holds only the metadata, and its
-// photos come back as placeholders that fill in when the same files are
-// picked again.
+// iOS: the Photos picker). For the prototype the saved .zip carries, next to
+// the JSON, a small preview (≤200 px high JPEG) of each photo for the timeline
+// AND the original picture file for the viewer (videos: preview only — their
+// originals are far too large for a browser-made zip). A plain JSON holds only
+// the metadata; its photos come back as placeholders that fill in when the
+// same files are picked again.
 // How a photo is placed depends on what it carries:
 //   ① date with seconds                    -> by time
 //   ② date without seconds, but a position -> by position (nearest recorded point)
@@ -2795,6 +2828,51 @@ let photoSeq = 1;
 const THUMB_H = 200;            // thumbnails are kept small (resolution reduced on purpose)
 const PHOTO_SNAP_PX = 16;       // how close to the seek bar a dragged photo snaps
 function photoById(id){ return S.photos.find(p=>p.id===id); }
+function photoExt(p){
+  const m = /\.([A-Za-z0-9]{2,5})$/.exec(p.name||'');
+  return m ? m[1].toLowerCase() : 'jpg';
+}
+// the original picture: the file picked this session, or the entry of a zip that was opened
+async function photoOriginalBlob(p){
+  if (p.orig) return p.orig;
+  if (p._origEntry) return await p._origEntry.async('blob');
+  return null;
+}
+/* viewer: the picture at its original quality */
+let viewerUrl = null;
+function closePhotoViewer(){
+  const v = $('#photoViewer'); if (!v) return;
+  v.classList.add('hidden'); $('#photoViewerBody').innerHTML = '';
+  if (viewerUrl){ URL.revokeObjectURL(viewerUrl); viewerUrl = null; }
+}
+async function openPhotoViewer(id){
+  const p = photoById(id); if (!p) return;
+  hidePhotoPreview();
+  S.photoSelectedId = id; renderTimeline(); renderMapFrame();
+  const v = $('#photoViewer'), body = $('#photoViewerBody');
+  v.dataset.id = id;
+  if (viewerUrl){ URL.revokeObjectURL(viewerUrl); viewerUrl = null; }
+  body.innerHTML = '';
+  const blob = await photoOriginalBlob(p);
+  let note = '';
+  if (blob && p.kind==='video'){
+    viewerUrl = URL.createObjectURL(blob);
+    const vid = document.createElement('video'); vid.src = viewerUrl; vid.controls = true; vid.playsInline = true; body.appendChild(vid);
+  } else if (blob){
+    viewerUrl = URL.createObjectURL(blob);
+    const im = document.createElement('img'); im.src = viewerUrl; im.alt = p.name||''; body.appendChild(im);
+  } else if (p.thumb){
+    const c = document.createElement('canvas'); c.width = p.thumb.width; c.height = p.thumb.height; c.getContext('2d').drawImage(p.thumb,0,0); body.appendChild(c);
+    note = p.kind==='video' ? '(動画の元ファイルはありません。縮小画像を表示しています)' : '(元の画像がありません。縮小画像を表示しています)';
+  } else { body.textContent = '画像がありません。同じ写真を選び直してください。'; }
+  $('#photoViewerCap').textContent = (p.name||'')+' / '+fmtClock(S.records[0].t+Math.max(0,p.elapsed))+(note?' '+note:'');
+  v.classList.remove('hidden');
+}
+function stepPhotoViewer(d){
+  const v = $('#photoViewer'); const list = S.photos.slice().sort((a,b)=>a.elapsed-b.elapsed);
+  const i = list.findIndex(p=>p.id===Number(v.dataset.id)); if (i<0) return;
+  const n = list[i+d]; if (n) openPhotoViewer(n.id);
+}
 function parseExifJpeg(buf){
   const v = new DataView(buf);
   if (v.byteLength<4 || v.getUint16(0)!==0xFFD8) return null;
@@ -2919,7 +2997,7 @@ function videoThumb(file){
 }
 async function readMediaMeta(file){
   const isVideo = /^video\//.test(file.type) || /\.(mp4|mov|m4v)$/i.test(file.name);
-  const m = { name:file.name, kind:isVideo?'video':'image', takenAt:null, hasSeconds:false, hasGps:false, lat:null, lon:null, thumb:null };
+  const m = { name:file.name, kind:isVideo?'video':'image', takenAt:null, hasSeconds:false, hasGps:false, lat:null, lon:null, thumb:null, file };
   try{
     if (isVideo){
       const vm = await parseVideoMeta(file);
@@ -2976,9 +3054,9 @@ function addPhotoEntries(list){
     const el = Math.max(0, Math.min(total, e.elapsed));
     // fill a placeholder left by a loaded project instead of duplicating it
     const ph = S.photos.find(p=>!p.thumb && p.name===e.meta.name && (p.takenAt===e.meta.takenAt));
-    if (ph){ ph.thumb = e.meta.thumb; relinked++; return; }
+    if (ph){ ph.thumb = e.meta.thumb; ph.orig = e.meta.file; relinked++; return; }
     S.photos.push({ id:photoSeq++, name:e.meta.name, kind:e.meta.kind, takenAt:e.meta.takenAt, hasSeconds:e.meta.hasSeconds,
-      hasGps:e.meta.hasGps, lat:e.meta.lat, lon:e.meta.lon, mode:e.mode, elapsed:el, adjusted:false, thumb:e.meta.thumb });
+      hasGps:e.meta.hasGps, lat:e.meta.lat, lon:e.meta.lon, mode:e.mode, elapsed:el, adjusted:false, thumb:e.meta.thumb, orig:e.meta.file });
     added++;
   });
   S.photos.sort((a,b)=>a.elapsed-b.elapsed);
@@ -3068,9 +3146,9 @@ function showPhotoPreview(p){
   const box = document.createElement('div'); box.id = 'photoPreview'; box.className = 'photoPreview';
   if (p.thumb){ const c = document.createElement('canvas'); c.width = p.thumb.width; c.height = p.thumb.height; c.getContext('2d').drawImage(p.thumb,0,0); box.appendChild(c); }
   const cap = document.createElement('div');
-  cap.textContent = (p.name||'')+' / '+fmtClock(S.records[0].t+Math.max(0,p.elapsed));
+  cap.textContent = (p.name||'')+' / '+fmtClock(S.records[0].t+Math.max(0,p.elapsed))+'(タップで拡大)';
   box.appendChild(cap);
-  box.addEventListener('click', e=>{ e.stopPropagation(); hidePhotoPreview(); });
+  box.addEventListener('click', e=>{ e.stopPropagation(); openPhotoViewer(p.id); });
   box.addEventListener('pointerdown', e=>e.stopPropagation());
   host.appendChild(box);
 }
@@ -3651,7 +3729,7 @@ function handleTimelineTap(e){
   }
   if (clipEl){ onClipTap(Number(clipEl.dataset.id)); return; }
   const ph = photoAt(e.clientX, e.clientY);
-  if (ph){ selectPhoto(ph.id); return; }                       // a tap on a photo highlights it
+  if (ph){ if (S.photoSelectedId===ph.id) openPhotoViewer(ph.id); else selectPhoto(ph.id); return; } // tap: highlight; tap again: open the viewer
   if (S.photoSelectedId!=null){ S.photoSelectedId = null; hidePhotoPreview(); renderMapFrame(); }
   const rect = body.getBoundingClientRect();
   const view = S.chartView;
@@ -3771,6 +3849,9 @@ $('#menuDelPhoto').addEventListener('click', ()=>{ closeTlMenu(); deleteSelected
 // the pickers are opened straight from the click so iOS allows them
 $('#menuPhotoAuto').addEventListener('click', ()=>{ closeTlMenu(); $('#photoInputAuto').value = ''; $('#photoInputAuto').click(); });
 $('#menuPhotoSeek').addEventListener('click', ()=>{ closeTlMenu(); $('#photoInputSeek').value = ''; $('#photoInputSeek').click(); });
+$('#photoViewerClose').addEventListener('click', closePhotoViewer);
+$('#photoViewerPrev').addEventListener('click', ()=>stepPhotoViewer(-1));
+$('#photoViewerNext').addEventListener('click', ()=>stepPhotoViewer(1));
 $('#photoInputAuto').addEventListener('change', e=> handlePhotoFiles([...e.target.files], 'auto'));
 $('#photoInputSeek').addEventListener('change', e=> handlePhotoFiles([...e.target.files], 'seek'));
 $('#tlAdd').addEventListener('click', ()=>{
