@@ -528,7 +528,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
 // (this session's own publish count so far) is reconstructed from the
 // conversation itself rather than mechanically verified — best-effort, not
 // guaranteed exact. Increment by exactly 1 on every future publish.
-const APP_VERSION = 155;
+const APP_VERSION = 156;
 
 /* ============ FIT PARSER ============ */
 const FIT_EPOCH = 631065600; // seconds between 1970-01-01 and 1989-12-31 (FIT epoch)
@@ -1213,8 +1213,9 @@ const AUTO_SPLIT = {
   // Stopped at the very END of the recording (arrived, then stopped the
   // device): cut it after this much stillness, without waiting for REST_MIN_S.
   REST_END_MIN_S: 30,
-  // climb: a net rise (valley to top) of >= CLIMB_MIN_GAIN_M, or an average
-  // gradient >= CLIMB_MIN_GRADE over >= CLIMB_MIN_DIST_M.
+  // climb: the average gradient must be >= CLIMB_MIN_GRADE (3%) — below that it
+  // is never a climb — AND the net rise (valley to top) >= CLIMB_MIN_GAIN_M or
+  // the length >= CLIMB_MIN_DIST_M.
   // A climb is not broken by dips/flats that scale with its size: while
   // tracking a climb, a drop below its highest point so far is tolerated up
   // to max(CLIMB_DROP_M, CLIMB_DROP_FRAC x the rise so far), and a stretch
@@ -1315,7 +1316,8 @@ function detectClimbs(recs, rests){
   const inRest = t => (rests||[]).some(x=>t>=x.start && t<=x.end);
   const flush = (s,e)=>{
     const gain = A[e]-A[s], dist = D[e]-D[s];
-    if (gain>=P.CLIMB_MIN_GAIN_M || (dist>=P.CLIMB_MIN_DIST_M && gain/dist>=P.CLIMB_MIN_GRADE)) out.push({start:T[s], end:T[e], gain, dist});
+    if (!(dist>0) || gain/dist < P.CLIMB_MIN_GRADE) return; // under 3% on average: not a climb
+    if (gain>=P.CLIMB_MIN_GAIN_M || dist>=P.CLIMB_MIN_DIST_M) out.push({start:T[s], end:T[e], gain, dist});
   };
   let valley = 0, peak = 0, inClimb = false;
   for (let i=1;i<m;i++){
@@ -1385,7 +1387,7 @@ async function processFitData(arrayBuffer, displayName){
     // automatically (laps + hill climbs + rests). Without laps the split by
     // climbs and rests simply runs.
     let autoSplit = true;
-    if (records.laps && records.laps.length){
+    if (records.laps && records.laps.length>=2){ // a single lap (the whole ride) is not lap information
       const ans = await askChoice('このFITファイルにはラップ情報があります。区間を自動で分割しますか？(ラップ・ヒルクライム・休憩の位置で分割します)', ['はい','いいえ']);
       autoSplit = ans==='はい';
     }
