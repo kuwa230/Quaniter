@@ -619,7 +619,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
 // (this session's own publish count so far) is reconstructed from the
 // conversation itself rather than mechanically verified — best-effort, not
 // guaranteed exact. Increment by exactly 1 on every future publish.
-const APP_VERSION = 163;
+const APP_VERSION = 164;
 
 /* ============ FIT PARSER ============ */
 const FIT_EPOCH = 631065600; // seconds between 1970-01-01 and 1989-12-31 (FIT epoch)
@@ -3898,10 +3898,12 @@ function drawTimelineCanvases(view, W, H, rowH, row2H, xTicks){
       // most recently passed is brought to the very front (highlight is separate)
       const order = S.photos.slice().sort((a,b)=>a.elapsed-b.elapsed);
       const sk = seekXVal();
+      let frontPhoto = null;
       if (sk!=null){
         let fi = -1;
         for (let i=0;i<order.length;i++){ if (ivX(order[i].elapsed) <= sk+1e-9) fi = i; }
         if (fi>=0 && fi<order.length-1) order.push(order.splice(fi,1)[0]);
+        if (fi>=0) frontPhoto = order[order.length-1];
       }
       order.forEach(p=>{
         const x0 = xPx(ivX(p.elapsed));
@@ -3914,13 +3916,16 @@ function drawTimelineCanvases(view, W, H, rowH, row2H, xTicks){
         rr(x0, 2, w, ph); ctx.clip();                       // rounded corners
         if (th) ctx.drawImage(th, x0, 2, w, ph);
         else { ctx.fillStyle = '#26282d'; ctx.fillRect(x0, 2, w, ph); ctx.fillStyle = '#8b9099'; ctx.font = '16px sans-serif'; ctx.textBaseline = 'middle'; ctx.fillText(p.kind==='video'?'🎞':'📷', x0+8, 2+ph/2); }
-        // the capture-time edge
-        ctx.fillStyle = sel ? '#fff' : cssVar('--power'); ctx.fillRect(x0, 2, 2, ph);
+        // dim the picture so the elevation / heart-rate graphs on top stay readable
+        // (the photo at the seek bar and the highlighted one are dimmed less)
+        ctx.fillStyle = cssVar('--surface-2') || '#1b1d22';
+        ctx.globalAlpha = (sel || p===frontPhoto) ? 0.3 : 0.62;
+        ctx.fillRect(x0, 2, w, ph);
         ctx.restore();
         ctx.save();
         if (sel){ ctx.strokeStyle = '#fff'; ctx.lineWidth = 2.5; rr(x0+1.25, 3.25, w-2.5, ph-2.5); ctx.stroke(); }
-        else if (p.mode===3 && !p.adjusted){ ctx.strokeStyle = cssVar('--power'); ctx.lineWidth = 1.5; ctx.setLineDash([4,3]); rr(x0+0.75, 2.75, w-1.5, ph-1.5); ctx.stroke(); }
-        else { ctx.strokeStyle = 'rgba(235,238,244,.75)'; ctx.lineWidth = 1.25; rr(x0+0.6, 2.6, w-1.2, ph-1.2); ctx.stroke(); }
+        else if (p.mode===3 && !p.adjusted){ ctx.strokeStyle = cssVar('--accent'); ctx.lineWidth = 1.5; ctx.setLineDash([4,3]); rr(x0+0.75, 2.75, w-1.5, ph-1.5); ctx.stroke(); }
+        else { ctx.strokeStyle = cssVar('--accent'); ctx.lineWidth = 1.5; rr(x0+0.6, 2.6, w-1.2, ph-1.2); ctx.stroke(); }
         ctx.restore();
         S.photoRects.push({id:p.id, x:x0, y:2, w, h:ph});
       });
