@@ -619,7 +619,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
 // (this session's own publish count so far) is reconstructed from the
 // conversation itself rather than mechanically verified — best-effort, not
 // guaranteed exact. Increment by exactly 1 on every future publish.
-const APP_VERSION = 162;
+const APP_VERSION = 163;
 
 /* ============ FIT PARSER ============ */
 const FIT_EPOCH = 631065600; // seconds between 1970-01-01 and 1989-12-31 (FIT epoch)
@@ -1339,6 +1339,12 @@ const AUTO_SPLIT = {
   // Stopped at the very END of the recording (arrived, then stopped the
   // device): cut it after this much stillness, without waiting for REST_MIN_S.
   REST_END_MIN_S: 30,
+  // Walking about with the device still recording (forgot to stop it): a
+  // short stretch of auto-split riding in which the pedals (cadence/power)
+  // are used for at most WALK_PEDAL_SHARE of the records, at an average of at
+  // most WALK_AVG_KMH, lasting at most WALK_MAX_S, is dropped like a rest.
+  // Only judged when the file carries cadence/power at all.
+  WALK_PEDAL_SHARE: 0.1, WALK_AVG_KMH: 6, WALK_MAX_S: 1800,
   // climb: the average gradient must be >= CLIMB_MIN_GRADE (3%) — below that it
   // is never a climb (its start is moved up past a gentle run-in until it
   // is, see flush) — AND the net rise (valley to top) >= CLIMB_MIN_GAIN_M or
@@ -1499,9 +1505,19 @@ function buildAutoIntervals(recs, laps, useLaps){
   bounds.push(total);
   const within = (list, mid)=> list.some(x=>mid>=x.start-1 && mid<=x.end+1);
   const ivs = [];
+  const hasPedal = recs.some(r=>(r.cad||0)>0 || (r.power||0)>0);
+  const walkedAbout = (a, b)=>{
+    if (!hasPedal || b-a > AUTO_SPLIT.WALK_MAX_S) return false;
+    const rs = recs.filter(r=>r.elapsed>=a && r.elapsed<=b);
+    if (rs.length<2) return false;
+    const pedal = rs.filter(r=>(r.cad||0)>0 || (r.power||0)>0).length/rs.length;
+    const avg = rs.reduce((t,r)=>t+(r.speed||0),0)/rs.length*3.6;
+    return pedal<=AUTO_SPLIT.WALK_PEDAL_SHARE && avg<=AUTO_SPLIT.WALK_AVG_KMH;
+  };
   for (let i=0;i<bounds.length-1;i++){
     const mid = (bounds[i]+bounds[i+1])/2;
     if (within(rests, mid)) continue; // a stretch judged to be a rest is dropped: no interval is made for it
+    if (!within(climbs, mid) && walkedAbout(bounds[i], bounds[i+1])) continue;
     const name = within(climbs, mid) ? 'ヒルクライム' : '';
     ivs.push({ id:S.nextId++, name, nameType:'a', start:bounds[i], end:bounds[i+1], startSet:true, endSet:true });
   }
@@ -3892,21 +3908,26 @@ function drawTimelineCanvases(view, W, H, rowH, row2H, xTicks){
         const th = p.thumb;
         const w = th ? Math.max(8, th.width*ph/th.height) : ph*1.33;
         if (x0>W || x0+w<0) return;
-        if (th) ctx.drawImage(th, x0, 2, w, ph);
-        else { ctx.fillStyle = '#26282d'; ctx.fillRect(x0, 2, w, ph); ctx.fillStyle = '#8b9099'; ctx.font = '16px sans-serif'; ctx.textBaseline = 'middle'; ctx.fillText(p.kind==='video'?'🎞':'📷', x0+6, 2+ph/2); }
+        const R = 7, rr = (x,y,ww,hh)=>{ ctx.beginPath(); if (ctx.roundRect) ctx.roundRect(x,y,ww,hh,R); else ctx.rect(x,y,ww,hh); };
         const sel = p.id===S.photoSelectedId;
         ctx.save();
-        if (sel){ ctx.strokeStyle = '#fff'; ctx.lineWidth = 2.5; ctx.strokeRect(x0+1, 3, w-2, ph-2); }
-        else if (p.mode===3 && !p.adjusted){ ctx.strokeStyle = cssVar('--power'); ctx.lineWidth = 1.5; ctx.setLineDash([4,3]); ctx.strokeRect(x0+0.75, 2.75, w-1.5, ph-1.5); }
+        rr(x0, 2, w, ph); ctx.clip();                       // rounded corners
+        if (th) ctx.drawImage(th, x0, 2, w, ph);
+        else { ctx.fillStyle = '#26282d'; ctx.fillRect(x0, 2, w, ph); ctx.fillStyle = '#8b9099'; ctx.font = '16px sans-serif'; ctx.textBaseline = 'middle'; ctx.fillText(p.kind==='video'?'🎞':'📷', x0+8, 2+ph/2); }
         // the capture-time edge
         ctx.fillStyle = sel ? '#fff' : cssVar('--power'); ctx.fillRect(x0, 2, 2, ph);
+        ctx.restore();
+        ctx.save();
+        if (sel){ ctx.strokeStyle = '#fff'; ctx.lineWidth = 2.5; rr(x0+1.25, 3.25, w-2.5, ph-2.5); ctx.stroke(); }
+        else if (p.mode===3 && !p.adjusted){ ctx.strokeStyle = cssVar('--power'); ctx.lineWidth = 1.5; ctx.setLineDash([4,3]); rr(x0+0.75, 2.75, w-1.5, ph-1.5); ctx.stroke(); }
+        else { ctx.strokeStyle = 'rgba(235,238,244,.75)'; ctx.lineWidth = 1.25; rr(x0+0.6, 2.6, w-1.2, ph-1.2); ctx.stroke(); }
         ctx.restore();
         S.photoRects.push({id:p.id, x:x0, y:2, w, h:ph});
       });
     }
     if (st.hasAlt){
       const yAlt = v => bot - (v-st.altMin)/(st.altMax-st.altMin)*(bot-TOP-4);
-      tlFillSegs(ctx, tlSegments(buckets, 'alt', xPx, yAlt), bot, 'rgba(150,158,170,.15)');
+      tlFillSegs(ctx, tlSegments(buckets, 'alt', xPx, yAlt), bot, 'rgba(232,236,242,.10)');
     }
     if (st.hasHr){
       const yHr = v => bot - (v-st.hrMin)/(st.hrMax-st.hrMin)*(bot-TOP);
