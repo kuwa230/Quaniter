@@ -637,7 +637,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
 // (this session's own publish count so far) is reconstructed from the
 // conversation itself rather than mechanically verified — best-effort, not
 // guaranteed exact. Increment by exactly 1 on every future publish.
-const APP_VERSION = 166;
+const APP_VERSION = 167;
 
 /* ============ FIT PARSER ============ */
 const FIT_EPOCH = 631065600; // seconds between 1970-01-01 and 1989-12-31 (FIT epoch)
@@ -1139,23 +1139,14 @@ function nearestIndexByX(x){
 function currentScrollCenter(){
   const xs = S.chartView;
   if (scrollState && S.selection && scrollState.idx===S.selection.idx && scrollState.min===xs.min && scrollState.max===xs.max) return scrollState.c;
-  const sk = seekXVal();
-  if (sk!=null && sk>=xs.min && sk<=xs.max) return sk;   // the seek bar is on screen: a drag starts exactly there
   return (xs.min+xs.max)/2;
-}
-// where on screen (0..1 of the width) the seek bar stays while scrolling: wherever it
-// was when the gesture began (the middle once it has been scrolled there)
-let scrollFrac = 0.5;
-function beginScrollAnchor(){
-  const xs = S.chartView, c = currentScrollCenter();
-  scrollFrac = Math.max(0, Math.min(1, (c-xs.min)/Math.max(1e-9, xs.max-xs.min)));
 }
 function scrollCenterTo(c){
   const xs = S.chartView;
   const {lo, hi} = xBounds(xs.max-xs.min);
   c = Math.max(lo, Math.min(hi, c));
   const span = xs.max-xs.min;
-  xs.min = Math.max(lo, Math.min(hi-span, c-scrollFrac*span));
+  xs.min = Math.max(lo, Math.min(hi-span, c-span/2));
   xs.max = xs.min+span;
   const idx = nearestIndexByX(c);
   scrollSeeking = true;
@@ -1708,13 +1699,29 @@ function libShowList(){
   });
   $('#libSheet').classList.remove('hidden');
 }
+// every stored favourite section found in this ride, overlaps resolved (best fit first)
+function libMatchAll(recs){
+  if (!libEntries.length) return [];
+  const all = [];
+  libEntries.forEach(e=>{ libMatch(recs, e).forEach(m=> all.push({ name:e.name, start:m.start, end:m.end, cover:m.cover })); });
+  all.sort((a,b)=> (b.cover-a.cover) || ((b.end-b.start)-(a.end-a.start)));
+  const kept = [];
+  all.forEach(m=>{ if (m.end-m.start>=AUTO_SPLIT.MIN_SEGMENT_S && !kept.some(k=>m.start<k.end && m.end>k.start)) kept.push(m); });
+  return kept.sort((a,b)=>a.start-b.start);
+}
 function buildAutoIntervals(recs, laps, useLaps){
   const total = recs[recs.length-1].elapsed;
-  const rests = detectRests(recs), climbs = detectClimbs(recs, rests);
+  const rests = detectRests(recs);
+  const libs = libMatchAll(recs);
+  // a climb that mostly lies inside a favourite section is that section's business
+  const overlap = (a, b)=> Math.max(0, Math.min(a.end, b.end)-Math.max(a.start, b.start));
+  const climbs = detectClimbs(recs, rests).filter(c=> !libs.some(l=> overlap(c, l) > (c.end-c.start)*0.5));
   const cuts = [];
   rests.forEach(r=>{ cuts.push(r.start, r.end); });
   climbs.forEach(c=>{ cuts.push(c.start, c.end); });
-  if (useLaps) laps.forEach(l=> cuts.push(l.elapsed));
+  libs.forEach(l=>{ cuts.push(l.start, l.end); });
+  // a lap button press inside a favourite section does not split it
+  if (useLaps) laps.forEach(l=>{ if (!libs.some(m=> l.elapsed>m.start && l.elapsed<m.end)) cuts.push(l.elapsed); });
   const sorted = cuts.filter(t=>t>0 && t<total).sort((a,b)=>a-b);
   const bounds = [0];
   sorted.forEach(t=>{ if (t-bounds[bounds.length-1] >= AUTO_SPLIT.MIN_SEGMENT_S && total-t >= AUTO_SPLIT.MIN_SEGMENT_S) bounds.push(t); });
@@ -1733,13 +1740,17 @@ function buildAutoIntervals(recs, laps, useLaps){
   for (let i=0;i<bounds.length-1;i++){
     const mid = (bounds[i]+bounds[i+1])/2;
     if (within(rests, mid)) continue; // a stretch judged to be a rest is dropped: no interval is made for it
-    if (!within(climbs, mid) && walkedAbout(bounds[i], bounds[i+1])) continue;
-    const name = within(climbs, mid) ? 'ヒルクライム' : '';
+    const lib = libs.find(l=> mid>=l.start-1 && mid<=l.end+1);
+    if (!lib && !within(climbs, mid) && walkedAbout(bounds[i], bounds[i+1])) continue;
+    // pieces of one favourite section (split by a rest inside it) are numbered
+    let name = within(climbs, mid) ? 'ヒルクライム' : '';
+    if (lib && lib.pieces && bounds[i+1]-bounds[i] < 60) continue;   // a stray sliver after a rest inside the section
+    if (lib){ lib.pieces = (lib.pieces||0)+1; name = lib.pieces>1 ? lib.name+' ('+lib.pieces+')' : lib.name; }
     ivs.push({ id:S.nextId++, name, nameType:'a', start:bounds[i], end:bounds[i+1], startSet:true, endSet:true });
   }
   if (!ivs.length) ivs.push({ id:S.nextId++, name:'', nameType:'a', start:0, end:total, startSet:false, endSet:false });
   if (ivs.length===1 && !rests.length){ ivs[0].startSet = false; ivs[0].endSet = false; }
-  return {ivs, nRests:rests.length, nClimbs:climbs.length};
+  return {ivs, nRests:rests.length, nClimbs:climbs.length, nLib:libs.length};
 }
 
 async function processFitData(arrayBuffer, displayName, opts){
@@ -3614,7 +3625,7 @@ function attachTimelineGestures(){
   // keeps replacing the clip elements under the fingers, and a captured
   // pointer is always delivered here whatever happens to the DOM underneath.
   const pointers = new Map(); // pointerId -> clientX/clientY
-  let startX=0, dragging=false, moved=false, dragStartC=0, lastWidth=0, panPointerId=null, noTap=false, panStartXs=null;
+  let startX=0, panBaseX=0, dragging=false, moved=false, dragStartC=0, lastWidth=0, panPointerId=null, noTap=false, panStartXs=null;
   let pinch = null;
   // long press: on a clip -> selection mode; on a photo -> drag it sideways
   let lpTimer=null, lpHit=null, lpFired=false, photoDrag=null, downAt=0;
@@ -3644,7 +3655,7 @@ function attachTimelineGestures(){
     const rect = body.getBoundingClientRect();
     panPointerId = id; dragging = true; lastWidth = rect.width;
     startX = clientX-rect.left;
-    dragStartC = currentScrollCenter(); beginScrollAnchor();
+    dragStartC = currentScrollCenter();
     panStartXs = {min:S.chartView.min, max:S.chartView.max};
     tlVelocity.reset(startX, t);
   }
@@ -3723,9 +3734,11 @@ function attachTimelineGestures(){
     tlVelocity.add(e, rect.left); // velocity from the very start of the gesture, not gated by the "moved" threshold
     // after a deliberate hold there is no tap left to protect, so even a faint movement is followed
     const held = lpFired || (!lpHit && performance.now()-downAt>250);
-    if (Math.abs(curX-startX)>(held ? 0.5 : 3)){ moved=true; clearLP(); }
-    if (!moved) return;
-    const totalDx = curX-startX;
+    if (!moved){
+      if (Math.abs(curX-startX)>(held ? 0.5 : 3)){ moved=true; clearLP(); panBaseX = curX; }   // scrolling starts from where the finger is NOW
+      else return;
+    }
+    const totalDx = curX-panBaseX;
     const range = S.chartView.max-S.chartView.min;
     if (ivSelectMode){   // selecting: the view scrolls, the seek bar stays where it is
       const sh = -totalDx*(panStartXs.max-panStartXs.min)/(rect.width||1);
@@ -3782,7 +3795,6 @@ function attachTimelineGestures(){
     if (!wheelGesture){
       const isPan = (e.ctrlKey && e.deltaY !== 0) || Math.abs(e.deltaX) > Math.abs(e.deltaY);
       wheelGesture = { mode: isPan ? 'pan' : 'zoom' };
-      if (isPan) beginScrollAnchor();
     }
     clearTimeout(wheelTimer);
     wheelTimer = setTimeout(()=>{ wheelGesture = null; endScrollSeeking(); }, 250);
