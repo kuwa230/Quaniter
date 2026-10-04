@@ -293,6 +293,18 @@ td.num{ text-align:right; font-variant-numeric:tabular-nums; }
 .photoPreview{ position:absolute; top:8px; left:8px; z-index:3; background:rgba(0,0,0,.78); border:1px solid var(--border); border-radius:8px; padding:6px; max-width:60%; }
 .photoPreview canvas{ display:block; max-width:100%; height:150px; border-radius:4px; }
 .photoPreview div{ font-size:10.5px; color:#d6d9de; margin-top:3px; }
+/* comments */
+.commentOverlay{ position:fixed; inset:0; z-index:75; background:rgba(0,0,0,.6); display:flex; align-items:center; justify-content:center; padding:20px; }
+.commentOverlay.hidden{ display:none; }
+.commentBox{ width:min(520px,100%); background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:16px; }
+.commentTime{ font-size:11px; color:var(--muted,#8b9099); margin-bottom:8px; }
+.commentText{ font-size:20px; line-height:1.5; white-space:pre-wrap; word-break:break-word; max-height:50vh; overflow:auto; cursor:pointer; }
+.commentHint{ font-size:10.5px; color:var(--muted,#8b9099); margin-top:10px; }
+.commentBox textarea{ width:100%; box-sizing:border-box; font-size:16px; background:var(--bg,#111); color:inherit; border:1px solid var(--border); border-radius:8px; padding:8px; resize:vertical; }
+.commentBox .hidden{ display:none; }
+.commentFoot{ display:flex; gap:8px; justify-content:flex-end; margin-top:12px; }
+.mapCommentPin{ width:26px; height:22px; border-radius:6px; background:#f2c14e; border:1.5px solid #222; box-sizing:border-box; font-size:12px; line-height:19px; text-align:center; cursor:pointer; pointer-events:auto; }
+.mapCommentPin.sel{ background:#fff; }
 /* original-quality viewer */
 .photoViewer{ position:fixed; inset:0; z-index:70; background:#000; display:flex; flex-direction:column; }
 .photoViewer.hidden{ display:none; }
@@ -504,8 +516,8 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
     </div>
     <button id="menuPhotoAuto" type="button">📷 写真を自動追加する</button>
     <button id="menuPhotoSeek" type="button">📍 シークバーに写真を追加する</button>
-    <button id="menuDelIv" type="button">🗑 区間を削除する</button>
-    <button id="menuDelPhoto" type="button">🗑 写真を削除する</button>
+    <button id="menuComment" type="button">💬 コメントを追加する</button>
+    <button id="menuDelete" type="button">🗑 削除する</button>
   </div>
 </div>
 <div id="photoSheet" class="photoSheet hidden">
@@ -518,6 +530,19 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
   <div id="photoViewerBody" class="photoViewerBody"></div>
   <button id="photoViewerPrev" type="button" class="pvNav pvPrev">◀</button>
   <button id="photoViewerNext" type="button" class="pvNav pvNext">▶</button>
+</div>
+<div id="commentOverlay" class="commentOverlay hidden">
+  <div class="commentBox">
+    <div id="commentTime" class="commentTime"></div>
+    <div id="commentView" class="commentText"></div>
+    <div id="commentHint" class="commentHint">タップして編集</div>
+    <textarea id="commentEdit" class="hidden" rows="5" maxlength="500" placeholder="コメントを入力"></textarea>
+    <div id="commentFoot" class="commentFoot hidden">
+      <button id="commentDel" type="button" class="ghost">削除</button>
+      <button id="commentCancel" type="button" class="ghost">キャンセル</button>
+      <button id="commentSave" type="button" class="primary">保存</button>
+    </div>
+  </div>
 </div>
 <input type="file" id="photoInputAuto" accept="image/*,video/*" multiple hidden>
 <input type="file" id="photoInputSeek" accept="image/*,video/*" multiple hidden>
@@ -594,7 +619,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
 // (this session's own publish count so far) is reconstructed from the
 // conversation itself rather than mechanically verified — best-effort, not
 // guaranteed exact. Increment by exactly 1 on every future publish.
-const APP_VERSION = 161;
+const APP_VERSION = 162;
 
 /* ============ FIT PARSER ============ */
 const FIT_EPOCH = 631065600; // seconds between 1970-01-01 and 1989-12-31 (FIT epoch)
@@ -1562,14 +1587,13 @@ async function processFitData(arrayBuffer, displayName, opts){
     renderRoutePreview();
     $('#resultsWrap').innerHTML = '';
     lastResults = null; // results belong to the previous ride; an exported JSON must not carry them over
-    S.photos = []; S.photoSelectedId = null; S.photoRects = [];
+    S.photos = []; S.photoSelectedId = null; S.photoRects = []; S.comments = []; S.commentSelectedId = null; S.commentRects = [];
     ivSelectMode = false; ivSelected.clear();
     setExportEnabled(false);
     // renderTimeline() (and some of the above) call saveState(), which marks
     // S.dirty=true as a side effect — but this is the initial render of a
     // freshly-loaded, unmodified file, not a user change, so clear it again.
     S.dirty = false;
-    if (autoInfo) showHeaderMsg('自動分割: ヒルクライム'+autoInfo.nClimbs+'件を検出、休憩'+autoInfo.nRests+'件は区間から除外し、'+S.intervals.length+'区間にしました。', false);
   } catch(err){
     showHeaderMsg('解析エラー: '+err.message, true);
   }
@@ -1620,6 +1644,7 @@ function serializeState(){
     powerChartXMode: S.powerChartXMode,
     // photos/videos: metadata only — the pictures themselves are never exported
     // (the small preview pictures are only added when saving a .zip; `file` is where they sit inside it)
+    comments: (S.comments||[]).map(c=>({ text:c.text, elapsed:c.elapsed-offset })),
     photos: S.photos.map((p,i)=>({ name:p.name, kind:p.kind, takenAt:p.takenAt, hasSeconds:p.hasSeconds, hasGps:p.hasGps, lat:p.lat, lon:p.lon,
       mode:p.mode, adjusted:!!p.adjusted, elapsed:p.elapsed-offset, file:p.thumb ? 'photos/'+(i+1)+'.jpg' : null,
       fileOrig:(p.kind==='image' && (p.orig||p._origEntry)) ? 'photos/'+(i+1)+'_orig.'+photoExt(p) : null })),
@@ -1760,6 +1785,10 @@ function applyState(state, mode){
     if (pm.length) S.powerChartMetrics = pm;
   }
   if (state.powerChartXMode && ['clock','elapsed','dist'].includes(state.powerChartXMode)) S.powerChartXMode = state.powerChartXMode;
+  if (Array.isArray(state.comments)){
+    S.comments = state.comments.filter(c=>c && typeof c.text==='string').map(c=>({ id:commentSeq++, text:c.text, elapsed:(Number(c.elapsed)||0)+offset }));
+    S.commentSelectedId = null;
+  }
   if (Array.isArray(state.photos)){
     // placeholders: the pictures aren't stored; they fill in when the same files are picked again
     S.photos = state.photos.map(p=>({ id:photoSeq++, name:p.name||'', kind:p.kind==='video'?'video':'image', takenAt:p.takenAt==null?null:Number(p.takenAt),
@@ -2155,6 +2184,7 @@ function renderMapFrame(){
     m.cursor.setLngLat([r.lon, r.lat]);
   } else if (m.cursor){ m.cursor.remove(); m.cursor = null; }
   updatePhotoMarkers(mv);
+  updateCommentMarkers(mv);
 }
 function mapCenterOn(lon, lat){
   const mv = S.mapView;
@@ -2718,11 +2748,13 @@ function elapsedFromDistanceKm(km){
 // A snapshot is pushed just before each mutation; undo/redo just swap the
 // current S.intervals with one from the appropriate stack.
 let ivHistory = [], ivRedoStack = [];
-function snapIv(){ return {iv:JSON.stringify(S.intervals), ph:S.photos.map(p=>Object.assign({}, p))}; }
+function snapIv(){ return {iv:JSON.stringify(S.intervals), ph:S.photos.map(p=>Object.assign({}, p)), cm:(S.comments||[]).map(c=>Object.assign({}, c))}; }
 function restoreIv(sn){
   S.intervals = JSON.parse(sn.iv);
   S.photos = sn.ph.map(p=>Object.assign({}, p));
   S.photos.sort((a,b)=>a.elapsed-b.elapsed);
+  S.comments = (sn.cm||[]).map(c=>Object.assign({}, c));
+  if (!S.comments.some(c=>c.id===S.commentSelectedId)) S.commentSelectedId = null;
   if (!S.photos.some(p=>p.id===S.photoSelectedId)){ S.photoSelectedId = null; hidePhotoPreview(); }
   fitViewToBounds();
 }
@@ -2866,6 +2898,97 @@ function deleteSelectedIntervals(){
   if (mapChartInitialized) renderMapFrame();
 }
 
+/* ============ COMMENTS ============ */
+function commentById(id){ return S.comments.find(c=>c.id===id); }
+function commentAt(clientX, clientY){
+  const cv = $('#tlCanvas2'); if (!cv) return null;
+  const r = cv.getBoundingClientRect(), x = clientX-r.left, y = clientY-r.top;
+  for (let i=S.commentRects.length-1; i>=0; i--){
+    const q = S.commentRects[i];
+    if (x>=q.x && x<=q.x+q.w && y>=q.y && y<=q.y+q.h) return commentById(q.id);
+  }
+  return null;
+}
+function selectComment(id){
+  S.commentSelectedId = id; S.photoSelectedId = null; hidePhotoPreview();
+  renderTimeline(); renderMapFrame();
+}
+let commentEditing = null;   // {id|null, elapsed}
+function commentTimeLabel(t){ return fmtClock(S.records[0].t+t)+'('+fmtHMS(t)+')'; }
+let commentOpenedAt = 0;   // the click that follows the opening tap must not close it again
+function closeComment(){ $('#commentOverlay').classList.add('hidden'); commentEditing = null; }
+function openCommentView(id){
+  const c = commentById(id); if (!c) return;
+  commentEditing = {id, elapsed:c.elapsed};
+  $('#commentTime').textContent = commentTimeLabel(c.elapsed);
+  $('#commentView').textContent = c.text;
+  $('#commentView').classList.remove('hidden'); $('#commentHint').classList.remove('hidden');
+  $('#commentEdit').classList.add('hidden'); $('#commentFoot').classList.add('hidden');
+  $('#commentOverlay').classList.remove('hidden'); commentOpenedAt = performance.now();
+}
+function openCommentEdit(id){
+  let t, text = '';
+  if (id!=null){ const c = commentById(id); if (!c) return; t = c.elapsed; text = c.text; }
+  else {
+    if (!S.records.length) return;
+    t = S.selection ? (S.selection.c!=null ? elapsedFromX(S.selection.c) : S.records[S.selection.idx].elapsed) : 0;
+  }
+  commentEditing = {id, elapsed:t};
+  $('#commentTime').textContent = commentTimeLabel(t);
+  $('#commentView').classList.add('hidden'); $('#commentHint').classList.add('hidden');
+  const ta = $('#commentEdit'); ta.value = text; ta.classList.remove('hidden');
+  $('#commentFoot').classList.remove('hidden');
+  $('#commentDel').style.display = id!=null ? '' : 'none';
+  $('#commentOverlay').classList.remove('hidden'); commentOpenedAt = performance.now();
+  setTimeout(()=>ta.focus(), 50);
+}
+function saveComment(){
+  if (!commentEditing) return;
+  const text = $('#commentEdit').value.trim();
+  if (!text){ showHeaderMsg('コメントを入力してください', true); return; }
+  pushIvHistory();
+  if (commentEditing.id!=null){ const c = commentById(commentEditing.id); if (c) c.text = text; }
+  else {
+    const c = { id:commentSeq++, text, elapsed:commentEditing.elapsed };
+    S.comments.push(c); S.commentSelectedId = c.id; S.photoSelectedId = null;
+  }
+  S.comments.sort((a,b)=>a.elapsed-b.elapsed);
+  closeComment(); renderTimeline(); renderMapFrame(); saveState();
+}
+function deleteComment(id){
+  if (!commentById(id)) return;
+  pushIvHistory();
+  S.comments = S.comments.filter(c=>c.id!==id);
+  if (S.commentSelectedId===id) S.commentSelectedId = null;
+  closeComment(); renderTimeline(); renderMapFrame(); saveState();
+}
+$('#commentView').addEventListener('click', ()=>{ if (commentEditing && commentEditing.id!=null) openCommentEdit(commentEditing.id); });
+$('#commentSave').addEventListener('click', saveComment);
+$('#commentCancel').addEventListener('click', closeComment);
+$('#commentDel').addEventListener('click', ()=>{ if (commentEditing && commentEditing.id!=null) deleteComment(commentEditing.id); });
+$('#commentOverlay').addEventListener('click', e=>{ if (e.target===$('#commentOverlay') && performance.now()-commentOpenedAt>450) closeComment(); });
+function updateCommentMarkers(mv){
+  const m = mv.markers;
+  if (!m.comments) m.comments = new Map();
+  const live = new Set();
+  S.comments.forEach(c=>{
+    let r = nearestRecordByElapsed(Math.max(0, c.elapsed));
+    if (r && r.lat==null) r = nearestGpsRecordTo(r);
+    if (!r || r.lat==null) return;
+    live.add(c.id);
+    let it = m.comments.get(c.id);
+    if (!it){
+      const el = mapDot('mapCommentPin', '💬');
+      el.addEventListener('click', ev=>{ ev.stopPropagation(); selectComment(c.id); openCommentView(c.id); });
+      it = { marker: addMarker(mv.map, el, r.lon, r.lat) };
+      m.comments.set(c.id, it);
+    }
+    it.marker.setLngLat([r.lon, r.lat]);
+    it.marker.getElement().classList.toggle('sel', c.id===S.commentSelectedId);
+  });
+  for (const [id,it] of m.comments){ if (!live.has(id)){ it.marker.remove(); m.comments.delete(id); } }
+}
+
 /* ============ PHOTOS & VIDEOS ============ */
 // Media is read from the device's photo library through the file picker (on
 // iOS: the Photos picker). For the prototype the saved .zip carries, next to
@@ -2880,6 +3003,7 @@ function deleteSelectedIntervals(){
 //   ③ date to the minute, no position      -> at second :00 of that minute, to be fine-tuned
 //   ④ neither                              -> at the seek bar
 S.photos = []; S.photoSelectedId = null; S.photoRects = [];
+S.comments = []; S.commentSelectedId = null; S.commentRects = []; let commentSeq = 1;
 let photoSeq = 1;
 const THUMB_H = 200;            // thumbnails are kept small (resolution reduced on purpose)
 const PHOTO_SNAP_PX = 16;       // how close to the seek bar a dragged photo snaps
@@ -3130,7 +3254,11 @@ async function handlePhotoFiles(files, how){
   if (!files || !files.length || !S.records.length) return;
   showHeaderMsg('写真を読み込み中…', false);
   const metas = [];
-  for (const f of files) metas.push(await readMediaMeta(f));
+  // one at a time, letting the browser breathe (and freeing memory) between photos; show progress
+  for (let i=0;i<files.length;i++){
+    if (i%5===0){ showHeaderMsg('写真を読み込み中… '+i+' / '+files.length, false); await new Promise(r=>setTimeout(r, 0)); }
+    metas.push(await readMediaMeta(files[i]));
+  }
   hideHeaderMsg();
   const seekT = S.selection ? S.records[S.selection.idx].elapsed : 0;
   const total = S.records[S.records.length-1].elapsed;
@@ -3155,8 +3283,10 @@ function showPhotoSheet(cands){
   cands.forEach(c=>{
     const card = document.createElement('div'); card.className = 'photoCard'+(c.on?' on':'');
     if (c.meta.thumb){
-      const cv = document.createElement('canvas'); cv.width = c.meta.thumb.width; cv.height = c.meta.thumb.height;
-      cv.getContext('2d').drawImage(c.meta.thumb, 0, 0); card.appendChild(cv);
+      // the picker only needs a small picture (keeps memory low with hundreds of photos)
+      const sh = 110, sw = Math.max(1, Math.round(c.meta.thumb.width*sh/c.meta.thumb.height));
+      const cv = document.createElement('canvas'); cv.width = sw; cv.height = sh;
+      cv.getContext('2d').drawImage(c.meta.thumb, 0, 0, sw, sh); card.appendChild(cv);
     } else { const ph = document.createElement('div'); ph.className = 'ph'; ph.textContent = c.meta.kind==='video' ? '🎞' : '🖼'; card.appendChild(ph); }
     const outside = c.elapsed<0 || c.elapsed>total;
     const when = c.mode===4 ? 'シークバー位置' : fmtClock(t0+c.elapsed)+(outside ? '(ライド外)' : '');
@@ -3191,7 +3321,7 @@ function photoAt(clientX, clientY){
   return null;
 }
 function selectPhoto(id){
-  S.photoSelectedId = id;
+  S.photoSelectedId = id; S.commentSelectedId = null;
   renderTimeline(); renderMapFrame();
 }
 function deleteSelectedPhoto(){
@@ -3255,7 +3385,7 @@ function attachTimelineGestures(){
   let startX=0, dragging=false, moved=false, dragStartC=0, lastWidth=0, panPointerId=null, noTap=false, panStartXs=null;
   let pinch = null;
   // long press: on a clip -> selection mode; on a photo -> drag it sideways
-  let lpTimer=null, lpHit=null, lpFired=false, photoDrag=null;
+  let lpTimer=null, lpHit=null, lpFired=false, photoDrag=null, downAt=0;
   const clearLP = ()=>{ clearTimeout(lpTimer); lpTimer = null; };
   const hitAt = e=>{
     const clipEl = e.target.closest && e.target.closest('.tlClip');
@@ -3310,12 +3440,12 @@ function attachTimelineGestures(){
     clampAndSetX(min, min+range);
   }
   body.addEventListener('pointerdown', e=>{
-    if (e.target.closest('.tlClipHandle') || e.target.closest('#tlVBar') || !S.chartView) return; // handles / scrollbar run their own drag
+    if ((!ivSelectMode && e.target.closest('.tlClipHandle')) || e.target.closest('#tlVBar') || !S.chartView) return; // handles / scrollbar run their own drag
     stopMomentum(); endScrollSeeking();
     pointers.set(e.pointerId, {x:e.clientX, y:e.clientY});
     try{ body.setPointerCapture(e.pointerId); }catch(err){}
     if (pointers.size===1){
-      moved = false; noTap = false; lpFired = false; clearLP();
+      moved = false; noTap = false; lpFired = false; clearLP(); downAt = performance.now();
       beginPan(e.pointerId, e.clientX, e.timeStamp || performance.now());
       lpHit = hitAt(e);
       if (lpHit){
@@ -3324,7 +3454,11 @@ function attachTimelineGestures(){
           lpTimer = null;
           if (pointers.size!==1 || moved) return;
           lpFired = true; dragging = false;
-          if (hit.type==='clip') enterSelectMode(hit.id);
+          if (hit.type==='clip'){
+            enterSelectMode(hit.id);
+            const p0 = pointers.values().next().value;   // keep following the same finger: the view scrolls, the seek bar stays
+            if (p0) beginPan(panPointerId, p0.x, performance.now());
+          }
           else {
             const p = pointers.values().next().value, rect = body.getBoundingClientRect(), view = S.chartView;
             const ph = photoById(hit.id); if (!ph) return;
@@ -3355,7 +3489,9 @@ function attachTimelineGestures(){
     const rect = body.getBoundingClientRect();
     const curX = e.clientX-rect.left;
     tlVelocity.add(e, rect.left); // velocity from the very start of the gesture, not gated by the "moved" threshold
-    if (Math.abs(curX-startX)>3){ moved=true; clearLP(); }
+    // after a deliberate hold there is no tap left to protect, so even a faint movement is followed
+    const held = lpFired || (!lpHit && performance.now()-downAt>250);
+    if (Math.abs(curX-startX)>(held ? 0.5 : 3)){ moved=true; clearLP(); }
     if (!moved) return;
     const totalDx = curX-startX;
     const range = S.chartView.max-S.chartView.min;
@@ -3770,7 +3906,7 @@ function drawTimelineCanvases(view, W, H, rowH, row2H, xTicks){
     }
     if (st.hasAlt){
       const yAlt = v => bot - (v-st.altMin)/(st.altMax-st.altMin)*(bot-TOP-4);
-      tlFillSegs(ctx, tlSegments(buckets, 'alt', xPx, yAlt), bot, 'rgba(150,158,170,.26)');
+      tlFillSegs(ctx, tlSegments(buckets, 'alt', xPx, yAlt), bot, 'rgba(150,158,170,.15)');
     }
     if (st.hasHr){
       const yHr = v => bot - (v-st.hrMin)/(st.hrMax-st.hrMin)*(bot-TOP);
@@ -3780,6 +3916,22 @@ function drawTimelineCanvases(view, W, H, rowH, row2H, xTicks){
     let tx = 4;
     if (st.hasAlt){ ctx.fillStyle = 'rgba(170,176,186,.95)'; ctx.fillText('標高', tx, 10); tx += ctx.measureText('標高').width+8; }
     if (st.hasHr){ ctx.fillStyle = cssVar('--hr'); ctx.fillText('心拍', tx, 10); }
+    // comment bubbles: the pointed tip marks the time
+    S.commentRects = [];
+    (S.comments||[]).forEach(c=>{
+      const x = xPx(ivX(c.elapsed)), bw = 24, bh = 18, bx = x-bw/2, by = 16;
+      if (bx>W || bx+bw<0) return;
+      const sel = c.id===S.commentSelectedId;
+      ctx.save();
+      ctx.fillStyle = sel ? '#fff' : '#f2c14e'; ctx.strokeStyle = 'rgba(0,0,0,.6)'; ctx.lineWidth = 1;
+      ctx.beginPath();
+      if (ctx.roundRect) ctx.roundRect(bx, by, bw, bh, 5); else ctx.rect(bx, by, bw, bh);
+      ctx.moveTo(x-4, by+bh); ctx.lineTo(x, by+bh+7); ctx.lineTo(x+4, by+bh);
+      ctx.fill(); ctx.stroke();
+      ctx.fillStyle = '#222'; for (let i=0;i<3;i++){ ctx.beginPath(); ctx.arc(x-6+i*6, by+bh/2, 1.8, 0, Math.PI*2); ctx.fill(); }
+      ctx.restore();
+      S.commentRects.push({id:c.id, x:bx-4, y:by-2, w:bw+8, h:bh+12});
+    });
   }
 }
 function onClipTap(id){
@@ -3795,7 +3947,7 @@ function onClipTap(id){
 function handleTimelineTap(e){
   const body = $('#tlBody');
   const el = document.elementFromPoint(e.clientX, e.clientY);
-  if (el && (el.closest('.tlClipHandle') || el.closest('#tlVBar'))) return; // handles are for dragging (the highlighted clip's), not tapping
+  if (el && el.closest('#tlVBar')) return;
   const clipEl = el && el.closest('.tlClip');
   if (ivSelectMode){
     // selecting: a tap on a clip adds/removes it; a tap anywhere else leaves selection mode.
@@ -3803,10 +3955,13 @@ function handleTimelineTap(e){
     if (clipEl) toggleIvSelected(Number(clipEl.dataset.id)); else exitSelectMode();
     return;
   }
+  if (el && el.closest('.tlClipHandle')) return; // handles are for dragging (the highlighted clip's), not tapping
   if (clipEl){ onClipTap(Number(clipEl.dataset.id)); return; }
+  const cm = commentAt(e.clientX, e.clientY);
+  if (cm){ selectComment(cm.id); openCommentView(cm.id); return; }
   const ph = photoAt(e.clientX, e.clientY);
   if (ph && S.photoSelectedId!==ph.id){ selectPhoto(ph.id); return; } // first tap only highlights; a tap on the highlighted photo moves the seek bar like anywhere else
-  if (!ph && S.photoSelectedId!=null){ S.photoSelectedId = null; hidePhotoPreview(); renderMapFrame(); }
+  if (!ph && (S.photoSelectedId!=null || S.commentSelectedId!=null)){ S.photoSelectedId = null; S.commentSelectedId = null; hidePhotoPreview(); renderMapFrame(); }
   const rect = body.getBoundingClientRect();
   const view = S.chartView;
   const frac = Math.max(0, Math.min(1, (e.clientX-rect.left)/rect.width));
@@ -3824,6 +3979,7 @@ function wireTimelineEvents(){
 }
 let boundaryDrag = null;
 function onClipHandleDown(e){
+  if (ivSelectMode) return;
   const id = Number(e.currentTarget.dataset.id);
   const activeIv = getActiveInterval();
   if (!activeIv || activeIv.id!==id) return; // only the highlighted clip's edges can be dragged, to prevent accidental edits
@@ -3916,16 +4072,31 @@ $('#tlSplit').addEventListener('click', ()=>{
 const tlMenu = $('#tlMenu');
 function closeTlMenu(){ tlMenu.classList.add('hidden'); }
 $('#tlMore').addEventListener('click', ()=>{
-  const canDelIv = ivSelectMode ? ivSelected.size>0 : (!!getActiveInterval() && S.intervals.length>1);
-  $('#menuDelIv').disabled = !canDelIv;
-  $('#menuDelPhoto').disabled = S.photoSelectedId==null;
+  const tgt = deleteTarget();
+  $('#menuDelete').disabled = !tgt;
+  $('#menuDelete').textContent = '🗑 '+(tgt ? tgt.label : '削除する');
+  $('#menuComment').disabled = !S.records.length;
   $('#menuPhotoAuto').disabled = $('#menuPhotoSeek').disabled = !S.records.length;
   tlMenu.classList.remove('hidden');
 });
 tlMenu.addEventListener('click', e=>{ if (e.target===tlMenu) closeTlMenu(); });
 ['undoBtnBottom','redoBtnBottom'].forEach(id=> $('#'+id).addEventListener('click', closeTlMenu));
-$('#menuDelIv').addEventListener('click', ()=>{ closeTlMenu(); deleteSelectedIntervals(); });
-$('#menuDelPhoto').addEventListener('click', ()=>{ closeTlMenu(); deleteSelectedPhoto(); });
+// one delete for everything: what is highlighted (comment, photo) goes first, otherwise the interval(s)
+function deleteTarget(){
+  if (ivSelectMode) return ivSelected.size ? {kind:'iv', label:'選択した区間を削除'} : null;
+  if (S.commentSelectedId!=null && S.comments.some(c=>c.id===S.commentSelectedId)) return {kind:'comment', label:'選択中のコメントを削除'};
+  if (S.photoSelectedId!=null && photoById(S.photoSelectedId)) return {kind:'photo', label:'選択中の写真を削除'};
+  if (getActiveInterval() && S.intervals.length>1) return {kind:'iv', label:'この区間を削除'};
+  return null;
+}
+$('#menuDelete').addEventListener('click', ()=>{
+  closeTlMenu();
+  const t = deleteTarget(); if (!t) return;
+  if (t.kind==='comment') deleteComment(S.commentSelectedId);
+  else if (t.kind==='photo') deleteSelectedPhoto();
+  else deleteSelectedIntervals();
+});
+$('#menuComment').addEventListener('click', ()=>{ closeTlMenu(); openCommentEdit(null); });
 // the pickers are opened straight from the click so iOS allows them
 $('#menuPhotoAuto').addEventListener('click', ()=>{ closeTlMenu(); $('#photoInputAuto').value = ''; $('#photoInputAuto').click(); });
 $('#menuPhotoSeek').addEventListener('click', ()=>{ closeTlMenu(); $('#photoInputSeek').value = ''; $('#photoInputSeek').click(); });
