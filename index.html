@@ -267,7 +267,7 @@ td.num{ text-align:right; font-variant-numeric:tabular-nums; }
 /* the ⋮ menu (bottom sheet) */
 .tlMenu{ position:fixed; inset:0; z-index:60; background:rgba(0,0,0,.5); display:flex; align-items:flex-end; justify-content:center; }
 .tlMenu.hidden{ display:none; }
-.tlMenuSheet{ width:100%; max-width:520px; background:var(--surface); border:1px solid var(--border); border-radius:14px 14px 0 0;
+.tlMenuSheet{ max-height:85vh; overflow:auto; width:100%; max-width:520px; background:var(--surface); border:1px solid var(--border); border-radius:14px 14px 0 0;
   padding:8px 12px calc(12px + env(safe-area-inset-bottom,0px)); display:flex; flex-direction:column; gap:6px; }
 .tlMenuSheet button{ text-align:left; padding:13px 14px; font-size:14px; background:var(--surface-2); }
 .tlMenuSheet button:disabled{ opacity:.35; }
@@ -293,6 +293,12 @@ td.num{ text-align:right; font-variant-numeric:tabular-nums; }
 .photoPreview{ position:absolute; top:8px; left:8px; z-index:3; background:rgba(0,0,0,.78); border:1px solid var(--border); border-radius:8px; padding:6px; max-width:60%; }
 .photoPreview canvas{ display:block; max-width:100%; height:150px; border-radius:4px; }
 .photoPreview div{ font-size:10.5px; color:#d6d9de; margin-top:3px; }
+/* favourite sections */
+.libList{ max-height:55vh; overflow:auto; display:flex; flex-direction:column; gap:6px; }
+.libItem{ display:flex; align-items:center; gap:8px; background:var(--surface-2); border-radius:8px; padding:8px 10px; }
+.libItem .nm{ flex:1; min-width:0; font-size:14px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.libItem .sub{ font-size:10.5px; color:var(--muted,#8b9099); }
+.libItem button{ padding:6px 10px; font-size:12px; }
 /* comments */
 .commentOverlay{ position:fixed; inset:0; z-index:75; background:rgba(0,0,0,.6); display:flex; align-items:center; justify-content:center; padding:20px; }
 .commentOverlay.hidden{ display:none; }
@@ -517,6 +523,10 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
     <button id="menuPhotoAuto" type="button">📷 写真を自動追加する</button>
     <button id="menuPhotoSeek" type="button">📍 シークバーに写真を追加する</button>
     <button id="menuComment" type="button">💬 コメントを追加する</button>
+    <button id="menuLibAdd" type="button">⭐ お気に入り区間に登録する</button>
+    <button id="menuLibList" type="button">⭐ お気に入り区間の一覧</button>
+    <button id="menuLibExport" type="button">⭐ お気に入り区間を書き出す</button>
+    <button id="menuLibImport" type="button">⭐ お気に入り区間を読み込む</button>
     <button id="menuDelete" type="button">🗑 削除する</button>
   </div>
 </div>
@@ -531,6 +541,14 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
   <button id="photoViewerPrev" type="button" class="pvNav pvPrev">◀</button>
   <button id="photoViewerNext" type="button" class="pvNav pvNext">▶</button>
 </div>
+<div id="libSheet" class="commentOverlay hidden">
+  <div class="commentBox">
+    <div class="commentTime">お気に入り区間(次に同じ道を含むFITを読み込むと、自動で区間にします)</div>
+    <div id="libList" class="libList"></div>
+    <div class="commentFoot"><button id="libClose" type="button" class="primary">閉じる</button></div>
+  </div>
+</div>
+<input type="file" id="libInput" accept="application/json,.json" hidden>
 <div id="commentOverlay" class="commentOverlay hidden">
   <div class="commentBox">
     <div id="commentTime" class="commentTime"></div>
@@ -619,7 +637,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
 // (this session's own publish count so far) is reconstructed from the
 // conversation itself rather than mechanically verified — best-effort, not
 // guaranteed exact. Increment by exactly 1 on every future publish.
-const APP_VERSION = 165;
+const APP_VERSION = 166;
 
 /* ============ FIT PARSER ============ */
 const FIT_EPOCH = 631065600; // seconds between 1970-01-01 and 1989-12-31 (FIT epoch)
@@ -1121,14 +1139,23 @@ function nearestIndexByX(x){
 function currentScrollCenter(){
   const xs = S.chartView;
   if (scrollState && S.selection && scrollState.idx===S.selection.idx && scrollState.min===xs.min && scrollState.max===xs.max) return scrollState.c;
+  const sk = seekXVal();
+  if (sk!=null && sk>=xs.min && sk<=xs.max) return sk;   // the seek bar is on screen: a drag starts exactly there
   return (xs.min+xs.max)/2;
+}
+// where on screen (0..1 of the width) the seek bar stays while scrolling: wherever it
+// was when the gesture began (the middle once it has been scrolled there)
+let scrollFrac = 0.5;
+function beginScrollAnchor(){
+  const xs = S.chartView, c = currentScrollCenter();
+  scrollFrac = Math.max(0, Math.min(1, (c-xs.min)/Math.max(1e-9, xs.max-xs.min)));
 }
 function scrollCenterTo(c){
   const xs = S.chartView;
   const {lo, hi} = xBounds(xs.max-xs.min);
   c = Math.max(lo, Math.min(hi, c));
   const span = xs.max-xs.min;
-  xs.min = Math.max(lo, Math.min(hi-span, c-span/2));
+  xs.min = Math.max(lo, Math.min(hi-span, c-scrollFrac*span));
   xs.max = xs.min+span;
   const idx = nearestIndexByX(c);
   scrollSeeking = true;
@@ -1608,6 +1635,79 @@ function libMatch(recs, entry, dbg){
   return kept.sort((a,b)=>a.start-b.start);
 }
 
+// ---- the stored library (this browser's localStorage; export/import moves it between devices)
+const LIB_KEY = 'quaniter.library.v1';
+function libLoad(){
+  try{ const a = JSON.parse(localStorage.getItem(LIB_KEY)||'[]'); return Array.isArray(a) ? a.filter(libValid) : []; }catch(e){ return []; }
+}
+function libValid(e){
+  return e && typeof e.name==='string' && typeof e.lengthM==='number' && Array.isArray(e.pts) && e.pts.length>=2 &&
+    e.pts.every(p=>Array.isArray(p) && isFinite(p[0]) && isFinite(p[1]));
+}
+let libEntries = libLoad();
+function libPersist(){
+  try{ localStorage.setItem(LIB_KEY, JSON.stringify(libEntries)); return true; }
+  catch(e){ showHeaderMsg('お気に入り区間を保存できませんでした(ブラウザの保存容量)。書き出しておくことをおすすめします', true); return false; }
+}
+function libRegisterActive(){
+  const iv = getActiveInterval();
+  if (!iv){ showHeaderMsg('登録する区間を選んでください', true); return; }
+  const sm = libSummarize(S.records, iv.start, iv.end);
+  if (!sm){ showHeaderMsg('この区間は位置情報が足りないため登録できません(200 m 以上の軌跡が必要です)', true); return; }
+  const def = intervalDisplayName(iv, S.intervals.indexOf(iv));
+  const name = prompt('お気に入り区間の名前', def);
+  if (name===null) return;
+  const nm = name.trim() || def;
+  const prev = libEntries.find(e=>e.name===nm);
+  if (prev && !confirm('同じ名前「'+nm+'」が登録済みです。置き換えますか?')) return;
+  let ascent = 0, last = null;
+  S.records.forEach(r=>{
+    if (r.elapsed<iv.start || r.elapsed>iv.end) return;
+    const a = r.altSmooth!=null ? r.altSmooth : r.alt;
+    if (a==null) return;
+    if (last!=null && a>last) ascent += a-last;
+    last = a;
+  });
+  const entry = { id:(prev ? prev.id : 'l'+Date.now().toString(36)+Math.random().toString(36).slice(2,6)), name:nm,
+    lengthM:Math.round(sm.lengthM), ascentM:Math.round(ascent), pts:sm.pts.map(p=>[+p[0].toFixed(5), +p[1].toFixed(5)]), createdAt:Date.now() };
+  libEntries = libEntries.filter(e=>e.id!==entry.id).concat(entry);
+  if (libPersist()) showHeaderMsg('「'+nm+'」をお気に入り区間に登録しました(全'+libEntries.length+'件)', false);
+}
+function libExport(){
+  if (!libEntries.length){ showHeaderMsg('登録されたお気に入り区間がありません', true); return; }
+  const blob = new Blob([JSON.stringify({ app:'Quaniter', type:'library', version:1, exportedAt:new Date().toISOString(), entries:libEntries })], {type:'application/json'});
+  saveFile('Quaniter-お気に入り区間.json', blob);
+}
+async function libImportFile(file){
+  try{
+    const d = JSON.parse(await file.text());
+    const list = (d && d.type==='library' && Array.isArray(d.entries)) ? d.entries.filter(libValid) : [];
+    if (!list.length){ showHeaderMsg('お気に入り区間のファイルではありません', true); return; }
+    let added = 0, replaced = 0;
+    list.forEach(e=>{
+      const same = libEntries.findIndex(x=>x.id===e.id || x.name===e.name);
+      const clean = { id:e.id||('l'+Date.now().toString(36)+Math.random().toString(36).slice(2,6)), name:e.name, lengthM:e.lengthM, ascentM:e.ascentM||0, pts:e.pts, createdAt:e.createdAt||Date.now() };
+      if (same>=0){ libEntries[same] = clean; replaced++; } else { libEntries.push(clean); added++; }
+    });
+    if (libPersist()) showHeaderMsg('お気に入り区間を読み込みました(追加'+added+'件・更新'+replaced+'件、全'+libEntries.length+'件)', false);
+  }catch(e){ showHeaderMsg('読み込めませんでした: '+e.message, true); }
+}
+function libShowList(){
+  const box = $('#libList'); box.innerHTML = '';
+  if (!libEntries.length){ box.textContent = 'まだ登録がありません。区間を選んで「お気に入り区間に登録する」を押してください。'; }
+  libEntries.forEach(e=>{
+    const row = document.createElement('div'); row.className = 'libItem';
+    const nm = document.createElement('div'); nm.className = 'nm';
+    nm.innerHTML = escapeHtml(e.name)+'<div class="sub">'+fmtKm(e.lengthM)+' km'+(e.ascentM?' ・ 獲得標高 '+e.ascentM+' m':'')+'</div>';
+    const del = document.createElement('button'); del.type = 'button'; del.className = 'ghost'; del.textContent = '削除';
+    del.addEventListener('click', ()=>{
+      if (!confirm('「'+e.name+'」をお気に入りから削除しますか?')) return;
+      libEntries = libEntries.filter(x=>x.id!==e.id); libPersist(); libShowList();
+    });
+    row.appendChild(nm); row.appendChild(del); box.appendChild(row);
+  });
+  $('#libSheet').classList.remove('hidden');
+}
 function buildAutoIntervals(recs, laps, useLaps){
   const total = recs[recs.length-1].elapsed;
   const rests = detectRests(recs), climbs = detectClimbs(recs, rests);
@@ -3544,7 +3644,7 @@ function attachTimelineGestures(){
     const rect = body.getBoundingClientRect();
     panPointerId = id; dragging = true; lastWidth = rect.width;
     startX = clientX-rect.left;
-    dragStartC = currentScrollCenter();
+    dragStartC = currentScrollCenter(); beginScrollAnchor();
     panStartXs = {min:S.chartView.min, max:S.chartView.max};
     tlVelocity.reset(startX, t);
   }
@@ -3682,6 +3782,7 @@ function attachTimelineGestures(){
     if (!wheelGesture){
       const isPan = (e.ctrlKey && e.deltaY !== 0) || Math.abs(e.deltaX) > Math.abs(e.deltaY);
       wheelGesture = { mode: isPan ? 'pan' : 'zoom' };
+      if (isPan) beginScrollAnchor();
     }
     clearTimeout(wheelTimer);
     wheelTimer = setTimeout(()=>{ wheelGesture = null; endScrollSeeking(); }, 250);
@@ -4220,6 +4321,8 @@ $('#tlMore').addEventListener('click', ()=>{
   $('#menuDelete').disabled = !tgt;
   $('#menuDelete').textContent = '🗑 '+(tgt ? tgt.label : '削除する');
   $('#menuComment').disabled = !S.records.length;
+  $('#menuLibAdd').disabled = !S.records.length || !getActiveInterval();
+  $('#menuLibExport').disabled = !libEntries.length;
   $('#menuPhotoAuto').disabled = $('#menuPhotoSeek').disabled = !S.records.length;
   tlMenu.classList.remove('hidden');
 });
@@ -4241,6 +4344,13 @@ $('#menuDelete').addEventListener('click', ()=>{
   else deleteSelectedIntervals();
 });
 $('#menuComment').addEventListener('click', ()=>{ closeTlMenu(); openCommentEdit(null); });
+$('#menuLibAdd').addEventListener('click', ()=>{ closeTlMenu(); libRegisterActive(); });
+$('#menuLibList').addEventListener('click', ()=>{ closeTlMenu(); libShowList(); });
+$('#menuLibExport').addEventListener('click', ()=>{ closeTlMenu(); libExport(); });
+$('#menuLibImport').addEventListener('click', ()=>{ closeTlMenu(); $('#libInput').value = ''; $('#libInput').click(); });   // opened straight from the click so iOS allows it
+$('#libInput').addEventListener('change', e=>{ if (e.target.files[0]) libImportFile(e.target.files[0]); });
+$('#libClose').addEventListener('click', ()=> $('#libSheet').classList.add('hidden'));
+$('#libSheet').addEventListener('click', e=>{ if (e.target===$('#libSheet')) $('#libSheet').classList.add('hidden'); });
 // the pickers are opened straight from the click so iOS allows them
 $('#menuPhotoAuto').addEventListener('click', ()=>{ closeTlMenu(); $('#photoInputAuto').value = ''; $('#photoInputAuto').click(); });
 $('#menuPhotoSeek').addEventListener('click', ()=>{ closeTlMenu(); $('#photoInputSeek').value = ''; $('#photoInputSeek').click(); });
