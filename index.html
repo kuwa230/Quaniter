@@ -594,7 +594,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
 // (this session's own publish count so far) is reconstructed from the
 // conversation itself rather than mechanically verified — best-effort, not
 // guaranteed exact. Increment by exactly 1 on every future publish.
-const APP_VERSION = 160;
+const APP_VERSION = 161;
 
 /* ============ FIT PARSER ============ */
 const FIT_EPOCH = 631065600; // seconds between 1970-01-01 and 1989-12-31 (FIT epoch)
@@ -822,6 +822,7 @@ const $$ = sel => Array.from(document.querySelectorAll(sel));
 const cssVar = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 
 function fmtHMS(sec){
+  if (sec<-0.5) return '-'+fmtHMS(-sec);
   sec = Math.max(0, Math.round(sec));
   const h = Math.floor(sec/3600), m = Math.floor((sec%3600)/60), s = sec%60;
   return (h>0? h+':'+String(m).padStart(2,'0') : m) + ':' + String(s).padStart(2,'0');
@@ -1049,6 +1050,36 @@ function createVelocityTracker(){
 // edge instead, until it reaches the first/last record.
 let scrollSeeking = false; // true while a scroll drives the seek bar — map renders are throttled meanwhile
 let scrollState = null;    // {c, min, max, idx} snapshot of the last scrollCenterTo()
+// The scrollable x range: the ride itself, widened so photos taken before the
+// start / after the end show in full instead of being cut off at an edge.
+function xBounds(span){
+  const recs = S.records;
+  let lo = xVal(recs[0]), hi = xVal(recs[recs.length-1]);
+  if (!S.photos.length) return {lo, hi};
+  let pMin = Infinity, pMax = -Infinity, maxW = 0;
+  const g = S.tlGeom || {W:360, ph:60};
+  S.photos.forEach(p=>{
+    const x = ivX(p.elapsed);
+    if (x<pMin) pMin = x;
+    if (x>pMax) pMax = x;
+    const w = p.thumb ? Math.max(8, p.thumb.width*g.ph/p.thumb.height) : g.ph*1.33;
+    if (w>maxW) maxW = w;
+  });
+  if (pMin<lo) lo = pMin;
+  const f = Math.min(0.45, maxW/Math.max(1,g.W));
+  // right edge of the last photo must fit: with the whole range shown, (pMax-lo)/R*W + w <= W;
+  // when zoomed in (span given) it is just one photo-width of room at that zoom
+  const need = span!=null ? pMax + f*span : lo + (pMax-lo)/(1-f);
+  if (need>hi) hi = need;
+  return {lo, hi};
+}
+// where the seek bar sits in x units (continuous: it may rest in a recording gap or outside the ride)
+function seekXVal(){
+  if (!S.selection) return null;
+  if (S.selection.c!=null) return S.selection.c;
+  return xVal(S.records[S.selection.idx]);
+}
+let pendingSeekC = null;
 function nearestIndexByX(x){
   const recs = S.records, dist = S.xMode==='dist';
   let lo=0, hi=recs.length-1;
@@ -1069,15 +1100,17 @@ function currentScrollCenter(){
 }
 function scrollCenterTo(c){
   const xs = S.chartView;
-  const lo = xVal(S.records[0]), hi = xVal(S.records[S.records.length-1]);
+  const {lo, hi} = xBounds(xs.max-xs.min);
   c = Math.max(lo, Math.min(hi, c));
   const span = xs.max-xs.min;
   xs.min = Math.max(lo, Math.min(hi-span, c-span/2));
   xs.max = xs.min+span;
   const idx = nearestIndexByX(c);
   scrollSeeking = true;
+  pendingSeekC = c;
   if (!S.selection || S.selection.idx!==idx) setSelection(idx, null, 'chart'); // redraws chart + timeline, recentres the map
-  else { redrawChart(); renderTimeline(); }
+  else { S.selection.c = c; redrawChart(); renderTimeline(); }
+  pendingSeekC = null;
   scrollState = {c, min:xs.min, max:xs.max, idx};
 }
 function endScrollSeeking(){
@@ -1106,7 +1139,7 @@ function startMomentum(v0, canvasWidth){
     v *= Math.pow(MOMENTUM_DECELERATION, dt);
     if (Math.abs(v) < MOMENTUM_STOP_THRESHOLD){ finish(); return; }
     const xs = S.chartView;
-    const lo = xVal(S.records[0]), hi = xVal(S.records[S.records.length-1]);
+    const {lo, hi} = xBounds(xs.max-xs.min);
     // the seek bar already reached the end we're gliding toward — stop cleanly
     if ((v>0 && c<=lo) || (v<0 && c>=hi)){ finish(); return; }
     const shiftPerPixel = (xs.max-xs.min) / canvasWidth;
@@ -1731,7 +1764,7 @@ function applyState(state, mode){
     // placeholders: the pictures aren't stored; they fill in when the same files are picked again
     S.photos = state.photos.map(p=>({ id:photoSeq++, name:p.name||'', kind:p.kind==='video'?'video':'image', takenAt:p.takenAt==null?null:Number(p.takenAt),
       hasSeconds:!!p.hasSeconds, hasGps:!!p.hasGps, lat:p.lat, lon:p.lon, mode:p.mode||4, adjusted:!!p.adjusted,
-      elapsed:Math.max(lo, Math.min(hi, (Number(p.elapsed)||0)+offset)), thumb:null, _file:p.file||null, _fileOrig:p.fileOrig||null }));
+      elapsed:(Number(p.elapsed)||0)+offset, thumb:null, _file:p.file||null, _fileOrig:p.fileOrig||null }));
     S.photoSelectedId = null;
   }
   return trimmed;
@@ -2354,7 +2387,7 @@ function computeTimelineStats(){
 }
 function buildChart(){
   S.tlStats = computeTimelineStats();
-  if (!S.chartView) S.chartView = { min: xVal(S.records[0]), max: xVal(S.records[S.records.length-1]) };
+  if (!S.chartView){ const b = xBounds(); S.chartView = { min: b.lo, max: b.hi }; }
   renderTimeline();
   if (!chartZoomAttached){ attachTimelineGestures(); chartZoomAttached = true; }
   attachChartResizeObserver();
@@ -2368,7 +2401,8 @@ function buildChart(){
 // data range) — this keeps zoom-out steps an even, predictable factor each
 // time instead of getting silently squashed once one edge hits the boundary.
 function clampAndSetX(min,max){
-  const lo = xVal(S.records[0]), hi = xVal(S.records[S.records.length-1]);
+  const full = xBounds();
+  const {lo, hi} = (max-min) < (full.hi-full.lo)*0.999 ? xBounds(max-min) : full;
   let width = Math.min(max-min, hi-lo);
   if (width < (hi-lo)*0.0005) return;
   let newMin = min, newMax = min+width;
@@ -2384,6 +2418,7 @@ function changeXMode(newMode){
   const prevMode = S.xMode;
   if (prevMode === newMode) return;
   S.xMode = newMode;
+  if (S.selection) delete S.selection.c;
   if (S.chartView){
     // elapsed <-> clock share the same underlying x-values (just relabelled);
     // distance uses genuinely different x-values (a different unit system
@@ -2456,7 +2491,7 @@ function showAxisPicker(items, onSelect){
 function hideAxisPicker(){ $('#axisPicker').classList.add('hidden'); $('#axisPicker').innerHTML=''; }
 /* ============ SELECTION ============ */
 function setSelection(idx, clientPos, source){
-  S.selection = {idx};
+  S.selection = {idx, c: pendingSeekC};
   S.timelineSelectedId = null; // moving the seek bar hands highlight priority back to "whichever interval it's inside"
   const rec = S.records[idx];
 
@@ -2683,27 +2718,48 @@ function elapsedFromDistanceKm(km){
 // A snapshot is pushed just before each mutation; undo/redo just swap the
 // current S.intervals with one from the appropriate stack.
 let ivHistory = [], ivRedoStack = [];
+function snapIv(){ return {iv:JSON.stringify(S.intervals), ph:S.photos.map(p=>Object.assign({}, p))}; }
+function restoreIv(sn){
+  S.intervals = JSON.parse(sn.iv);
+  S.photos = sn.ph.map(p=>Object.assign({}, p));
+  S.photos.sort((a,b)=>a.elapsed-b.elapsed);
+  if (!S.photos.some(p=>p.id===S.photoSelectedId)){ S.photoSelectedId = null; hidePhotoPreview(); }
+  fitViewToBounds();
+}
 function pushIvHistory(){
-  ivHistory.push(JSON.stringify(S.intervals));
+  ivHistory.push(snapIv());
   if (ivHistory.length>50) ivHistory.shift();
   ivRedoStack = [];
   updateUndoRedoButtons();
 }
 function undoIv(){
   if (!ivHistory.length) return;
-  ivRedoStack.push(JSON.stringify(S.intervals));
-  S.intervals = JSON.parse(ivHistory.pop());
+  ivRedoStack.push(snapIv());
+  restoreIv(ivHistory.pop());
   renderTimeline();
   if (mapChartInitialized) renderMapFrame();
+  saveState();
   updateUndoRedoButtons();
 }
 function redoIv(){
   if (!ivRedoStack.length) return;
-  ivHistory.push(JSON.stringify(S.intervals));
-  S.intervals = JSON.parse(ivRedoStack.pop());
+  ivHistory.push(snapIv());
+  restoreIv(ivRedoStack.pop());
   renderTimeline();
   if (mapChartInitialized) renderMapFrame();
+  saveState();
   updateUndoRedoButtons();
+}
+// keep the visible window inside the (possibly shrunk/grown) scrollable range
+function fitViewToBounds(){
+  const v = S.chartView; if (!v) return;
+  const full = xBounds();
+  const {lo, hi} = (v.max-v.min) < (full.hi-full.lo)*0.999 ? xBounds(v.max-v.min) : full;
+  const w = Math.min(v.max-v.min, hi-lo);
+  let mn = v.min;
+  if (mn<lo) mn = lo;
+  if (mn+w>hi) mn = hi-w;
+  v.min = mn; v.max = mn+w;
 }
 function updateUndoRedoButtons(){
   $('#undoBtn').disabled = !ivHistory.length;
@@ -3048,10 +3104,12 @@ function photoLonLat(p){
   return r && r.lat!=null ? [r.lon, r.lat] : null;
 }
 function addPhotoEntries(list){
-  const total = S.records[S.records.length-1].elapsed;
   let added = 0, relinked = 0;
+  const bb = S.chartView ? xBounds() : null;
+  const wasFull = bb && Math.abs(S.chartView.min-bb.lo)<1e-6 && Math.abs(S.chartView.max-bb.hi)<1e-6;
+  pushIvHistory();
   list.forEach(e=>{
-    const el = Math.max(0, Math.min(total, e.elapsed));
+    const el = e.elapsed;
     // fill a placeholder left by a loaded project instead of duplicating it
     const ph = S.photos.find(p=>!p.thumb && p.name===e.meta.name && (p.takenAt===e.meta.takenAt));
     if (ph){ ph.thumb = e.meta.thumb; ph.orig = e.meta.file; relinked++; return; }
@@ -3060,6 +3118,11 @@ function addPhotoEntries(list){
     added++;
   });
   S.photos.sort((a,b)=>a.elapsed-b.elapsed);
+  if (S.chartView){
+    const nb = xBounds();
+    if (wasFull){ S.chartView.min = nb.lo; S.chartView.max = nb.hi; scrollState = null; }
+    else fitViewToBounds();
+  }
   renderTimeline(); renderMapFrame(); saveState();
   return {added, relinked};
 }
@@ -3078,7 +3141,7 @@ async function handlePhotoFiles(files, how){
   }
   const cands = metas.map(m=>{
     const pl = placePhotoMeta(m, seekT);
-    const inRide = pl.mode!==4 && pl.elapsed>=-120 && pl.elapsed<=total+120;
+    const inRide = pl.mode!==4 && pl.elapsed>=-10800 && pl.elapsed<=total+10800;   // up to 3 h either side is on by default
     return { meta:m, mode:pl.mode, elapsed:pl.elapsed, on:inRide };
   });
   showPhotoSheet(cands);
@@ -3095,8 +3158,8 @@ function showPhotoSheet(cands){
       const cv = document.createElement('canvas'); cv.width = c.meta.thumb.width; cv.height = c.meta.thumb.height;
       cv.getContext('2d').drawImage(c.meta.thumb, 0, 0); card.appendChild(cv);
     } else { const ph = document.createElement('div'); ph.className = 'ph'; ph.textContent = c.meta.kind==='video' ? '🎞' : '🖼'; card.appendChild(ph); }
-    const inRide = c.elapsed>=-120 && c.elapsed<=total+120;
-    const when = c.mode===4 ? 'シークバー位置' : (inRide ? fmtClock(t0+Math.max(0,c.elapsed)) : '走行時間外');
+    const outside = c.elapsed<0 || c.elapsed>total;
+    const when = c.mode===4 ? 'シークバー位置' : fmtClock(t0+c.elapsed)+(outside ? '(ライド外)' : '');
     const cap = document.createElement('div'); cap.className = 'cap'; cap.textContent = PHOTO_MODE_LABEL[c.mode]+' / '+when; card.appendChild(cap);
     const chk = document.createElement('div'); chk.className = 'chk'; chk.textContent = '✓'; card.appendChild(chk);
     card.addEventListener('click', ()=>{ c.on = !c.on; card.classList.toggle('on', c.on); update(); });
@@ -3133,9 +3196,11 @@ function selectPhoto(id){
 }
 function deleteSelectedPhoto(){
   const p = photoById(S.photoSelectedId); if (!p) return;
+  pushIvHistory();
   S.photos = S.photos.filter(x=>x.id!==p.id);
   S.photoSelectedId = null;
   hidePhotoPreview();
+  fitViewToBounds();
   renderTimeline(); renderMapFrame(); saveState();
   showHeaderMsg('写真を削除しました', false);
 }
@@ -3209,7 +3274,6 @@ function attachTimelineGestures(){
       if (Math.abs(leftPx-seekPx) < PHOTO_SNAP_PX){ p.elapsed = sr.elapsed; snapped = true; }
     }
     if (!snapped) p.elapsed = elapsedFromX(view.min + leftPx/rect.width*span);
-    p.elapsed = Math.max(0, Math.min(S.records[S.records.length-1].elapsed, p.elapsed));
     p.adjusted = true;
     renderTimeline(); renderMapFrameThrottled();
   }
@@ -3239,7 +3303,7 @@ function attachTimelineGestures(){
     const rect = body.getBoundingClientRect();
     const nd = Math.max(1, Math.hypot(a.x-b.x, a.y-b.y));
     const midFrac = Math.max(0, Math.min(1, ((a.x+b.x)/2-rect.left)/(rect.width||1)));
-    const lo = xVal(S.records[0]), hi = xVal(S.records[S.records.length-1]);
+    const {lo, hi} = xBounds();
     let range = pinch.startRange * pinch.startDist/nd;
     range = Math.max((hi-lo)*0.0005, Math.min(hi-lo, range));
     const min = pinch.anchor - midFrac*range;
@@ -3266,6 +3330,7 @@ function attachTimelineGestures(){
             const ph = photoById(hit.id); if (!ph) return;
             const leftPx = (ivX(ph.elapsed)-view.min)/(view.max-view.min)*rect.width;
             photoDrag = { id:hit.id, grab:(p.x-rect.left)-leftPx };
+            pushIvHistory();
             S.photoSelectedId = hit.id; renderTimeline(); renderMapFrame();
           }
         }, 450);
@@ -3388,8 +3453,9 @@ function attachTimelineGestures(){
 
   // the reset button: back to the whole ride
   $('#zoomReset').onclick = ()=>{
-    S.chartView.min = xVal(S.records[0]);
-    S.chartView.max = xVal(S.records[S.records.length-1]);
+    const b = xBounds();
+    S.chartView.min = b.lo;
+    S.chartView.max = b.hi;
     scrollState = null;
     renderTimeline();
   };
@@ -3477,7 +3543,7 @@ function renderTimeline(){
   });
   const HANDLE_PX = 26;
   clips.forEach(c=>{ c.name = tlNameGeometry(c, W, HANDLE_PX); });
-  const seekX = seekRec ? xOf(xVal(seekRec)) : null;
+  const seekX = seekRec ? xOf(seekXVal()) : null;
   const seekVisible = seekX!=null && seekX>=0 && seekX<=W;
 
   const trackEls = ()=> body.querySelectorAll('.tlClip');
@@ -3675,7 +3741,17 @@ function drawTimelineCanvases(view, W, H, rowH, row2H, xTicks){
     S.photoRects = [];
     {
       const ph = row2H-4;
-      S.photos.forEach(p=>{
+      S.tlGeom = {W, ph};
+      // later capture times lie on top; the photo whose capture time the seek bar
+      // most recently passed is brought to the very front (highlight is separate)
+      const order = S.photos.slice().sort((a,b)=>a.elapsed-b.elapsed);
+      const sk = seekXVal();
+      if (sk!=null){
+        let fi = -1;
+        for (let i=0;i<order.length;i++){ if (ivX(order[i].elapsed) <= sk+1e-9) fi = i; }
+        if (fi>=0 && fi<order.length-1) order.push(order.splice(fi,1)[0]);
+      }
+      order.forEach(p=>{
         const x0 = xPx(ivX(p.elapsed));
         const th = p.thumb;
         const w = th ? Math.max(8, th.width*ph/th.height) : ph*1.33;
@@ -3729,13 +3805,17 @@ function handleTimelineTap(e){
   }
   if (clipEl){ onClipTap(Number(clipEl.dataset.id)); return; }
   const ph = photoAt(e.clientX, e.clientY);
-  if (ph){ if (S.photoSelectedId===ph.id) openPhotoViewer(ph.id); else selectPhoto(ph.id); return; } // tap: highlight; tap again: open the viewer
-  if (S.photoSelectedId!=null){ S.photoSelectedId = null; hidePhotoPreview(); renderMapFrame(); }
+  if (ph && S.photoSelectedId!==ph.id){ selectPhoto(ph.id); return; } // first tap only highlights; a tap on the highlighted photo moves the seek bar like anywhere else
+  if (!ph && S.photoSelectedId!=null){ S.photoSelectedId = null; hidePhotoPreview(); renderMapFrame(); }
   const rect = body.getBoundingClientRect();
   const view = S.chartView;
   const frac = Math.max(0, Math.min(1, (e.clientX-rect.left)/rect.width));
-  const idx = nearestIndexByX(view.min+frac*(view.max-view.min));
-  setSelection(idx, null, 'chart'); // recentres the map, doesn't force-pan the timeline itself
+  const xv = view.min+frac*(view.max-view.min);   // may fall in a recording gap or outside the ride: the bar rests exactly there
+  const idx = nearestIndexByX(xv);
+  pendingSeekC = xv;
+  setSelection(idx, null, 'chart');
+  pendingSeekC = null;
+  scrollState = null; // recentres the map, doesn't force-pan the timeline itself
 }
 function wireTimelineEvents(){
   $$('#tlBody .tlClipHandle').forEach(el=>{
