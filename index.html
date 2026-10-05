@@ -637,7 +637,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
 // (this session's own publish count so far) is reconstructed from the
 // conversation itself rather than mechanically verified — best-effort, not
 // guaranteed exact. Increment by exactly 1 on every future publish.
-const APP_VERSION = 167;
+const APP_VERSION = 168;
 
 /* ============ FIT PARSER ============ */
 const FIT_EPOCH = 631065600; // seconds between 1970-01-01 and 1989-12-31 (FIT epoch)
@@ -1139,14 +1139,31 @@ function nearestIndexByX(x){
 function currentScrollCenter(){
   const xs = S.chartView;
   if (scrollState && S.selection && scrollState.idx===S.selection.idx && scrollState.min===xs.min && scrollState.max===xs.max) return scrollState.c;
+  const sk = seekXVal();
+  if (sk!=null && sk>=xs.min && sk<=xs.max) return sk;   // a drag starts from where the seek bar really is ...
   return (xs.min+xs.max)/2;
+}
+// ... and the seek bar then drifts to the middle of the screen instead of jumping there:
+// scrollFrac is its screen position (0..1) while scrolling, eased towards 0.5 over time
+let scrollFrac = 0.5, scrollEaseT = 0;
+const SCROLL_EASE_MS = 140;
+function beginScrollAnchor(){
+  const xs = S.chartView, c = currentScrollCenter();
+  scrollFrac = Math.max(0, Math.min(1, (c-xs.min)/Math.max(1e-9, xs.max-xs.min)));
+  scrollEaseT = performance.now();
 }
 function scrollCenterTo(c){
   const xs = S.chartView;
   const {lo, hi} = xBounds(xs.max-xs.min);
   c = Math.max(lo, Math.min(hi, c));
   const span = xs.max-xs.min;
-  xs.min = Math.max(lo, Math.min(hi-span, c-span/2));
+  const nowT = performance.now();
+  if (scrollFrac!==0.5){
+    scrollFrac += (0.5-scrollFrac)*(1-Math.exp(-Math.min(100, nowT-scrollEaseT)/SCROLL_EASE_MS));
+    if (Math.abs(scrollFrac-0.5)<0.002) scrollFrac = 0.5;
+  }
+  scrollEaseT = nowT;
+  xs.min = Math.max(lo, Math.min(hi-span, c-scrollFrac*span));
   xs.max = xs.min+span;
   const idx = nearestIndexByX(c);
   scrollSeeking = true;
@@ -3249,7 +3266,6 @@ S.photos = []; S.photoSelectedId = null; S.photoRects = [];
 S.comments = []; S.commentSelectedId = null; S.commentRects = []; let commentSeq = 1;
 let photoSeq = 1;
 const THUMB_H = 200;            // thumbnails are kept small (resolution reduced on purpose)
-const PHOTO_SNAP_PX = 16;       // how close to the seek bar a dragged photo snaps
 function photoById(id){ return S.photos.find(p=>p.id===id); }
 function photoExt(p){
   const m = /\.([A-Za-z0-9]{2,5})$/.exec(p.name||'');
@@ -3549,7 +3565,7 @@ function showPhotoSheet(cands){
     if (!chosen.length) return;
     const r = addPhotoEntries(chosen);
     const need = chosen.filter(c=>c.mode===3).length;
-    showHeaderMsg((r.added+r.relinked)+'枚を追加しました'+(need?'(③'+need+'枚は長押しドラッグで時刻を微調整できます)':''), false);
+    showHeaderMsg((r.added+r.relinked)+'枚を追加しました'+(need?'(③'+need+'枚は分までの時刻のため、秒は :00 に置いています)':''), false);
   };
 }
 // hit test: which photo (topmost) is under this screen point
@@ -3627,35 +3643,20 @@ function attachTimelineGestures(){
   const pointers = new Map(); // pointerId -> clientX/clientY
   let startX=0, panBaseX=0, dragging=false, moved=false, dragStartC=0, lastWidth=0, panPointerId=null, noTap=false, panStartXs=null;
   let pinch = null;
-  // long press: on a clip -> selection mode; on a photo -> drag it sideways
-  let lpTimer=null, lpHit=null, lpFired=false, photoDrag=null, downAt=0;
+  // long press on a clip -> selection mode
+  let lpTimer=null, lpHit=null, lpFired=false, downAt=0;
   const clearLP = ()=>{ clearTimeout(lpTimer); lpTimer = null; };
   const hitAt = e=>{
     const clipEl = e.target.closest && e.target.closest('.tlClip');
     if (clipEl && !e.target.closest('.tlClipHandle')) return {type:'clip', id:Number(clipEl.dataset.id)};
-    const ph = photoAt(e.clientX, e.clientY);
-    return ph ? {type:'photo', id:ph.id} : null;
+    return null;
   };
-  function movePhotoTo(clientX){
-    const p = photoById(photoDrag.id); if (!p || !S.chartView) return;
-    const rect = body.getBoundingClientRect(), view = S.chartView, span = view.max-view.min;
-    const leftPx = clientX-rect.left-photoDrag.grab;                 // the photo's left edge is its capture time
-    let snapped = false;
-    if (S.selection){
-      const sr = S.records[S.selection.idx];
-      const seekPx = (xVal(sr)-view.min)/span*rect.width;
-      if (Math.abs(leftPx-seekPx) < PHOTO_SNAP_PX){ p.elapsed = sr.elapsed; snapped = true; }
-    }
-    if (!snapped) p.elapsed = elapsedFromX(view.min + leftPx/rect.width*span);
-    p.adjusted = true;
-    renderTimeline(); renderMapFrameThrottled();
-  }
   const tlVelocity = createVelocityTracker();
   function beginPan(id, clientX, t){
     const rect = body.getBoundingClientRect();
     panPointerId = id; dragging = true; lastWidth = rect.width;
     startX = clientX-rect.left;
-    dragStartC = currentScrollCenter();
+    dragStartC = currentScrollCenter(); beginScrollAnchor();
     panStartXs = {min:S.chartView.min, max:S.chartView.max};
     tlVelocity.reset(startX, t);
   }
@@ -3702,18 +3703,10 @@ function attachTimelineGestures(){
             const p0 = pointers.values().next().value;   // keep following the same finger: the view scrolls, the seek bar stays
             if (p0) beginPan(panPointerId, p0.x, performance.now());
           }
-          else {
-            const p = pointers.values().next().value, rect = body.getBoundingClientRect(), view = S.chartView;
-            const ph = photoById(hit.id); if (!ph) return;
-            const leftPx = (ivX(ph.elapsed)-view.min)/(view.max-view.min)*rect.width;
-            photoDrag = { id:hit.id, grab:(p.x-rect.left)-leftPx };
-            pushIvHistory();
-            S.photoSelectedId = hit.id; renderTimeline(); renderMapFrame();
-          }
         }, 450);
       }
     } else if (pointers.size===2){
-      clearLP(); lpFired = false; photoDrag = null;
+      clearLP(); lpFired = false;
       dragging = false; panPointerId = null;
       noTap = true; // a pinch is never a tap, even if one finger stays down afterwards
       moved = false;
@@ -3727,7 +3720,6 @@ function attachTimelineGestures(){
       if (pointers.size>=2 && S.chartView) updatePinch();
       return;
     }
-    if (photoDrag){ movePhotoTo(e.clientX); return; }
     if (!dragging || e.pointerId!==panPointerId) return;
     const rect = body.getBoundingClientRect();
     const curX = e.clientX-rect.left;
@@ -3764,7 +3756,6 @@ function attachTimelineGestures(){
     if (e.pointerId!==panPointerId) return;
     clearLP();
     dragging = false; panPointerId = null;
-    if (photoDrag){ photoDrag = null; lpFired = false; moved = false; saveState(); return; }
     if (lpFired){ lpFired = false; moved = false; return; }   // the long press itself did something
     if (moved){
       const v = e.type==='pointercancel' ? 0 : tlVelocity.velocity(e.timeStamp || performance.now());
@@ -3795,6 +3786,7 @@ function attachTimelineGestures(){
     if (!wheelGesture){
       const isPan = (e.ctrlKey && e.deltaY !== 0) || Math.abs(e.deltaX) > Math.abs(e.deltaY);
       wheelGesture = { mode: isPan ? 'pan' : 'zoom' };
+      if (isPan) beginScrollAnchor();
     }
     clearTimeout(wheelTimer);
     wheelTimer = setTimeout(()=>{ wheelGesture = null; endScrollSeeking(); }, 250);
@@ -4386,6 +4378,26 @@ $('#tlAdd').addEventListener('click', ()=>{
   S.timelineSelectedId = newIv.id;
   renderTimeline();
 });
+// A boundary between two neighbouring sections is usually one place ("A→B", "B→C"),
+// so an empty start name can take the previous section's end name, and an empty end
+// name the next one's start name — but only when the two points really are close.
+const NAME_COPY_M = 300;
+function boundaryPos(t){
+  let r = nearestRecordByElapsed(t);
+  if (r && r.lat==null) r = nearestGpsRecordTo(r);
+  return r && r.lat!=null ? r : null;
+}
+function neighbourName(iv, side){
+  const sorted = S.intervals.slice().sort((a,b)=>a.start-b.start);
+  const i = sorted.indexOf(iv);
+  const nb = side==='start' ? sorted[i-1] : sorted[i+1];
+  if (!nb || nb.nameType!=='b') return '';
+  const name = side==='start' ? nb.endName : nb.startName;
+  if (!name || !name.trim()) return '';
+  const a = boundaryPos(side==='start' ? nb.end : nb.start), b = boundaryPos(side==='start' ? iv.start : iv.end);
+  if (!a || !b || haversineM(a.lat, a.lon, b.lat, b.lon) > NAME_COPY_M) return '';
+  return name;
+}
 function openRenameModal(iv){
   document.querySelectorAll('.ivRenameModal').forEach(m=>m.remove());
   const idx = S.intervals.indexOf(iv);
@@ -4401,6 +4413,8 @@ function openRenameModal(iv){
   function renderFields(){
     const wrap = modal.querySelector('#ivRenameFields');
     if (iv.nameType==='b'){
+      if (!(iv.startName||'').trim()){ const n = neighbourName(iv, 'start'); if (n) iv.startName = n; }
+      if (!(iv.endName||'').trim()){ const n = neighbourName(iv, 'end'); if (n) iv.endName = n; }
       wrap.innerHTML =
         '<label class="field">開始名<input type="text" id="ivRenameStart" value="'+escapeHtml(iv.startName||'')+'"></label>'+
         '<label class="field" style="margin-top:8px;">終了名<input type="text" id="ivRenameEnd" value="'+escapeHtml(iv.endName||'')+'"></label>';
