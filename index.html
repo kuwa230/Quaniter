@@ -651,7 +651,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
 // (this session's own publish count so far) is reconstructed from the
 // conversation itself rather than mechanically verified — best-effort, not
 // guaranteed exact. Increment by exactly 1 on every future publish.
-const APP_VERSION = 170;
+const APP_VERSION = 171;
 
 /* ============ FIT PARSER ============ */
 const FIT_EPOCH = 631065600; // seconds between 1970-01-01 and 1989-12-31 (FIT epoch)
@@ -1678,9 +1678,15 @@ function libRegisterActive(){
   const sm = libSummarize(S.records, iv.start, iv.end);
   if (!sm){ showHeaderMsg('この区間は位置情報が足りないため登録できません(200 m 以上の軌跡が必要です)', true); return; }
   const def = intervalDisplayName(iv, S.intervals.indexOf(iv));
-  const name = prompt('お気に入り区間の名前', def);
-  if (name===null) return;
-  const nm = name.trim() || def;
+  // a "start→end" named section keeps both names as they are (no question, no conversion to a single name)
+  const isB = iv.nameType==='b' && ((iv.startName||'').trim() || (iv.endName||'').trim());
+  let nm;
+  if (isB) nm = def;
+  else {
+    const name = prompt('お気に入り区間の名前', def);
+    if (name===null) return;
+    nm = name.trim() || def;
+  }
   const prev = libEntries.find(e=>e.name===nm);
   if (prev && !confirm('同じ名前「'+nm+'」が登録済みです。置き換えますか?')) return;
   let ascent = 0, last = null;
@@ -1691,7 +1697,7 @@ function libRegisterActive(){
     if (last!=null && a>last) ascent += a-last;
     last = a;
   });
-  const entry = { id:(prev ? prev.id : 'l'+Date.now().toString(36)+Math.random().toString(36).slice(2,6)), name:nm,
+  const entry = { id:(prev ? prev.id : 'l'+Date.now().toString(36)+Math.random().toString(36).slice(2,6)), name:nm, nameType:isB?'b':'a', startName:isB?(iv.startName||''):undefined, endName:isB?(iv.endName||''):undefined,
     lengthM:Math.round(sm.lengthM), ascentM:Math.round(ascent), pts:sm.pts.map(p=>[+p[0].toFixed(5), +p[1].toFixed(5)]), createdAt:Date.now() };
   libEntries = libEntries.filter(e=>e.id!==entry.id).concat(entry);
   if (libPersist()) showHeaderMsg('「'+nm+'」をお気に入り区間に登録しました(全'+libEntries.length+'件)', false);
@@ -1709,7 +1715,7 @@ async function libImportFile(file){
     let added = 0, replaced = 0;
     list.forEach(e=>{
       const same = libEntries.findIndex(x=>x.id===e.id || x.name===e.name);
-      const clean = { id:e.id||('l'+Date.now().toString(36)+Math.random().toString(36).slice(2,6)), name:e.name, lengthM:e.lengthM, ascentM:e.ascentM||0, pts:e.pts, createdAt:e.createdAt||Date.now() };
+      const clean = { id:e.id||('l'+Date.now().toString(36)+Math.random().toString(36).slice(2,6)), name:e.name, nameType:e.nameType==='b'?'b':'a', startName:e.startName, endName:e.endName, lengthM:e.lengthM, ascentM:e.ascentM||0, pts:e.pts, createdAt:e.createdAt||Date.now() };
       if (same>=0){ libEntries[same] = clean; replaced++; } else { libEntries.push(clean); added++; }
     });
     if (libPersist()) showHeaderMsg('お気に入り区間を読み込みました(追加'+added+'件・更新'+replaced+'件、全'+libEntries.length+'件)', false);
@@ -1735,7 +1741,7 @@ function libShowList(){
 function libMatchAll(recs){
   if (!libEntries.length) return [];
   const all = [];
-  libEntries.forEach(e=>{ libMatch(recs, e).forEach(m=> all.push({ name:e.name, start:m.start, end:m.end, cover:m.cover })); });
+  libEntries.forEach(e=>{ libMatch(recs, e).forEach(m=> all.push({ name:e.name, nameType:e.nameType, startName:e.startName, endName:e.endName, start:m.start, end:m.end, cover:m.cover })); });
   all.sort((a,b)=> (b.cover-a.cover) || ((b.end-b.start)-(a.end-a.start)));
   const kept = [];
   all.forEach(m=>{ if (m.end-m.start>=AUTO_SPLIT.MIN_SEGMENT_S && !kept.some(k=>m.start<k.end && m.end>k.start)) kept.push(m); });
@@ -1778,7 +1784,13 @@ function buildAutoIntervals(recs, laps, useLaps){
     let name = within(climbs, mid) ? 'ヒルクライム' : '';
     if (lib && lib.pieces && bounds[i+1]-bounds[i] < 60) continue;   // a stray sliver after a rest inside the section
     if (lib){ lib.pieces = (lib.pieces||0)+1; name = lib.pieces>1 ? lib.name+' ('+lib.pieces+')' : lib.name; }
-    ivs.push({ id:S.nextId++, name, nameType:'a', start:bounds[i], end:bounds[i+1], startSet:true, endSet:true });
+    const iv = { id:S.nextId++, name, nameType:'a', start:bounds[i], end:bounds[i+1], startSet:true, endSet:true };
+    if (lib && lib.nameType==='b'){   // a favourite saved with start/end names comes back the same way
+      iv.nameType = 'b'; iv.name = '';
+      iv.startName = lib.pieces>1 ? (lib.startName||'')+' ('+lib.pieces+')' : (lib.startName||'');
+      iv.endName = lib.endName||'';
+    }
+    ivs.push(iv);
   }
   if (!ivs.length) ivs.push({ id:S.nextId++, name:'', nameType:'a', start:0, end:total, startSet:false, endSet:false });
   if (ivs.length===1 && !rests.length){ ivs[0].startSet = false; ivs[0].endSet = false; }
@@ -3204,7 +3216,6 @@ function deleteSelectedIntervals(){
   if (ivSelectMode && ivSelected.size){
     const n = ivSelected.size;
     if (n>=S.intervals.length){ showHeaderMsg('すべての区間は削除できません', true); return; }
-    if (!confirm('選択した'+n+'区間を削除しますか?')) return;
     pushIvHistory();
     S.intervals = S.intervals.filter(iv=>!ivSelected.has(iv.id));
     ivSelectMode = false; ivSelected.clear(); S.timelineSelectedId = null;
@@ -3213,7 +3224,6 @@ function deleteSelectedIntervals(){
     return;
   }
   const iv = getActiveInterval(); if (!iv || S.intervals.length<=1) return;
-  if (!confirm('「'+intervalDisplayName(iv, S.intervals.indexOf(iv))+'」を削除しますか?')) return;
   pushIvHistory();
   S.intervals = S.intervals.filter(x=>x.id!==iv.id);
   S.timelineSelectedId = null;
@@ -3654,7 +3664,6 @@ function deleteSelectedPhoto(){
   hidePhotoPreview();
   fitViewToBounds();
   renderTimeline(); renderMapFrame(); saveState();
-  showHeaderMsg('写真を削除しました', false);
 }
 function hidePhotoPreview(){ const el = $('#photoPreview'); if (el) el.remove(); }
 function showPhotoPreview(p){
@@ -3761,11 +3770,7 @@ function attachTimelineGestures(){
           lpTimer = null;
           if (pointers.size!==1 || moved) return;
           lpFired = true; dragging = false;
-          if (hit.type==='clip'){
-            enterSelectMode(hit.id);
-            const p0 = pointers.values().next().value;   // keep following the same finger: the view scrolls, the seek bar stays
-            if (p0) beginPan(panPointerId, p0.x, performance.now());
-          }
+          if (hit.type==='clip') enterSelectMode(hit.id);   // long press: multi-select mode, nothing moves
         }, 450);
       }
     } else if (pointers.size===2){
