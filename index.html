@@ -637,7 +637,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
 // (this session's own publish count so far) is reconstructed from the
 // conversation itself rather than mechanically verified — best-effort, not
 // guaranteed exact. Increment by exactly 1 on every future publish.
-const APP_VERSION = 168;
+const APP_VERSION = 169;
 
 /* ============ FIT PARSER ============ */
 const FIT_EPOCH = 631065600; // seconds between 1970-01-01 and 1989-12-31 (FIT epoch)
@@ -4381,7 +4381,9 @@ $('#tlAdd').addEventListener('click', ()=>{
 // A boundary between two neighbouring sections is usually one place ("A→B", "B→C"),
 // so an empty start name can take the previous section's end name, and an empty end
 // name the next one's start name — but only when the two points really are close.
-const NAME_COPY_M = 300;
+const NAME_COPY_M = 300;          // neighbouring sections that follow on directly
+const NAME_COPY_REST_M = 600;     // ... with a rest between them (riding off from a stop often resumes 150-570 m away)
+const NAME_COPY_REST_GAP_S = 60;  // a gap this long between the two counts as a rest
 function boundaryPos(t){
   let r = nearestRecordByElapsed(t);
   if (r && r.lat==null) r = nearestGpsRecordTo(r);
@@ -4395,7 +4397,9 @@ function neighbourName(iv, side){
   const name = side==='start' ? nb.endName : nb.startName;
   if (!name || !name.trim()) return '';
   const a = boundaryPos(side==='start' ? nb.end : nb.start), b = boundaryPos(side==='start' ? iv.start : iv.end);
-  if (!a || !b || haversineM(a.lat, a.lon, b.lat, b.lon) > NAME_COPY_M) return '';
+  const gap = side==='start' ? iv.start-nb.end : nb.start-iv.end;
+  const limit = gap>NAME_COPY_REST_GAP_S ? NAME_COPY_REST_M : NAME_COPY_M;
+  if (!a || !b || haversineM(a.lat, a.lon, b.lat, b.lon) > limit) return '';
   return name;
 }
 function openRenameModal(iv){
