@@ -372,6 +372,8 @@ td.num{ text-align:right; font-variant-numeric:tabular-nums; }
 .ivReorderHead{ display:flex; align-items:center; justify-content:space-between; margin-bottom:14px; flex:none; }
 .ivReorderHead h2{ font-size:17px; margin:0; }
 .ivReorderModal.hidden{ display:none; }
+#resultSettingsModal{ overflow-y:auto; -webkit-overflow-scrolling:touch; overscroll-behavior:contain; }
+#resultSettingsModal .panel{ flex:none; }
 .sensorBox{ margin-bottom:12px; }
 .sensorRow{ display:flex; gap:12px; flex-wrap:wrap; margin-top:6px; }
 .sensorRow .field{ max-width:160px; }
@@ -651,7 +653,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
 // (this session's own publish count so far) is reconstructed from the
 // conversation itself rather than mechanically verified — best-effort, not
 // guaranteed exact. Increment by exactly 1 on every future publish.
-const APP_VERSION = 171;
+const APP_VERSION = 172;
 
 /* ============ FIT PARSER ============ */
 const FIT_EPOCH = 631065600; // seconds between 1970-01-01 and 1989-12-31 (FIT epoch)
@@ -911,15 +913,18 @@ function numberPrefix(n){
 // The plain display name for an interval — for "タイプb" intervals (separate
 // start/end names), composed as "startName→endName"; for "タイプa" (the
 // default, freely-typed single name), just that name as before.
+// A タイプb section whose start AND end names are both empty is shown the タイプa way
+// (its own name, or 「区間N」 when that is empty too).
+function isTypeBEff(iv){ return iv.nameType==='b' && !!(((iv.startName||'').trim()) || ((iv.endName||'').trim())); }
 function intervalDisplayName(iv, idx){
-  if (iv.nameType==='b') return (iv.startName||'')+'→'+(iv.endName||'');
+  if (isTypeBEff(iv)) return (iv.startName||'')+'→'+(iv.endName||'');
   return iv.name || ('区間'+(idx+1));
 }
 // HTML version for the results table: each half of a タイプb name is
 // wrapped in its own non-breaking span, so → is effectively the only place
 // a line break can happen.
 function intervalDisplayNameHtml(iv, idx){
-  if (iv.nameType==='b') return '<span style="white-space:nowrap;">'+escapeHtml(iv.startName||'')+'</span>→<span style="white-space:nowrap;">'+escapeHtml(iv.endName||'')+'</span>';
+  if (isTypeBEff(iv)) return '<span style="white-space:nowrap;">'+escapeHtml(iv.startName||'')+'</span>→<span style="white-space:nowrap;">'+escapeHtml(iv.endName||'')+'</span>';
   return escapeHtml(iv.name || ('区間'+(idx+1)));
 }
 
@@ -3720,7 +3725,7 @@ function attachTimelineGestures(){
   const clearLP = ()=>{ clearTimeout(lpTimer); lpTimer = null; };
   const hitAt = e=>{
     const clipEl = e.target.closest && e.target.closest('.tlClip');
-    if (clipEl && !e.target.closest('.tlClipHandle')) return {type:'clip', id:Number(clipEl.dataset.id)};
+    if (clipEl && !(e.target.closest('.tlClipHandle') && !clipEl.classList.contains('tlLocked'))) return {type:'clip', id:Number(clipEl.dataset.id)};
     return null;
   };
   const tlVelocity = createVelocityTracker();
@@ -3756,7 +3761,7 @@ function attachTimelineGestures(){
     clampAndSetX(min, min+range);
   }
   body.addEventListener('pointerdown', e=>{
-    if ((!ivSelectMode && e.target.closest('.tlClipHandle')) || e.target.closest('#tlVBar') || !S.chartView) return; // handles / scrollbar run their own drag
+    if ((!ivSelectMode && e.target.closest('.tlClipHandle') && !e.target.closest('.tlClip.tlLocked')) || e.target.closest('#tlVBar') || !S.chartView) return; // handles / scrollbar run their own drag
     stopMomentum(); endScrollSeeking();
     pointers.set(e.pointerId, {x:e.clientX, y:e.clientY});
     try{ body.setPointerCapture(e.pointerId); }catch(err){}
@@ -4276,7 +4281,8 @@ function handleTimelineTap(e){
     if (clipEl) toggleIvSelected(Number(clipEl.dataset.id)); else exitSelectMode();
     return;
   }
-  if (el && el.closest('.tlClipHandle')) return; // handles are for dragging (the highlighted clip's), not tapping
+  // the highlighted clip's handles are for dragging; every other clip's handles are just part of the clip
+  if (el && el.closest('.tlClipHandle') && clipEl && !clipEl.classList.contains('tlLocked')) return;
   if (clipEl){ onClipTap(Number(clipEl.dataset.id)); return; }
   const cm = commentAt(e.clientX, e.clientY);
   if (cm){ selectComment(cm.id); openCommentView(cm.id); return; }
@@ -4465,7 +4471,7 @@ function neighbourName(iv, side){
   const sorted = S.intervals.slice().sort((a,b)=>a.start-b.start);
   const i = sorted.indexOf(iv);
   const nb = side==='start' ? sorted[i-1] : sorted[i+1];
-  if (!nb || nb.nameType!=='b') return '';
+  if (!nb || !isTypeBEff(nb)) return '';
   const name = side==='start' ? nb.endName : nb.startName;
   if (!name || !name.trim()) return '';
   const a = boundaryPos(side==='start' ? nb.end : nb.start), b = boundaryPos(side==='start' ? iv.start : iv.end);
@@ -4527,7 +4533,7 @@ function validateIntervals(){
 function computeIntervalStats(iv, idx){
   const recs = S.records.filter(r=>r.elapsed>=iv.start && r.elapsed<=iv.end);
   const startTime = S.records[0].t+iv.start, endTime = S.records[0].t+iv.end;
-  const st = {name: iv.name || ('区間'+((idx!=null?idx:0)+1)), nameType: iv.nameType, startName: iv.startName, endName: iv.endName, startTime, endTime,
+  const st = {name: iv.name || ('区間'+((idx!=null?idx:0)+1)), nameType: isTypeBEff(iv) ? 'b' : 'a', startName: iv.startName, endName: iv.endName, startTime, endTime,
     duration: 0, durationCum:null, netTime: null, netTimeCum: null, stoppedTime1: null, stoppedTime2: null, stoppedTime:null,
     distance: null, distanceCum:null, avgSpeedNet:null, avgSpeedGross:null, maxSpeed:null,
     minHr:null, avgHr:null, maxHr:null, avgCad:null, maxCad:null, avgPower:null, maxPower:null, np:null,
@@ -5385,12 +5391,12 @@ function renderPowerChart(rows){
   function typeBBoundaryInfo(i){
     const iv = S.intervals[i];
     let startOffset = 0, startHide = false, endOffset = 0, endHide = false;
-    if (i>0 && S.intervals[i-1].nameType==='b'){
+    if (i>0 && isTypeBEff(S.intervals[i-1])){
       const prevIv = S.intervals[i-1];
       const same = !!(prevIv.endName && iv.startName && prevIv.endName===iv.startName);
       if (!same && Math.abs(xScale(ivX1(prevIv)) - xScale(ivX0(iv))) < OVERLAP_PX) startOffset = CHAR_SHIFT_PX;
     }
-    if (i<S.intervals.length-1 && S.intervals[i+1].nameType==='b'){
+    if (i<S.intervals.length-1 && isTypeBEff(S.intervals[i+1])){
       const nextIv = S.intervals[i+1];
       const same = !!(iv.endName && nextIv.startName && iv.endName===nextIv.startName);
       if (same) endHide = true;
@@ -5400,7 +5406,7 @@ function renderPowerChart(rows){
   }
   S.intervals.forEach((iv,i)=>{
     const x0 = xScale(ivX0(iv)), x1 = xScale(ivX1(iv));
-    const isTypeB = iv.nameType==='b';
+    const isTypeB = isTypeBEff(iv);
     const label = numberPrefix(i+1)+intervalDisplayName(iv,i);
     if (S.powerChartSubdivisions[i]!=null){
       const y = padT; // the line itself sits exactly at the plot's top edge; the circle straddles it
