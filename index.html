@@ -653,7 +653,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
 // (this session's own publish count so far) is reconstructed from the
 // conversation itself rather than mechanically verified — best-effort, not
 // guaranteed exact. Increment by exactly 1 on every future publish.
-const APP_VERSION = 172;
+const APP_VERSION = 173;
 
 /* ============ FIT PARSER ============ */
 const FIT_EPOCH = 631065600; // seconds between 1970-01-01 and 1989-12-31 (FIT epoch)
@@ -2865,13 +2865,13 @@ function updateSelBubble(){
 
 /* ============ INTERVALS ============ */
 const COLUMN_DEFS = [
-  {k:'distance', label:'距離', fmt:v=>v==null?'--':fmtKm(v)+' km'},
-  {k:'distanceCum', label:'合計距離', fmt:v=>v==null?'--':fmtKm(v)+' km'},
-  {k:'elevMin', label:'最低標高', fmt:v=>v==null?'--':Math.round(v)+' m'},
-  {k:'elevMax', label:'最高標高', fmt:v=>v==null?'--':Math.round(v)+' m'},
-  {k:'elevGain', label:'獲得標高', fmt:v=>v==null?'--':Math.round(v)+' m'},
-  {k:'avgGradient', label:'平均斜度', fmt:v=>v==null?'--':(v>0?'+':'')+v.toFixed(1)+' %'},
-  {k:'avgTemp', label:'平均温度', fmt:v=>v==null?'--':Math.round(v)+' ℃'},
+  {k:'distance', unit:'km', label:'距離', fmt:v=>v==null?'--':fmtKm(v)+' km'},
+  {k:'distanceCum', unit:'km', label:'合計距離', fmt:v=>v==null?'--':fmtKm(v)+' km'},
+  {k:'elevMin', unit:'m', label:'最低標高', fmt:v=>v==null?'--':Math.round(v)+' m'},
+  {k:'elevMax', unit:'m', label:'最高標高', fmt:v=>v==null?'--':Math.round(v)+' m'},
+  {k:'elevGain', unit:'m', label:'獲得標高', fmt:v=>v==null?'--':Math.round(v)+' m'},
+  {k:'avgGradient', unit:'%', label:'平均斜度', fmt:v=>v==null?'--':(v>0?'+':'')+v.toFixed(1)+' %'},
+  {k:'avgTemp', unit:'℃', label:'平均温度', fmt:v=>v==null?'--':Math.round(v)+' ℃'},
   {k:'startTime', label:'開始時刻', fmt:v=>v==null?'--':fmtClockNoSec(v)},
   {k:'endTime', label:'終了時刻', fmt:v=>v==null?'--':fmtClockNoSec(v)},
   {k:'duration', label:'グロスタイム', fmt:v=>v==null?'--':fmtHMS(v)},
@@ -2879,21 +2879,21 @@ const COLUMN_DEFS = [
   {k:'netTime', label:'ネットタイム', fmt:v=>v==null?'--':fmtHMS(v)},
   {k:'netTimeCum', label:'合計ネットタイム', fmt:v=>v==null?'--':fmtHMS(v)},
   {k:'stoppedTime', label:'停止時間', fmt:v=>v==null?'--':fmtHMS(v)},
-  {k:'avgSpeedNet', label:'ネット平均速度', fmt:v=>v==null?'--':v.toFixed(1)+' km/h'},
-  {k:'avgSpeedGross', label:'グロス平均速度', fmt:v=>v==null?'--':v.toFixed(1)+' km/h'},
-  {k:'maxSpeed', label:'最高速度', fmt:v=>v==null?'--':v.toFixed(1)+' km/h'},
-  {k:'minHr', label:'最低心拍', fmt:v=>v==null?'--':Math.round(v)+' bpm'},
-  {k:'avgHr', label:'平均心拍', fmt:v=>v==null?'--':Math.round(v)+' bpm'},
-  {k:'maxHr', label:'最高心拍', fmt:v=>v==null?'--':Math.round(v)+' bpm'},
-  {k:'avgCad', label:'平均ケイデンス', fmt:v=>v==null?'--':Math.round(v)+' rpm'},
-  {k:'maxCad', label:'最高ケイデンス', fmt:v=>v==null?'--':Math.round(v)+' rpm'},
-  {k:'avgPower', label:'平均パワー', fmt:v=>v==null?'--':Math.round(v)+' W'},
-  {k:'maxPower', label:'最高パワー', fmt:v=>v==null?'--':Math.round(v)+' W'},
-  {k:'np', label:'NP(推定)', fmt:v=>v==null?'--':Math.round(v)+' W'},
+  {k:'avgSpeedNet', unit:'km/h', label:'ネット平均速度', fmt:v=>v==null?'--':v.toFixed(1)+' km/h'},
+  {k:'avgSpeedGross', unit:'km/h', label:'グロス平均速度', fmt:v=>v==null?'--':v.toFixed(1)+' km/h'},
+  {k:'maxSpeed', unit:'km/h', label:'最高速度', fmt:v=>v==null?'--':v.toFixed(1)+' km/h'},
+  {k:'minHr', unit:'bpm', label:'最低心拍', fmt:v=>v==null?'--':Math.round(v)+' bpm'},
+  {k:'avgHr', unit:'bpm', label:'平均心拍', fmt:v=>v==null?'--':Math.round(v)+' bpm'},
+  {k:'maxHr', unit:'bpm', label:'最高心拍', fmt:v=>v==null?'--':Math.round(v)+' bpm'},
+  {k:'avgCad', unit:'rpm', label:'平均ケイデンス', fmt:v=>v==null?'--':Math.round(v)+' rpm'},
+  {k:'maxCad', unit:'rpm', label:'最高ケイデンス', fmt:v=>v==null?'--':Math.round(v)+' rpm'},
+  {k:'avgPower', unit:'W', label:'平均パワー', fmt:v=>v==null?'--':Math.round(v)+' W'},
+  {k:'maxPower', unit:'W', label:'最高パワー', fmt:v=>v==null?'--':Math.round(v)+' W'},
+  {k:'np', unit:'W', label:'NP(推定)', fmt:v=>v==null?'--':Math.round(v)+' W'},
   {k:'intensityFactor', label:'Intensity Factor', fmt:v=>v==null?'--':v.toFixed(2)},
   {k:'ef', label:'Efficiency Factor', fmt:v=>v==null?'--':v.toFixed(2)},
   {k:'tss', label:'TSS', fmt:v=>v==null?'--':v.toFixed(1)},
-  {k:'pwr', label:'Power Weight Ratio', fmt:v=>v==null?'--':v.toFixed(2)+' W/kg'},
+  {k:'pwr', unit:'W/kg', label:'Power Weight Ratio', fmt:v=>v==null?'--':v.toFixed(2)+' W/kg'},
 ];
 const COL_META = Object.fromEntries(COLUMN_DEFS.map(d=>[d.k, d]));
 // Plain-language explanations for terms that aren't self-evident, shown via
@@ -5753,15 +5753,22 @@ async function saveJsonOverwrite(key, filename, content, btn){
 $('#expCsv').addEventListener('click', ()=>{
   if (!lastResults) return;
   const {cols, rows} = lastResults;
-  let csv = '\uFEFF#,区間,'+cols.map(c=>COL_META[c].label).join(',')+'\n';
+  const q = t=> /[",\n]/.test(t) ? '"'+t.replace(/"/g,'""')+'"' : t;
+  // numbers exactly as the table shows them (same digits), without the unit — the unit
+  // goes after the column title instead: グロス平均速度(km/h)
+  const cell = (c, v)=>{
+    if (v==null) return '';
+    const def = COL_META[c];
+    let t = String(def.fmt(v));
+    if (def.unit && t.endsWith(' '+def.unit)) t = t.slice(0, -(def.unit.length+1));
+    return q(t);
+  };
+  let csv = '\uFEFF#,区間,'+cols.map(c=> q(COL_META[c].label+(COL_META[c].unit ? '('+COL_META[c].unit+')' : ''))).join(',')+'\n';
   let n = 0;
   rows.forEach(r=>{
     const noLabel = r.isSummary ? '' : (++n)+'.';
     const label = r.isSummary ? r.name : intervalDisplayName(r, n-1);
-    csv += noLabel+',"'+label.replace(/"/g,'""')+'",'+cols.map(c=>{
-      const v = r[c];
-      return v==null? '' : (typeof v==='number'? v.toFixed(2) : v);
-    }).join(',')+'\n';
+    csv += noLabel+','+q(label)+','+cols.map(c=> cell(c, r[c])).join(',')+'\n';
   });
   saveAs('csv', S.fileBaseName+'-区間分析.csv', csv, 'text/csv', 'csv', 'CSV', $('#expCsv'));
 });
