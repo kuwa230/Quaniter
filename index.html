@@ -251,7 +251,7 @@ td.num{ text-align:right; font-variant-numeric:tabular-nums; }
 .tlClipHandle[data-edge="start"]{ left:0; }
 .tlClipHandle[data-edge="end"]{ right:0; }
 .tlClipName{ position:absolute; top:50%; transform:translateY(-50%); text-align:center; font-size:10.5px;
-  font-weight:700; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; z-index:1; pointer-events:none; } /* left/width set per frame in renderTimeline */
+  font-weight:700; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; z-index:1; pointer-events:none; will-change:left,width; backface-visibility:hidden; } /* left/width set per frame in renderTimeline */
 #p2Confirm{ flex:3 1 0; display:flex; align-items:stretch; gap:6px; }
 #p2Confirm .halfBtn{ flex:1; margin:2px 0; }
 #backToPage1Btn{ background:var(--surface-2); color:var(--text); border:1px solid var(--border); }
@@ -371,6 +371,10 @@ td.num{ text-align:right; font-variant-numeric:tabular-nums; }
   padding:14px 14px calc(14px + env(safe-area-inset-bottom,0px)); padding-top:calc(14px + env(safe-area-inset-top,0px)); }
 .ivReorderHead{ display:flex; align-items:center; justify-content:space-between; margin-bottom:14px; flex:none; }
 .ivReorderHead h2{ font-size:17px; margin:0; }
+.ivReorderModal.hidden{ display:none; }
+.sensorBox{ margin-bottom:12px; }
+.sensorRow{ display:flex; gap:12px; flex-wrap:wrap; margin-top:6px; }
+.sensorRow .field{ max-width:160px; }
 footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top:22px; }
 /* All :hover styling lives here, gated to devices that genuinely support a
    hover pointer (mouse/trackpad). On touch-only devices (effectively all
@@ -433,38 +437,6 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
 
     <div class="panel">
       <div id="routePreviewWrap" class="routePreview"></div>
-    </div>
-
-    <div class="panel">
-      <div class="panel-head"><h2>結果の表示項目</h2></div>
-      <div style="display:flex; gap:16px; flex-wrap:wrap; margin-bottom:12px;">
-        <label class="field" style="max-width:180px;">FTP (W) — TSS算出に使用
-          <input type="number" id="ftpInput" min="0" placeholder="例: 220">
-        </label>
-        <label class="field" style="max-width:180px;">重量 (kg) — Power Weight Ratio算出に使用
-          <input type="number" id="weightInput" min="0" step="0.1" placeholder="例: 65">
-        </label>
-        <label class="field" style="max-width:180px;">全区間の解析情報を追加する
-          <select id="summaryRowSelect">
-            <option value="off">OFF</option>
-            <option value="first">開始行</option>
-            <option value="last" selected>最終行</option>
-          </select>
-        </label>
-        <label class="field" style="max-width:220px;">停止時間にタイマー停止時間を含める
-          <select id="grossStoppedSelect">
-            <option value="include" selected>含める</option>
-            <option value="exclude">含めない</option>
-          </select>
-        </label>
-        <label class="field" style="max-width:220px;">平均斜度の算出方法
-          <select id="avgGradientMethodSelect">
-            <option value="diff" selected>始点/終点の標高差</option>
-            <option value="gain">区間内の獲得標高</option>
-          </select>
-        </label>
-      </div>
-      <div class="metricChecks" id="metricChecks"></div>
     </div>
 
     <button id="toPage2Btn" class="primary wideConfirm" type="button">区間を設定する</button>
@@ -570,6 +542,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
     <div class="panel-head">
       <button id="backToPage2Btn" class="small ghost icon-btn" type="button" title="区間設定に戻る">←</button>
       <h2>結果</h2>
+      <button id="resultSettingsBtn" class="small ghost icon-btn" type="button" title="結果の表示項目" style="margin-left:auto;">⚙</button>
     </div>
     <div class="overflowX resultsScrollWrap" id="resultsScrollWrap"><div id="resultsWrap"></div></div>
     <div class="resultsScrollTrack" id="resultsScrollTrack"><div class="resultsScrollThumb" id="resultsScrollThumb"></div></div>
@@ -611,6 +584,47 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
 
 </div>
 
+<div id="resultSettingsModal" class="ivReorderModal hidden" style="overflow:auto;">
+  <div class="ivReorderHead"><h2>結果の表示項目</h2><button id="resultSettingsClose" class="small ghost icon-btn" type="button">✗</button></div>
+  <div class="panel" style="margin-bottom:0;">
+      <div style="display:flex; gap:16px; flex-wrap:wrap; margin-bottom:12px;">
+        <label class="field" style="max-width:180px;">FTP (W) — TSS算出に使用
+          <input type="number" id="ftpInput" min="0" placeholder="例: 220">
+        </label>
+        <label class="field" style="max-width:180px;">重量 (kg) — Power Weight Ratio算出に使用
+          <input type="number" id="weightInput" min="0" step="0.1" placeholder="例: 65">
+        </label>
+        <label class="field" style="max-width:180px;">全区間の解析情報を追加する
+          <select id="summaryRowSelect">
+            <option value="off">OFF</option>
+            <option value="first">開始行</option>
+            <option value="last" selected>最終行</option>
+          </select>
+        </label>
+        <label class="field" style="max-width:220px;">停止時間にタイマー停止時間を含める
+          <select id="grossStoppedSelect">
+            <option value="include" selected>含める</option>
+            <option value="exclude">含めない</option>
+          </select>
+        </label>
+        <label class="field" style="max-width:220px;">平均斜度の算出方法
+          <select id="avgGradientMethodSelect">
+            <option value="diff" selected>始点/終点の標高差</option>
+            <option value="gain">区間内の獲得標高</option>
+          </select>
+        </label>
+      </div>
+      <div class="sensorBox">
+        <span class="hint">センサー(「なし」にすると、その値を使う項目のチェックが外れます)</span>
+        <div class="sensorRow">
+          <label class="field">心拍計<select id="sensHr"><option value="1" selected>あり</option><option value="0">なし</option></select></label>
+          <label class="field">パワーメーター<select id="sensPower"><option value="1" selected>あり</option><option value="0">なし</option></select></label>
+          <label class="field">ケイデンスセンサー<select id="sensCad"><option value="1" selected>あり</option><option value="0">なし</option></select></label>
+        </div>
+      </div>
+      <div class="metricChecks" id="metricChecks"></div>
+  </div>
+</div>
 <div id="wheelModal" class="wheelModal hidden">
   <div class="wheelModalBox">
     <div class="wheelHeader">
@@ -637,7 +651,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
 // (this session's own publish count so far) is reconstructed from the
 // conversation itself rather than mechanically verified — best-effort, not
 // guaranteed exact. Increment by exactly 1 on every future publish.
-const APP_VERSION = 169;
+const APP_VERSION = 170;
 
 /* ============ FIT PARSER ============ */
 const FIT_EPOCH = 631065600; // seconds between 1970-01-01 and 1989-12-31 (FIT epoch)
@@ -822,6 +836,7 @@ const S = {
   hasGps: false,
   metrics: ['speed','elevation'], // active metric keys, in order (order decides left/right axis placement)
   resultColumns: null, // set below from COLUMN_DEFS
+  sensors: { hr:true, power:true, cad:true },
   ftp: null,
   weight: null,
   numberingStyle: 'circled', // 'off' | 'arabic' | 'circled' | 'kanji'
@@ -1822,6 +1837,7 @@ async function processFitData(arrayBuffer, displayName, opts){
       S.intervals = autoInfo.ivs;
     }
     S.resultColumns = COLUMN_DEFS.map(d=>({key:d.k, enabled:DEFAULT_ENABLED_COLUMNS.includes(d.k)}));
+    S.sensors = { hr:true, power:true, cad:true };
     S.metrics = ['speed','elevation']; S.xMode = 'clock'; S.ftp = null; S.weight = null; S.numberingStyle = 'circled'; S.summaryRowMode = 'last';
     S.grossIncludesStoppedTime = true; S.avgGradientMethod = 'diff';
     applyDisplayPrefs(); // carries FTP/重量/表示列 etc. over from whatever ride was analysed last
@@ -1894,6 +1910,7 @@ function serializeState(){
     intervalTimeOffset: offset,
     sourceFile: S.sourceFileInfo,
     resultColumns: S.resultColumns,
+    sensors: S.sensors,
     metrics: S.metrics,
     xMode: S.xMode,
     ftp: S.ftp,
@@ -2038,6 +2055,7 @@ function applyState(state, mode){
   if (state.xMode && ['elapsed','clock','dist'].includes(state.xMode)) S.xMode = state.xMode;
   if (['off','arabic','circled','kanji'].includes(state.numberingStyle)) S.numberingStyle = state.numberingStyle;
   if (['off','first','last'].includes(state.summaryRowMode)) S.summaryRowMode = state.summaryRowMode;
+  if (state.sensors && typeof state.sensors==='object') S.sensors = { hr:state.sensors.hr!==false, power:state.sensors.power!==false, cad:state.sensors.cad!==false };
   if (state.ftp!=null && !isNaN(state.ftp) && state.ftp>0) S.ftp = Number(state.ftp);
   if (state.weight!=null && !isNaN(state.weight) && state.weight>0) S.weight = Number(state.weight);
   if (Array.isArray(state.powerChartMetrics) && state.powerChartMetrics.length){
@@ -2065,6 +2083,7 @@ function syncControlsFromState(){
   if (weightEl) weightEl.value = S.weight!=null ? S.weight : '';
   const sumEl = $('#summaryRowSelect');
   if (sumEl) sumEl.value = S.summaryRowMode;
+  syncSensorSelects();
   const grossEl = $('#grossStoppedSelect');
   if (grossEl) grossEl.value = S.grossIncludesStoppedTime ? 'include' : 'exclude';
   const gradEl = $('#avgGradientMethodSelect');
@@ -2082,12 +2101,21 @@ function syncControlsFromState(){
 $('#ftpInput').addEventListener('input', e=>{
   const v = parseFloat(e.target.value);
   S.ftp = (!isNaN(v) && v>0) ? v : null;
+  setColumnsEnabled(NEEDS_FTP.filter(sensorsOkFor), !!S.ftp);   // typed in -> on, emptied -> off
   saveState();
 });
 $('#weightInput').addEventListener('input', e=>{
   const v = parseFloat(e.target.value);
   S.weight = (!isNaN(v) && v>0) ? v : null;
+  setColumnsEnabled(NEEDS_WEIGHT.filter(sensorsOkFor), !!S.weight);
   saveState();
+});
+[['hr','#sensHr'],['power','#sensPower'],['cad','#sensCad']].forEach(([sn,id])=> $(id).addEventListener('change', e=> applySensorChange(sn, e.target.value==='1')));
+// the display settings live in a window opened from page 3
+$('#resultSettingsBtn').addEventListener('click', ()=>{ $('#resultSettingsModal').classList.remove('hidden'); });
+$('#resultSettingsClose').addEventListener('click', ()=>{
+  $('#resultSettingsModal').classList.add('hidden');
+  if (lastResults) computeAndRenderResults();   // apply what was changed
 });
 $('#summaryRowSelect').addEventListener('change', e=>{
   S.summaryRowMode = e.target.value;
@@ -2866,7 +2894,42 @@ const TERM_GLOSSARY = {
   tss: 'TSS(Training Stress Score)\n\n運動の総負荷を表す指標で、強度(IF)と時間の両方を加味して算出します。数値が大きいほど、体への負荷が大きかったことを示します。',
   pwr: 'PWR(Power to Weight Ratio / パワーウェイトレシオ)\n\n平均パワーを体重で割った値(W/kg)です。特に上り坂での走行力を比較する際の目安になります。',
 };
-const DEFAULT_ENABLED_COLUMNS = COLUMN_DEFS.map(d=>d.k); // all shown by default, in the order above
+// everything is shown by default, in the order above — except what needs an FTP / body weight
+// typed in first (those switch on by themselves once the number is entered)
+const NEEDS_FTP = ['tss','intensityFactor'], NEEDS_WEIGHT = ['pwr'];
+const DEFAULT_ENABLED_COLUMNS = COLUMN_DEFS.map(d=>d.k).filter(k=>!NEEDS_FTP.includes(k) && !NEEDS_WEIGHT.includes(k));
+// which sensor each value comes from (ef: heart rate AND power)
+const SENSOR_COLS = {
+  hr: ['minHr','avgHr','maxHr','ef'],
+  cad: ['avgCad','maxCad'],
+  power: ['avgPower','maxPower','np','intensityFactor','ef','tss','pwr'],
+};
+function sensorsOkFor(key){
+  return !Object.keys(SENSOR_COLS).some(sn=> SENSOR_COLS[sn].includes(key) && !S.sensors[sn]);
+}
+function setColumnsEnabled(keys, on){
+  let changed = false;
+  keys.forEach(k=>{ const c = S.resultColumns.find(x=>x.key===k); if (c && c.enabled!==on){ c.enabled = on; changed = true; } });
+  if (changed){ buildMetricChecks(); saveState(); }
+}
+// the power-chart metrics that need a sensor
+const PC_SENSOR = { avgPower:['power'], np:['power'], intensityFactor:['power'], tss:['power'], pwr:['power'], ef:['hr','power'], avgHr:['hr'], avgCad:['cad'] };
+function pcMetricAvailable(k){ return !(PC_SENSOR[k]||[]).some(sn=>!S.sensors[sn]); }
+function applySensorChange(sn, on){
+  S.sensors[sn] = on;
+  if (!on) setColumnsEnabled(SENSOR_COLS[sn], false);
+  else setColumnsEnabled(SENSOR_COLS[sn].filter(k=> sensorsOkFor(k) && !(NEEDS_FTP.includes(k) && !S.ftp) && !(NEEDS_WEIGHT.includes(k) && !S.weight)), true);
+  // the chart on page 3 can only show what exists
+  let pm = S.powerChartMetrics.filter(pcMetricAvailable);
+  if (!pm.length) pm = ['elevation'];
+  S.powerChartMetrics = pm;
+  syncSensorSelects();
+  if ($('#powerChartMetricChecks')) buildPowerChartMetricChecks();
+  saveState();
+}
+function syncSensorSelects(){
+  [['hr','#sensHr'],['power','#sensPower'],['cad','#sensCad']].forEach(([sn,id])=>{ const el = $(id); if (el) el.value = S.sensors[sn] ? '1' : '0'; });
+}
 S.resultColumns = COLUMN_DEFS.map(d=>({key:d.k, enabled:DEFAULT_ENABLED_COLUMNS.includes(d.k)}));
 
 function buildMetricChecks(){
@@ -3908,7 +3971,8 @@ function renderTimeline(){
     track.forEach(iv=>{
       const idx = S.intervals.indexOf(iv);
       const L = xOf(ivX(iv.start)), R = Math.max(L+4, xOf(ivX(iv.end)));
-      if (R<=0 || L>=W) return; // entirely outside the current window — skip
+      // clips outside the window stay in the DOM (just positioned off-screen), so the set of
+      // elements never changes while scrolling — no rebuild when a clip enters or leaves the view
       const sel = ivSelected.has(iv.id);
       const label = (sel?'✓ ':'')+numberPrefix(idx+1)+intervalDisplayName(iv, idx);
       clips.push({ti, iv, L, R, isActive: !ivSelectMode && !!(activeIv && activeIv.id===iv.id), sel, label});
@@ -3924,11 +3988,14 @@ function renderTimeline(){
     const els = trackEls();
     clips.forEach((c,i)=>{
       const st = els[i].style;
-      st.left = c.L+'px'; st.width = (c.R-c.L)+'px';
+      // whole pixels everywhere: fractional positions make the glyphs re-rasterise
+      // differently every frame while scrolling, which shows up as flicker
+      const Lr = Math.max(-5000, Math.round(c.L)), Rr = Math.min(W+5000, Math.round(c.R));   // far-off edges are clamped (browsers dislike million-pixel offsets)
+      st.left = Lr+'px'; st.width = Math.max(1, Rr-Lr)+'px';
       const nm = els[i].querySelector('.tlClipName');
-      if (!c.name){ nm.style.display = 'none'; return; }
-      nm.style.display = '';
-      nm.style.left = (c.name.left-c.L-1.5)+'px'; nm.style.width = c.name.width+'px';
+      if (!c.name){ if (nm.style.display!=='none') nm.style.display = 'none'; return; }
+      if (nm.style.display==='none') nm.style.display = '';
+      nm.style.left = (Math.round(c.name.left)-Lr-1)+'px'; nm.style.width = (Math.ceil(c.name.width)+2)+'px';
     });
     body.querySelectorAll('.tlTrack').forEach(t=>{
       const ti = Number(t.dataset.track);
@@ -4723,7 +4790,7 @@ const POWER_CHART_METRICS = {
 };
 function buildPowerChartMetricChecks(){
   const wrap = $('#powerChartMetricChecks');
-  wrap.innerHTML = Object.keys(POWER_CHART_METRICS).map(k=>{
+  wrap.innerHTML = Object.keys(POWER_CHART_METRICS).filter(pcMetricAvailable).map(k=>{
     const def = POWER_CHART_METRICS[k];
     const checked = S.powerChartMetrics.includes(k);
     return '<label style="display:flex;align-items:center;gap:5px;font-size:12px;">'+
@@ -5301,52 +5368,28 @@ function renderPowerChart(rows){
     }
   }
   const CHAR_SHIFT_PX = 0.6*7; // 0.6 characters, matching the ~7px/char estimate used elsewhere
-  const BOUNDARY_TIME_EPS = 2; // seconds — treat as "the same moment" within this tolerance
-  const BOUNDARY_DIST_EPS = 50; // metres — treat as "the same place" within this tolerance (GPS/recording noise)
-  // Works out how a タイプb interval's start/end names should be nudged (or
-  // hidden) based on what's adjacent to them — see the four-case rule set:
-  // if the neighbouring interval shares this interval's boundary name AND
-  // its time also lines up with no gap, they're just passing through (name
-  // omitted, no shift); if the name matches but only the *place* lines up
-  // (a rest stop at the same spot), shift apart in clock/elapsed modes but
-  // collapse to unshifted+omitted in distance mode (same place = same x
-  // already); if the name matches but neither time nor place line up (a
-  // deliberately non-contiguous extract), or the names simply don't match
-  // at all, shift apart in every mode. At either end of the whole interval
-  // list, or against a タイプa neighbour (no name to compare), there's
-  // nothing to reconcile — sits at the interval's own edge, unshifted.
+  const OVERLAP_PX = 12;       // two vertical captions closer than this would touch
+  // Where a タイプb interval's start/end names go, in every x-axis mode:
+  //  1. the previous interval's end name equals this start name -> the end name is
+  //     left out, and the start name sits at this interval's start;
+  //  2. they differ -> the end name sits at the previous interval's end and the
+  //     start name at this interval's start; if those two x positions are so close
+  //     that the texts would touch, the end name moves 0.6 character left and the
+  //     start name 0.6 character right.
+  // At either end of the list, or next to a タイプa interval, nothing to reconcile.
   function typeBBoundaryInfo(i){
     const iv = S.intervals[i];
     let startOffset = 0, startHide = false, endOffset = 0, endHide = false;
     if (i>0 && S.intervals[i-1].nameType==='b'){
       const prevIv = S.intervals[i-1];
-      const namesMatch = !!(prevIv.endName && iv.startName && prevIv.endName===iv.startName);
-      if (namesMatch){
-        const timeMatches = Math.abs(prevIv.end - iv.start) < BOUNDARY_TIME_EPS;
-        const prevEndDist = nearestRecordByElapsed(prevIv.end).dist;
-        const nextStartDist = nearestRecordByElapsed(iv.start).dist;
-        const distMatches = Math.abs(prevEndDist - nextStartDist) < BOUNDARY_DIST_EPS;
-        if (timeMatches && distMatches){ startOffset = 0; }
-        else if (!timeMatches && distMatches){ startOffset = distMode ? 0 : CHAR_SHIFT_PX; }
-        else { startOffset = CHAR_SHIFT_PX; }
-      } else {
-        startOffset = CHAR_SHIFT_PX;
-      }
+      const same = !!(prevIv.endName && iv.startName && prevIv.endName===iv.startName);
+      if (!same && Math.abs(xScale(ivX1(prevIv)) - xScale(ivX0(iv))) < OVERLAP_PX) startOffset = CHAR_SHIFT_PX;
     }
     if (i<S.intervals.length-1 && S.intervals[i+1].nameType==='b'){
       const nextIv = S.intervals[i+1];
-      const namesMatch = !!(iv.endName && nextIv.startName && iv.endName===nextIv.startName);
-      if (namesMatch){
-        const timeMatches = Math.abs(iv.end - nextIv.start) < BOUNDARY_TIME_EPS;
-        const prevEndDist = nearestRecordByElapsed(iv.end).dist;
-        const nextStartDist = nearestRecordByElapsed(nextIv.start).dist;
-        const distMatches = Math.abs(prevEndDist - nextStartDist) < BOUNDARY_DIST_EPS;
-        if (timeMatches && distMatches){ endHide = true; }
-        else if (!timeMatches && distMatches){ if (distMode) endHide = true; else endOffset = -CHAR_SHIFT_PX; }
-        else { endOffset = -CHAR_SHIFT_PX; }
-      } else {
-        endOffset = -CHAR_SHIFT_PX;
-      }
+      const same = !!(iv.endName && nextIv.startName && iv.endName===nextIv.startName);
+      if (same) endHide = true;
+      else if (Math.abs(xScale(ivX1(iv)) - xScale(ivX0(nextIv))) < OVERLAP_PX) endOffset = -CHAR_SHIFT_PX;
     }
     return {startOffset, startHide, endOffset, endHide};
   }
@@ -5535,7 +5578,9 @@ function renderResultsTable(cols, rows){
   let n = 0;
   rows.forEach(r=>{
     const noLabel = r.isSummary ? '' : (++n)+'.';
-    const nameHtml = r.isSummary ? escapeHtml(r.name) : intervalDisplayNameHtml(r, n-1);
+    // タイプb: "地点A" / "→地点B" on two lines
+    const nameHtml = r.isSummary ? escapeHtml(r.name)
+      : (r.nameType==='b' ? '<span style="white-space:nowrap;">'+escapeHtml(r.startName||'')+'</span><br><span style="white-space:nowrap;">→'+escapeHtml(r.endName||'')+'</span>' : intervalDisplayNameHtml(r, n-1));
     html += '<tr'+(r.isSummary?' class="summaryRow"':'')+'><td class="noCol">'+noLabel+'</td><td class="rowname">'+nameHtml+'</td>';
     cols.forEach(c=> html += '<td class="num">'+COL_META[c].fmt(r[c])+'</td>');
     html += '</tr>';
