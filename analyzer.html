@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Quaniter 記録分析</title>
+<style>
+:root{
+  --bg:#0b0c0e; --surface:#15171b; --surface-2:#1d2025; --border:#2a2e35;
+  --text:#e8eaed; --muted:#8b9099; --accent:#17b8a4; --warn:#f2c14e; --line:#f0506a;
+}
+*{ box-sizing:border-box; }
+html,body{ margin:0; background:var(--bg); color:var(--text); font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Noto Sans JP","Segoe UI",sans-serif; }
+.wrap{ max-width:900px; margin:0 auto; padding:calc(14px + env(safe-area-inset-top,0px)) 16px calc(40px + env(safe-area-inset-bottom,0px)); }
+h1{ font-size:18px; margin:0 0 4px; }
+.sub{ color:var(--muted); font-size:12px; margin-bottom:14px; line-height:1.6; }
+.panel{ background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:14px; margin-bottom:14px; }
+.row{ display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+button, .btn{ font:inherit; font-size:13px; color:var(--text); background:var(--surface-2); border:1px solid var(--border); border-radius:9px; padding:9px 14px; cursor:pointer; }
+button.primary, .btn.primary{ background:var(--accent); color:#06221e; border-color:var(--accent); font-weight:700; }
+button:disabled{ opacity:.4; }
+select{ font:inherit; font-size:13px; color:var(--text); background:var(--surface-2); border:1px solid var(--border); border-radius:9px; padding:8px 10px; }
+label.chk{ display:flex; gap:6px; align-items:center; font-size:12.5px; color:var(--muted); }
+#status{ font-size:12.5px; color:var(--muted); margin-top:10px; line-height:1.6; white-space:pre-wrap; }
+.course{ margin-bottom:22px; }
+.course h2{ font-size:15px; margin:0 0 2px; display:flex; gap:8px; align-items:baseline; flex-wrap:wrap; }
+.course h2 small{ font-size:11.5px; color:var(--muted); font-weight:400; }
+.tableWrap{ overflow-x:auto; border:1px solid var(--border); border-radius:10px; margin:8px 0; }
+table{ border-collapse:collapse; width:100%; font-size:12.5px; white-space:nowrap; }
+th,td{ padding:7px 10px; text-align:right; border-bottom:1px solid var(--border); }
+th{ color:var(--muted); font-weight:600; background:var(--surface-2); position:sticky; top:0; }
+td:first-child, th:first-child{ text-align:left; }
+td.src{ text-align:left; color:var(--muted); max-width:220px; overflow:hidden; text-overflow:ellipsis; }
+tr:last-child td{ border-bottom:none; }
+.chartBox{ position:relative; border:1px solid var(--border); border-radius:10px; background:var(--surface); touch-action:none; overflow:hidden; }
+canvas.chart{ display:block; width:100%; height:340px; touch-action:none; }
+.chartTools{ position:absolute; top:6px; left:6px; display:flex; gap:4px; z-index:2; }
+.chartTools button{ padding:4px 10px; font-size:14px; border-radius:8px; background:rgba(29,32,37,.9); }
+.tip{ position:absolute; z-index:3; pointer-events:none; background:rgba(0,0,0,.88); border:1px solid var(--accent); border-radius:8px; padding:6px 9px; font-size:12px; line-height:1.5; white-space:nowrap; transform:translate(-50%,-100%); }
+.stat{ font-size:12.5px; color:var(--text); margin:6px 0 0; line-height:1.7; }
+.stat b{ color:var(--accent); }
+.hint{ font-size:11px; color:var(--muted); margin-top:4px; }
+.hidden{ display:none !important; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Quaniter 記録分析</h1>
+  <div class="sub">Quaniterの「CSVを保存」で出力したCSVを、フォルダごとまとめて読み込みます。区間(コース)ごとに記録を日付順に並べ、パワーウェイトレシオ(PWR)と所要時間の関係を散布図と回帰直線で見ます。ファイルはどこにも送信されません。</div>
+
+  <div class="panel">
+    <div class="row">
+      <label class="btn primary" for="dirInput">📁 フォルダを選ぶ</label>
+      <input type="file" id="dirInput" webkitdirectory directory multiple hidden>
+      <label class="btn" for="fileInput">CSVを選ぶ(複数可)</label>
+      <input type="file" id="fileInput" accept=".csv,text/csv" multiple hidden>
+      <button id="pickDirBtn" class="hidden" type="button">フォルダを選ぶ(PC)</button>
+    </div>
+    <div class="row" style="margin-top:12px;">
+      <span style="font-size:12.5px;color:var(--muted);">所要時間 T:</span>
+      <select id="timeSel"><option value="net">ネットタイム</option><option value="gross">グロスタイム</option></select>
+      <label class="chk"><input type="checkbox" id="showUnnamed"> 名前のない区間(区間N)も含める</label>
+    </div>
+    <div id="status">フォルダを選ぶと、その下にあるCSVをすべて探します。</div>
+  </div>
+
+  <div id="results"></div>
+</div>
+
+<script>
+(function(){
+"use strict";
+const $ = s=>document.querySelector(s);
+
+/* ---------- CSV reading ---------- */
+function parseCsv(text){
+  const rows = []; let row = [], cell = '', q = false;
+  for (let i=0;i<text.length;i++){
+    const c = text[i];
+    if (q){
+      if (c==='"'){ if (text[i+1]==='"'){ cell += '"'; i++; } else q = false; }
+      else cell += c;
+    } else if (c==='"') q = true;
+    else if (c===','){ row.push(cell); cell = ''; }
+    else if (c==='\n'){ row.push(cell); rows.push(row); row = []; cell = ''; }
+    else if (c==='\r'){ /* skip */ }
+    else cell += c;
+  }
+  if (cell!=='' || row.length){ row.push(cell); rows.push(row); }
+  return rows;
+}
+async function readText(file){
+  const buf = await file.arrayBuffer();
+  let t = new TextDecoder('utf-8').decode(buf);
+  if (t.includes('�')){ try{ t = new TextDecoder('shift_jis').decode(buf); }catch(e){} }
+  return t.replace(/^﻿/, '');
+}
+function stripUnit(h){ return h.trim().replace(/\([^()]*\)$/, '').trim(); }
+function parseDur(t){            // "9:54" = 9 min 54 s, "1:05:03" = 1 h 5 min 3 s
+  if (!t) return null;
+  const p = t.trim().split(':').map(Number);
+  if (p.some(x=>isNaN(x))) return null;
+  if (p.length===3) return p[0]*3600+p[1]*60+p[2];
+  if (p.length===2) return p[0]*60+p[1];
+  return null;
+}
+function parseNum(t){ if (t==null) return null; const v = parseFloat(String(t).replace('+','')); return isNaN(v) ? null : v; }
+function dateFromName(name){
+  let m = /(?:^|[^0-9])(20\d{2})[-_/.]?(\d{2})[-_/.]?(\d{2})(?!\d)/.exec(name);
+  if (m) return m[1]+'/'+m[2]+'/'+m[3];
+  m = /(?:^|[^0-9])(\d{2})(\d{2})(\d{2})(?!\d)/.exec(name);
+  if (m && +m[2]>=1 && +m[2]<=12 && +m[3]>=1 && +m[3]<=31) return '20'+m[1]+'/'+m[2]+'/'+m[3];
+  return null;
+}
+function normDate(t){
+  const m = /(\d{4})[\/\-.](\d{1,2})[\/\-.](\d{1,2})/.exec(t||'');
+  return m ? m[1]+'/'+m[2].padStart(2,'0')+'/'+m[3].padStart(2,'0') : null;
+}
+function fmtLocalDate(ms){ const d = new Date(ms); return d.getFullYear()+'/'+String(d.getMonth()+1).padStart(2,'0')+'/'+String(d.getDate()).padStart(2,'0'); }
+
+// one CSV -> records [{course, date, start, net, gross, dist, gain, avgPower, pwr, src}]
+function extract(rows, file, path){
+  if (rows.length<2) return null;
+  const head = rows[0].map(stripUnit);
+  const ix = name=> head.indexOf(name);
+  const iName = ix('区間');
+  if (iName<0) return null;                 // not a Quaniter CSV
+  const iDate = ix('日付'), iStart = ix('開始時刻'), iNet = ix('ネットタイム'), iGross = ix('グロスタイム');
+  const iDist = ix('距離'), iGain = ix('獲得標高'), iAvgP = ix('平均パワー'), iPwr = ix('Power Weight Ratio');
+  const fileDate = dateFromName(path) || fmtLocalDate(file.lastModified || Date.now());
+  const out = [];
+  for (let r=1;r<rows.length;r++){
+    const row = rows[r];
+    const name = (row[iName]||'').trim();
+    if (!name || name==='全区間') continue;
+    const date = (iDate>=0 && normDate(row[iDate])) || fileDate;
+    out.push({
+      course: name.replace(/\s*->\s*/g,'→'),
+      date, start: iStart>=0 ? (row[iStart]||'').trim() : '',
+      net: iNet>=0 ? parseDur(row[iNet]) : null,
+      gross: iGross>=0 ? parseDur(row[iGross]) : null,
+      dist: iDist>=0 ? parseNum(row[iDist]) : null,
+      gain: iGain>=0 ? parseNum(row[iGain]) : null,
+      avgPower: iAvgP>=0 ? parseNum(row[iAvgP]) : null,
+      pwr: iPwr>=0 ? parseNum(row[iPwr]) : null,
+      src: path,
+    });
+  }
+  return out;
+}
+
+/* ---------- loading ---------- */
+let allRecords = [];
+async function loadFiles(entries){          // entries: [{file, path}]
+  const csvs = entries.filter(e=>/\.csv$/i.test(e.file.name));
+  $('#status').textContent = 'CSVを読み込み中… 0 / '+csvs.length;
+  const recs = []; let used = 0, skipped = 0;
+  for (let i=0;i<csvs.length;i++){
+    if (i%10===0){ $('#status').textContent = 'CSVを読み込み中… '+i+' / '+csvs.length; await new Promise(r=>setTimeout(r,0)); }
+    try{
+      const r = extract(parseCsv(await readText(csvs[i].file)), csvs[i].file, csvs[i].path);
+      if (r && r.length){ recs.push(...r); used++; } else skipped++;
+    }catch(e){ skipped++; }
+  }
+  // the same ride exported twice must count once
+  const seen = new Set();
+  allRecords = recs.filter(r=>{ const k = r.course+'|'+r.date+'|'+r.start; if (seen.has(k)) return false; seen.add(k); return true; });
+  $('#status').textContent = 'CSV '+csvs.length+'件を調べ、'+used+'件を使用('+skipped+'件はQuaniterの出力ではないため除外)。記録 '+allRecords.length+'行(重複は除く)。';
+  render();
+}
+$('#dirInput').addEventListener('change', e=> loadFiles([...e.target.files].map(f=>({file:f, path:f.webkitRelativePath||f.name}))));
+$('#fileInput').addEventListener('change', e=> loadFiles([...e.target.files].map(f=>({file:f, path:f.name}))));
+if (window.showDirectoryPicker){
+  $('#pickDirBtn').classList.remove('hidden');
+  $('#pickDirBtn').addEventListener('click', async ()=>{
+    try{
+      const root = await window.showDirectoryPicker();
+      const out = [];
+      (async function walk(dir, prefix){
+        for await (const [name, h] of dir.entries()){
+          if (h.kind==='directory') await walk(h, prefix+name+'/');
+          else if (/\.csv$/i.test(name)) out.push({file:await h.getFile(), path:prefix+name});
+        }
+      })(root, root.name+'/').then(()=> loadFiles(out));
+    }catch(e){ /* cancelled */ }
+  });
+}
+$('#timeSel').addEventListener('change', render);
+$('#showUnnamed').addEventListener('change', render);
+
+/* ---------- maths ---------- */
+function fmtT(sec){
+  sec = Math.round(sec);
+  const h = Math.floor(sec/3600), m = Math.floor((sec%3600)/60), s = sec%60;
+  return h>0 ? h+':'+String(m).padStart(2,'0')+':'+String(s).padStart(2,'0') : m+':'+String(s).padStart(2,'0');
+}
+function regress(pts){          // y on x
+  const n = pts.length; if (n<2) return null;
+  const mx = pts.reduce((a,p)=>a+p.x,0)/n, my = pts.reduce((a,p)=>a+p.y,0)/n;
+  let sxx=0, syy=0, sxy=0;
+  pts.forEach(p=>{ sxx += (p.x-mx)**2; syy += (p.y-my)**2; sxy += (p.x-mx)*(p.y-my); });
+  if (sxx<=0) return null;
+  const a = sxy/sxx, b = my-a*mx;
+  return { a, b, r: syy>0 ? sxy/Math.sqrt(sxx*syy) : null, n };
+}
+
+/* ---------- rendering ---------- */
+function render(){
+  const box = $('#results'); box.innerHTML = '';
+  const useGross = $('#timeSel').value==='gross';
+  const showUnnamed = $('#showUnnamed').checked;
+  const groups = new Map();
+  allRecords.forEach(r=>{
+    if (!showUnnamed && /^区間\d+$/.test(r.course)) return;
+    (groups.get(r.course) || groups.set(r.course, []).get(r.course)).push(r);
+  });
+  [...groups.entries()].sort((a,b)=> b[1].length-a[1].length || a[0].localeCompare(b[0], 'ja')).forEach(([name, list])=>{
+    list.sort((a,b)=> a.date.localeCompare(b.date) || toMin(a.start)-toMin(b.start));
+    box.appendChild(courseCard(name, list, useGross));
+  });
+  if (!groups.size && allRecords.length) box.innerHTML = '<div class="sub">表示できる区間がありません(「名前のない区間」を含めると表示される場合があります)。</div>';
+}
+function toMin(t){ const m = /^(\d+):(\d+)/.exec(t||''); return m ? +m[1]*60+ +m[2] : 0; }
+function el(tag, cls, html){ const e = document.createElement(tag); if (cls) e.className = cls; if (html!=null) e.innerHTML = html; return e; }
+function esc(s){ return String(s).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+function courseCard(name, list, useGross){
+  const card = el('div', 'course');
+  const T = r=> { const v = useGross ? r.gross : r.net; return v!=null ? v : (useGross ? r.net : r.gross); };
+  card.appendChild(el('h2', null, esc(name)+' <small>'+list.length+'回</small>'));
+  // table
+  let html = '<table><thead><tr><th>日付</th><th>開始</th><th>ネットタイム</th><th>グロスタイム</th><th>距離(km)</th><th>獲得標高(m)</th><th>平均パワー(W)</th><th>PWR(W/kg)</th><th>ファイル</th></tr></thead><tbody>';
+  list.forEach(r=>{
+    html += '<tr><td>'+r.date+'</td><td>'+esc(r.start)+'</td><td>'+(r.net!=null?fmtT(r.net):'')+'</td><td>'+(r.gross!=null?fmtT(r.gross):'')+'</td><td>'+(r.dist!=null?r.dist:'')+'</td><td>'+(r.gain!=null?r.gain:'')+'</td><td>'+(r.avgPower!=null?r.avgPower:'')+'</td><td>'+(r.pwr!=null?r.pwr.toFixed(2):'')+'</td><td class="src" title="'+esc(r.src)+'">'+esc(r.src)+'</td></tr>';
+  });
+  html += '</tbody></table>';
+  const tw = el('div', 'tableWrap', html); card.appendChild(tw);
+  // chart
+  const pts = list.filter(r=>r.pwr!=null && T(r)>0).map(r=>({ x:r.pwr, y:1000/T(r), t:T(r), rec:r }));
+  if (pts.length<1){
+    card.appendChild(el('div', 'hint', 'PWRの記録がないため、グラフは作れません(Quaniterで体重を入力してからCSVを保存すると、PWRの列が入ります)。'));
+    return card;
+  }
+  const reg = pts.length>=2 ? regress(pts) : null;
+  const cb = el('div', 'chartBox');
+  const cv = el('canvas', 'chart'); cb.appendChild(cv);
+  const tools = el('div', 'chartTools', '<button type="button" data-a="in">＋</button><button type="button" data-a="out">－</button><button type="button" data-a="reset">全体</button>');
+  cb.appendChild(tools);
+  card.appendChild(cb);
+  let stat = '';
+  if (reg){
+    const sign = reg.b>=0 ? '+' : '−';
+    stat = '回帰直線: <b>y = '+reg.a.toFixed(3)+' x '+sign+' '+Math.abs(reg.b).toFixed(3)+'</b>(x:PWR[W/kg]、y:1000/T[s])　相関係数 <b>r = '+(reg.r!=null?reg.r.toFixed(3):'―')+'</b>(R² = '+(reg.r!=null?(reg.r*reg.r).toFixed(3):'―')+')　n = '+reg.n;
+  } else stat = '回帰直線は、PWRの異なる記録が2回分以上あると表示されます。';
+  card.appendChild(el('div', 'stat', stat));
+  card.appendChild(el('div', 'hint', '指2本または＋/－で拡大縮小、ドラッグで移動、点をタップすると日付と時刻が出ます。左の縦軸は 1000/T、右の縦軸は同じ高さに対応する所要時間です。'));
+  makeChart(cv, cb, pts, reg, useGross);
+  return card;
+}
+
+/* ---------- scatter chart (canvas, zoom / pan / tap) ---------- */
+function makeChart(cv, box, pts, reg, useGross){
+  const ML = 52, MR = 58, MT = 14, MB = 40;
+  let W = 0, H = 0;
+  const xs = pts.map(p=>p.x), ys = pts.map(p=>p.y);
+  function fit(){
+    let x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+    if (x1-x0 < 1e-9){ x0 -= 0.5; x1 += 0.5; }
+    if (y1-y0 < 1e-9){ y0 -= 0.05*y0||0.5; y1 += 0.05*y1||0.5; }
+    const px = (x1-x0)*0.12, py = (y1-y0)*0.15;
+    return { x0:x0-px, x1:x1+px, y0:y0-py, y1:y1+py };
+  }
+  let view = fit(), home = fit();
+  const toX = x=> ML + (x-view.x0)/(view.x1-view.x0)*(W-ML-MR);
+  const toY = y=> MT + (1-(y-view.y0)/(view.y1-view.y0))*(H-MT-MB);
+  const fromX = px=> view.x0 + (px-ML)/(W-ML-MR)*(view.x1-view.x0);
+  const fromY = py=> view.y0 + (1-(py-MT)/(H-MT-MB))*(view.y1-view.y0);
+  function niceStep(range, target){
+    const raw = range/target, p = Math.pow(10, Math.floor(Math.log10(raw))), f = raw/p;
+    return (f<1.5?1:f<3.5?2:f<7.5?5:10)*p;
+  }
+  const TSTEPS = [1,2,5,10,15,20,30,60,120,180,300,600,900,1200,1800,3600,7200,14400];
+  function draw(){
+    const dpr = window.devicePixelRatio||1;
+    W = cv.clientWidth; H = cv.clientHeight;
+    if (cv.width!==Math.round(W*dpr)){ cv.width = Math.round(W*dpr); cv.height = Math.round(H*dpr); }
+    const ctx = cv.getContext('2d'); ctx.setTransform(dpr,0,0,dpr,0,0); ctx.clearRect(0,0,W,H);
+    const css = getComputedStyle(document.documentElement);
+    const grid = css.getPropertyValue('--border').trim(), muted = css.getPropertyValue('--muted').trim(), accent = css.getPropertyValue('--accent').trim(), warn = css.getPropertyValue('--warn').trim();
+    ctx.font = '11px sans-serif';
+    ctx.save(); ctx.beginPath(); ctx.rect(ML, MT, W-ML-MR, H-MT-MB); ctx.clip();
+    // grid
+    ctx.strokeStyle = grid; ctx.lineWidth = 1;
+    const sx = niceStep(view.x1-view.x0, 5), sy = niceStep(view.y1-view.y0, 5);
+    for (let x=Math.ceil(view.x0/sx)*sx; x<=view.x1; x+=sx){ const px = Math.round(toX(x))+.5; ctx.beginPath(); ctx.moveTo(px,MT); ctx.lineTo(px,H-MB); ctx.stroke(); }
+    for (let y=Math.ceil(view.y0/sy)*sy; y<=view.y1; y+=sy){ const py = Math.round(toY(y))+.5; ctx.beginPath(); ctx.moveTo(ML,py); ctx.lineTo(W-MR,py); ctx.stroke(); }
+    // regression line across the visible x range
+    if (reg){
+      ctx.strokeStyle = warn; ctx.lineWidth = 1.6; ctx.setLineDash([6,4]);
+      ctx.beginPath(); ctx.moveTo(toX(view.x0), toY(reg.a*view.x0+reg.b)); ctx.lineTo(toX(view.x1), toY(reg.a*view.x1+reg.b)); ctx.stroke(); ctx.setLineDash([]);
+    }
+    // points
+    pts.forEach(p=>{
+      const px = toX(p.x), py = toY(p.y);
+      ctx.beginPath(); ctx.arc(px, py, p===sel ? 7 : 5, 0, Math.PI*2);
+      ctx.fillStyle = p===sel ? '#fff' : accent; ctx.fill();
+      ctx.lineWidth = 1.5; ctx.strokeStyle = '#06221e'; ctx.stroke();
+    });
+    ctx.restore();
+    // axes
+    ctx.fillStyle = muted; ctx.strokeStyle = grid;
+    ctx.strokeRect(ML+.5, MT+.5, W-ML-MR, H-MT-MB);
+    ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+    for (let x=Math.ceil(view.x0/sx)*sx; x<=view.x1; x+=sx) ctx.fillText((+x.toFixed(6)).toString(), toX(x), H-MB+4);
+    ctx.fillText('PWR (W/kg)', (ML+W-MR)/2, H-MB+20);
+    ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+    for (let y=Math.ceil(view.y0/sy)*sy; y<=view.y1; y+=sy) ctx.fillText((+y.toFixed(6)).toString(), ML-5, toY(y));
+    ctx.save(); ctx.translate(11, (MT+H-MB)/2); ctx.rotate(-Math.PI/2); ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('1000/T (s)', 0, 0); ctx.restore();
+    // right axis: the same heights as elapsed times (T = 1000 / y)
+    const tLo = 1000/view.y1, tHi = 1000/Math.max(view.y0, 1e-6);
+    let step = TSTEPS[TSTEPS.length-1];
+    for (const s of TSTEPS){ if ((tHi-tLo)/s <= 8){ step = s; break; } }
+    ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+    for (let t=Math.ceil(tLo/step)*step; t<=tHi; t+=step){
+      const py = toY(1000/t);
+      if (py<MT || py>H-MB) continue;
+      ctx.strokeStyle = muted; ctx.beginPath(); ctx.moveTo(W-MR, py); ctx.lineTo(W-MR+4, py); ctx.stroke();
+      ctx.fillStyle = muted; ctx.fillText(fmtT(t), W-MR+6, py);
+    }
+    ctx.save(); ctx.translate(W-6, (MT+H-MB)/2); ctx.rotate(Math.PI/2); ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillStyle = muted; ctx.fillText('経過時間('+(useGross?'グロス':'ネット')+')', 0, 0); ctx.restore();
+  }
+
+  /* zoom / pan / tap */
+  const ptrs = new Map(); let gesture = null, sel = null, tip = null;
+  function hideTip(){ if (tip){ tip.remove(); tip = null; } sel = null; draw(); }
+  function zoomAt(px, py, k){          // k>1 zooms in
+    const cx = fromX(px), cy = fromY(py);
+    view = { x0:cx-(cx-view.x0)/k, x1:cx+(view.x1-cx)/k, y0:cy-(cy-view.y0)/k, y1:cy+(view.y1-cy)/k };
+  }
+  function local(e){ const r = cv.getBoundingClientRect(); return { x:e.clientX-r.left, y:e.clientY-r.top }; }
+  cv.addEventListener('pointerdown', e=>{
+    cv.setPointerCapture(e.pointerId); ptrs.set(e.pointerId, local(e));
+    if (ptrs.size===1) gesture = { type:'pan', start:local(e), t:performance.now(), moved:false, view:{...view} };
+    else if (ptrs.size===2){
+      const [a,b] = [...ptrs.values()];
+      gesture = { type:'pinch', d:Math.hypot(a.x-b.x,a.y-b.y), view:{...view}, mid:{x:(a.x+b.x)/2, y:(a.y+b.y)/2}, moved:true };
+    }
+  });
+  cv.addEventListener('pointermove', e=>{
+    if (!ptrs.has(e.pointerId)) return;
+    ptrs.set(e.pointerId, local(e));
+    if (!gesture) return;
+    if (gesture.type==='pan' && ptrs.size===1){
+      const p = local(e), dx = p.x-gesture.start.x, dy = p.y-gesture.start.y;
+      if (Math.abs(dx)+Math.abs(dy) > 6) gesture.moved = true;
+      if (!gesture.moved) return;
+      const g = gesture.view, wx = (g.x1-g.x0)/(W-ML-MR), wy = (g.y1-g.y0)/(H-MT-MB);
+      view = { x0:g.x0-dx*wx, x1:g.x1-dx*wx, y0:g.y0+dy*wy, y1:g.y1+dy*wy };
+      if (tip) hideTip(); else draw();
+    } else if (gesture.type==='pinch' && ptrs.size>=2){
+      const [a,b] = [...ptrs.values()], d = Math.hypot(a.x-b.x,a.y-b.y);
+      view = {...gesture.view};
+      zoomAt(gesture.mid.x, gesture.mid.y, d/Math.max(1,gesture.d));
+      if (tip) hideTip(); else draw();
+    }
+  });
+  function up(e){
+    if (!ptrs.has(e.pointerId)) return;
+    const p = local(e), was = gesture;
+    ptrs.delete(e.pointerId);
+    if (ptrs.size===0){
+      if (was && was.type==='pan' && !was.moved && performance.now()-was.t < 500) tap(p);
+      gesture = null;
+    } else if (ptrs.size===1){
+      const rem = [...ptrs.values()][0];
+      gesture = { type:'pan', start:rem, t:performance.now(), moved:true, view:{...view} };
+    }
+  }
+  cv.addEventListener('pointerup', up); cv.addEventListener('pointercancel', up);
+  cv.addEventListener('wheel', e=>{ e.preventDefault(); const p = local(e); zoomAt(p.x, p.y, e.deltaY<0 ? 1.2 : 1/1.2); if (tip) hideTip(); else draw(); }, {passive:false});
+  function tap(p){
+    let best = null, bd = 26;
+    pts.forEach(q=>{ const d = Math.hypot(toX(q.x)-p.x, toY(q.y)-p.y); if (d<bd){ bd = d; best = q; } });
+    if (tip){ tip.remove(); tip = null; }
+    sel = best; draw();
+    if (!best) return;
+    const r = best.rec;
+    tip = el('div', 'tip', '<b>'+r.date+(r.start?' '+esc(r.start):'')+'</b><br>'+(useGross?'グロス ':'ネット ')+fmtT(best.t)+' ・ PWR '+best.x.toFixed(2)+'<br>1000/T = '+best.y.toFixed(2));
+    box.appendChild(tip);
+    const bw = box.clientWidth;
+    tip.style.left = Math.max(60, Math.min(bw-60, toX(best.x)))+'px';
+    tip.style.top = Math.max(40, toY(best.y)-12)+'px';
+  }
+  box.querySelector('.chartTools').addEventListener('click', e=>{
+    const a = e.target.dataset && e.target.dataset.a; if (!a) return;
+    const cx = (ML+W-MR)/2, cy = (MT+H-MB)/2;
+    if (a==='in') zoomAt(cx, cy, 1.5); else if (a==='out') zoomAt(cx, cy, 1/1.5); else view = {...home};
+    if (tip) hideTip(); else draw();
+  });
+  new ResizeObserver(draw).observe(cv);
+  draw();
+}
+})();
+</script>
+</body>
+</html>
