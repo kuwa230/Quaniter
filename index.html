@@ -579,7 +579,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
       <button id="subdivideApplyBtn" class="small ghost" type="button" disabled>区間を分割</button>
       <button id="subdivideResetBtn" class="small ghost" type="button" disabled>解除</button>
     </div>
-    <div id="powerChartWrap" style="position:relative; overflow-x:auto;"></div>
+    <div id="powerChartWrap" style="position:relative; overflow-x:auto; touch-action:pan-x pan-y;"></div>
     <div class="msg" id="powerChartDetail" style="display:none;"></div>
     <div class="exportRow">
       <button id="expPowerChartPng" class="small" disabled>PNGを保存</button>
@@ -598,6 +598,12 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
         </label>
         <label class="field" style="max-width:180px;">重量 (kg) — Power Weight Ratio算出に使用
           <input type="number" id="weightInput" min="0" step="0.1" placeholder="例: 65">
+        </label>
+        <label class="field" style="max-width:120px;">年齢 — 心拍からのカロリー推定のみ
+          <input type="number" id="ageInput" min="1" max="120" placeholder="例: 40">
+        </label>
+        <label class="field" style="max-width:120px;">性別 — 同上
+          <select id="sexSelect"><option value="">未入力</option><option value="m">男性</option><option value="f">女性</option></select>
         </label>
         <label class="field" style="max-width:180px;">全区間の解析情報を追加する
           <select id="summaryRowSelect">
@@ -656,7 +662,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
 // (this session's own publish count so far) is reconstructed from the
 // conversation itself rather than mechanically verified — best-effort, not
 // guaranteed exact. Increment by exactly 1 on every future publish.
-const APP_VERSION = 175;
+const APP_VERSION = 176;
 
 /* ============ FIT PARSER ============ */
 const FIT_EPOCH = 631065600; // seconds between 1970-01-01 and 1989-12-31 (FIT epoch)
@@ -842,6 +848,7 @@ const S = {
   metrics: ['speed','elevation'], // active metric keys, in order (order decides left/right axis placement)
   resultColumns: null, // set below from COLUMN_DEFS
   sensors: { hr:true, power:true, cad:true },
+  age: null, sex: null,   // only used for the heart-rate calorie estimate
   ftp: null,
   weight: null,
   numberingStyle: 'circled', // 'off' | 'arabic' | 'circled' | 'kanji'
@@ -1261,7 +1268,12 @@ function showPage(n){
   document.querySelector('.wrap').classList.toggle('p2Active', n===2);
   document.documentElement.classList.toggle('noPageZoom', n===2);
   window.scrollTo(0,0);
-  if (n===1 && S.previewMap) requestAnimationFrame(()=> S.previewMap && S.previewMap.resize());
+  if (n===1 && S.records.length){
+    // the preview shows the numbered section starts: redraw it when page 2 changed them
+    const sig = S.intervals.map(i=>Math.round(i.start)).join(',');
+    if (sig!==previewSig) renderRoutePreview();
+    else if (S.previewMap) requestAnimationFrame(()=> S.previewMap && S.previewMap.resize());
+  }
   if (n===2 && S.records.length){
     // the map/chart containers are display:none until this page is shown, so
     // building them earlier would measure a zero-size box. Do the full (and
@@ -1418,6 +1430,7 @@ const AUTO_SPLIT = {
   CLIMB_MIN_GAIN_M: 100, CLIMB_MIN_GRADE: 0.03, CLIMB_MIN_DIST_M: 2000,
   CLIMB_DROP_M: 10, CLIMB_DROP_FRAC: 0.10, CLIMB_FLAT_M: 300, CLIMB_FLAT_FRAC: 0.20, CLIMB_TRIGGER_M: 10,
   MIN_SEGMENT_S: 5, // cuts closer together than this are merged
+  MIN_SEGMENT_FRAC: 0.001, // ... and no section may be shorter than this share (0.1 %) of the whole ride
 };
 function haversineM(lat1, lon1, lat2, lon2){
   const R = 6371000, toRad = Math.PI/180;
@@ -1752,7 +1765,8 @@ function libMatchAll(recs){
   libEntries.forEach(e=>{ libMatch(recs, e).forEach(m=> all.push({ name:e.name, nameType:e.nameType, startName:e.startName, endName:e.endName, start:m.start, end:m.end, cover:m.cover })); });
   all.sort((a,b)=> (b.cover-a.cover) || ((b.end-b.start)-(a.end-a.start)));
   const kept = [];
-  all.forEach(m=>{ if (m.end-m.start>=AUTO_SPLIT.MIN_SEGMENT_S && !kept.some(k=>m.start<k.end && m.end>k.start)) kept.push(m); });
+  const minSeg = Math.max(AUTO_SPLIT.MIN_SEGMENT_S, recs[recs.length-1].elapsed*AUTO_SPLIT.MIN_SEGMENT_FRAC);
+  all.forEach(m=>{ if (m.end-m.start>=minSeg && !kept.some(k=>m.start<k.end && m.end>k.start)) kept.push(m); });
   return kept.sort((a,b)=>a.start-b.start);
 }
 function buildAutoIntervals(recs, laps, useLaps){
@@ -1770,7 +1784,8 @@ function buildAutoIntervals(recs, laps, useLaps){
   if (useLaps) laps.forEach(l=>{ if (!libs.some(m=> l.elapsed>m.start && l.elapsed<m.end)) cuts.push(l.elapsed); });
   const sorted = cuts.filter(t=>t>0 && t<total).sort((a,b)=>a-b);
   const bounds = [0];
-  sorted.forEach(t=>{ if (t-bounds[bounds.length-1] >= AUTO_SPLIT.MIN_SEGMENT_S && total-t >= AUTO_SPLIT.MIN_SEGMENT_S) bounds.push(t); });
+  const minSeg = Math.max(AUTO_SPLIT.MIN_SEGMENT_S, total*AUTO_SPLIT.MIN_SEGMENT_FRAC);
+  sorted.forEach(t=>{ if (t-bounds[bounds.length-1] >= minSeg && total-t >= minSeg) bounds.push(t); });
   bounds.push(total);
   const within = (list, mid)=> list.some(x=>mid>=x.start-1 && mid<=x.end+1);
   const ivs = [];
@@ -1936,6 +1951,7 @@ function serializeState(){
     xMode: S.xMode,
     ftp: S.ftp,
     weight: S.weight,
+    age: S.age, sex: S.sex,
     numberingStyle: S.numberingStyle,
     summaryRowMode: S.summaryRowMode,
     powerChartMetrics: S.powerChartMetrics,
@@ -1983,7 +1999,7 @@ const DISPLAY_PREFS_KEY = 'quaniter.displayPrefs.v1';
 function saveDisplayPrefs(){
   try{
     localStorage.setItem(DISPLAY_PREFS_KEY, JSON.stringify({
-      resultColumns: S.resultColumns, ftp: S.ftp, weight: S.weight,
+      resultColumns: S.resultColumns, ftp: S.ftp, weight: S.weight, age: S.age, sex: S.sex,
       summaryRowMode: S.summaryRowMode, grossIncludesStoppedTime: S.grossIncludesStoppedTime,
       avgGradientMethod: S.avgGradientMethod,
     }));
@@ -1998,7 +2014,13 @@ function loadDisplayPrefs(){
 function applyDisplayPrefs(){
   const p = loadDisplayPrefs();
   if (!p) return;
-  if (Array.isArray(p.resultColumns)) S.resultColumns = p.resultColumns;
+  if (Array.isArray(p.resultColumns)){
+    S.resultColumns = p.resultColumns.filter(c=>COL_META[c.key]);
+    // columns added in a later version are not in an older saved list: add them (off by default)
+    COLUMN_DEFS.forEach(d=>{ if (!S.resultColumns.some(c=>c.key===d.k)) S.resultColumns.push({key:d.k, enabled:DEFAULT_ENABLED_COLUMNS.includes(d.k)}); });
+  }
+  if (p.age!=null) S.age = p.age;
+  if (p.sex) S.sex = p.sex;
   if (p.ftp!=null) S.ftp = p.ftp;
   if (p.weight!=null) S.weight = p.weight;
   if (p.summaryRowMode) S.summaryRowMode = p.summaryRowMode;
@@ -2079,6 +2101,8 @@ function applyState(state, mode){
   if (state.sensors && typeof state.sensors==='object') S.sensors = { hr:state.sensors.hr!==false, power:state.sensors.power!==false, cad:state.sensors.cad!==false };
   if (state.ftp!=null && !isNaN(state.ftp) && state.ftp>0) S.ftp = Number(state.ftp);
   if (state.weight!=null && !isNaN(state.weight) && state.weight>0) S.weight = Number(state.weight);
+  if (state.age!=null && Number(state.age)>0) S.age = Number(state.age);
+  if (state.sex==='m' || state.sex==='f') S.sex = state.sex;
   if (Array.isArray(state.powerChartMetrics) && state.powerChartMetrics.length){
     const pm = state.powerChartMetrics.filter(k=>POWER_CHART_METRICS[k]).slice(0,4);
     if (pm.length) S.powerChartMetrics = pm;
@@ -2102,6 +2126,8 @@ function syncControlsFromState(){
   if (ftpEl) ftpEl.value = S.ftp!=null ? S.ftp : '';
   const weightEl = $('#weightInput');
   if (weightEl) weightEl.value = S.weight!=null ? S.weight : '';
+  if ($('#ageInput')) $('#ageInput').value = S.age!=null ? S.age : '';
+  if ($('#sexSelect')) $('#sexSelect').value = S.sex || '';
   const sumEl = $('#summaryRowSelect');
   if (sumEl) sumEl.value = S.summaryRowMode;
   syncSensorSelects();
@@ -2125,6 +2151,8 @@ $('#ftpInput').addEventListener('input', e=>{
   setColumnsEnabled(NEEDS_FTP.filter(sensorsOkFor), !!S.ftp);   // typed in -> on, emptied -> off
   saveState();
 });
+$('#ageInput').addEventListener('input', e=>{ const v = parseInt(e.target.value,10); S.age = (!isNaN(v) && v>0) ? v : null; saveState(); });
+$('#sexSelect').addEventListener('change', e=>{ S.sex = e.target.value || null; saveState(); });
 $('#weightInput').addEventListener('input', e=>{
   const v = parseFloat(e.target.value);
   S.weight = (!isNaN(v) && v>0) ? v : null;
@@ -2516,9 +2544,11 @@ function selectFromMap(point){
 
 // Page 1's overview: the same map, not interactive, fitted to the route and
 // showing the numbered interval starts.
+let previewSig = null;
 function renderRoutePreview(){
   const el = $('#routePreviewWrap');
   if (!el) return;
+  previewSig = S.intervals.map(i=>Math.round(i.start)).join(',');
   if (S.previewMap){ try{ S.previewMap.remove(); }catch(e){} S.previewMap = null; }
   if (!S.hasGps){
     el.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-faint);font-size:13px;">この記録には位置情報(GPS)がありません</div>';
@@ -2897,6 +2927,8 @@ const COLUMN_DEFS = [
   {k:'intensityFactor', label:'Intensity Factor', fmt:v=>v==null?'--':v.toFixed(2)},
   {k:'ef', label:'Efficiency Factor', fmt:v=>v==null?'--':v.toFixed(2)},
   {k:'tss', label:'TSS', fmt:v=>v==null?'--':v.toFixed(1)},
+  {k:'workKj', unit:'kJ', label:'運動量', fmt:v=>v==null?'--':Math.round(v)+' kJ'},
+  {k:'kcal', unit:'kcal', label:'消費カロリー', fmt:v=>v==null?'--':Math.round(v)+' kcal'},
   {k:'pwr', unit:'W/kg', label:'Power Weight Ratio', fmt:v=>v==null?'--':v.toFixed(2)+' W/kg'},
 ];
 const COL_META = Object.fromEntries(COLUMN_DEFS.map(d=>[d.k, d]));
@@ -2913,19 +2945,22 @@ const TERM_GLOSSARY = {
   intensityFactor: 'IF(Intensity Factor)\n\nNPをFTP(機能的作業閾値パワー)で割った値で、その区間の運動強度を表します。1.0がFTP相当の強度にあたります。',
   ef: 'EF(Efficiency Factor)\n\nNP(算出できない場合は平均パワー)を平均心拍で割った値です。同じ心拍数に対してどれだけパワーを出せているかを示す、効率の指標です。',
   tss: 'TSS(Training Stress Score)\n\n運動の総負荷を表す指標で、強度(IF)と時間の両方を加味して算出します。数値が大きいほど、体への負荷が大きかったことを示します。',
+  workKj: '運動量(kJ)\n\nパワーメーターのパワー(W)に時間(秒)をかけて足し合わせた、実際にペダルにした仕事量です(1kJ=1000ジュール)。記録が途切れた部分(自動一時停止など)は数えません。',
+  kcal: '消費カロリー(kcal)\n\nパワーメーターがあれば、運動量(kJ)を人の効率(約24%)で割って、kcalに直した値です。ほぼ運動量と同じ数値になります。パワーメーターがなく心拍計だけのときは、心拍数と体重・年齢・性別から推定します(体重・年齢・性別の入力が必要)。心拍からの推定は、誤差が大きくなります。',
   pwr: 'PWR(Power to Weight Ratio / パワーウェイトレシオ)\n\n平均パワーを体重で割った値(W/kg)です。特に上り坂での走行力を比較する際の目安になります。',
 };
 // everything is shown by default, in the order above — except what needs an FTP / body weight
 // typed in first (those switch on by themselves once the number is entered)
 const NEEDS_FTP = ['tss','intensityFactor'], NEEDS_WEIGHT = ['pwr'];
-const DEFAULT_ENABLED_COLUMNS = COLUMN_DEFS.map(d=>d.k).filter(k=>!NEEDS_FTP.includes(k) && !NEEDS_WEIGHT.includes(k));
+const DEFAULT_ENABLED_COLUMNS = COLUMN_DEFS.map(d=>d.k).filter(k=>!NEEDS_FTP.includes(k) && !NEEDS_WEIGHT.includes(k) && k!=='workKj' && k!=='kcal');
 // which sensor each value comes from (ef: heart rate AND power)
 const SENSOR_COLS = {
   hr: ['minHr','avgHr','maxHr','ef'],
   cad: ['avgCad','maxCad'],
-  power: ['avgPower','maxPower','np','intensityFactor','ef','tss','pwr'],
+  power: ['avgPower','maxPower','np','intensityFactor','ef','tss','pwr','workKj'],
 };
 function sensorsOkFor(key){
+  if (key==='kcal') return S.sensors.power || S.sensors.hr;   // from power, or from heart rate
   return !Object.keys(SENSOR_COLS).some(sn=> SENSOR_COLS[sn].includes(key) && !S.sensors[sn]);
 }
 function setColumnsEnabled(keys, on){
@@ -2934,11 +2969,11 @@ function setColumnsEnabled(keys, on){
   if (changed){ buildMetricChecks(); saveState(); }
 }
 // the power-chart metrics that need a sensor
-const PC_SENSOR = { avgPower:['power'], np:['power'], intensityFactor:['power'], tss:['power'], pwr:['power'], ef:['hr','power'], avgHr:['hr'], avgCad:['cad'] };
-function pcMetricAvailable(k){ return !(PC_SENSOR[k]||[]).some(sn=>!S.sensors[sn]); }
+const PC_SENSOR = { workKj:['power'], avgPower:['power'], np:['power'], intensityFactor:['power'], tss:['power'], pwr:['power'], ef:['hr','power'], avgHr:['hr'], avgCad:['cad'] };
+function pcMetricAvailable(k){ if (k==='kcal') return S.sensors.power || S.sensors.hr; return !(PC_SENSOR[k]||[]).some(sn=>!S.sensors[sn]); }
 function applySensorChange(sn, on){
   S.sensors[sn] = on;
-  if (!on) setColumnsEnabled(SENSOR_COLS[sn], false);
+  if (!on) setColumnsEnabled(SENSOR_COLS[sn].concat(sensorsOkFor('kcal') ? [] : ['kcal']), false);
   else setColumnsEnabled(SENSOR_COLS[sn].filter(k=> sensorsOkFor(k) && !(NEEDS_FTP.includes(k) && !S.ftp) && !(NEEDS_WEIGHT.includes(k) && !S.weight)), true);
   // the chart on page 3 can only show what exists
   let pm = S.powerChartMetrics.filter(pcMetricAvailable);
@@ -4635,6 +4670,29 @@ function computeIntervalStats(iv, idx){
     st.intensityFactor = st.np / S.ftp;
     st.tss = (st.duration * st.np * st.intensityFactor) / (S.ftp * 3600) * 100;
   }
+  // 運動量 (kJ): the work done = power x time, summed record by record (a gap in the
+  // recording, e.g. an auto-pause, is not counted: each step is capped at 10 s)
+  if (recs.some(r=>r.power!=null)){
+    let j = 0;
+    for (let i=0;i<recs.length-1;i++){
+      if (recs[i].power==null) continue;
+      j += recs[i].power * Math.min(10, recs[i+1].elapsed-recs[i].elapsed);
+    }
+    st.workKj = j/1000;
+    // 消費カロリー: mechanical work / gross efficiency (24 %) / 4.184 kJ per kcal
+    st.kcal = st.workKj/0.24/4.184;
+  } else if (hrs.length && S.weight && S.age && (S.sex==='m' || S.sex==='f')){
+    // no power meter: heart-rate formula (Keytel et al. 2005), needs weight, age and sex
+    let kc = 0;
+    for (let i=0;i<recs.length-1;i++){
+      if (recs[i].hr==null) continue;
+      const dt = Math.min(10, recs[i+1].elapsed-recs[i].elapsed)/60, h = recs[i].hr;
+      const perMin = S.sex==='m' ? (-55.0969 + 0.6309*h + 0.1988*S.weight + 0.2017*S.age)
+                                 : (-20.4022 + 0.4472*h - 0.1263*S.weight + 0.074*S.age);
+      kc += Math.max(0, perMin/4.184)*dt;
+    }
+    st.kcal = kc;
+  }
   // Power Weight Ratio needs a weight value (entered by the user; never stored by default)
   if (st.avgPower!=null && S.weight){
     st.pwr = st.avgPower / S.weight;
@@ -4657,7 +4715,7 @@ const SUMMARY_AGG = {
   avgCad:'avgWeighted', maxCad:'max',
   avgPower:'avgWeighted', maxPower:'max', np:'avgWeighted',
   intensityFactor:'avgWeighted', ef:'avgWeighted', tss:'sum',
-  pwr:'avgWeighted',
+  pwr:'avgWeighted', workKj:'sum', kcal:'sum',
 };
 function computeSummaryRow(rows){
   if (!rows.length) return null;
@@ -4810,6 +4868,8 @@ const POWER_CHART_METRICS = {
   intensityFactor: {label:'IF', unit:'', color:'#c2185b', get:r=>r.intensityFactor, fmt:v=>v.toFixed(2)},
   ef: {label:'EF', unit:'', color:'#00b4d8', get:r=>r.ef, fmt:v=>v.toFixed(2)},
   tss: {label:'TSS', unit:'', color:'#8d6e63', get:r=>r.tss, fmt:v=>v.toFixed(1)},
+  workKj: {label:'運動量', unit:'kJ', color:'#d98c5f', get:r=>r.workKj, fmt:v=>Math.round(v)},
+  kcal: {label:'カロリー', unit:'kcal', color:'#c9a227', get:r=>r.kcal, fmt:v=>Math.round(v)},
   pwr: {label:'PWR', unit:'W/kg', color:'#3949ab', get:r=>r.pwr, fmt:v=>v.toFixed(2)},
 };
 function buildPowerChartMetricChecks(){
@@ -4845,7 +4905,7 @@ $$('#powerChartXModeSeg button').forEach(btn=>{
     if (lastResults) renderPowerChart(lastResults.rows.filter(r=>!r.isSummary));
   });
 });
-const POWER_CHART_WIDTH_MIN = 0.3, POWER_CHART_WIDTH_MAX = 2.5, POWER_CHART_WIDTH_STEP = 0.1;
+const POWER_CHART_WIDTH_MIN = 0.2, POWER_CHART_WIDTH_MAX = 6, POWER_CHART_WIDTH_STEP = 0.1;
 function adjustPowerChartWidth(delta){
   S.powerChartWidthMult = Math.max(POWER_CHART_WIDTH_MIN, Math.min(POWER_CHART_WIDTH_MAX, S.powerChartWidthMult+delta));
   $('#powerChartWidthMinus').disabled = S.powerChartWidthMult<=POWER_CHART_WIDTH_MIN;
@@ -4853,6 +4913,42 @@ function adjustPowerChartWidth(delta){
   saveState();
   if (lastResults) renderPowerChart(lastResults.rows.filter(r=>!r.isSummary));
 }
+// pinch the graph to change its width continuously (the point between the fingers stays put)
+(function(){
+  const wrap = $('#powerChartWrap');
+  let g = null;
+  const dist = t=> Math.hypot(t[0].clientX-t[1].clientX, t[0].clientY-t[1].clientY);
+  wrap.addEventListener('touchstart', e=>{
+    if (e.touches.length===2){
+      const r = wrap.getBoundingClientRect(), mid = (e.touches[0].clientX+e.touches[1].clientX)/2 - r.left;
+      g = { d:Math.max(1, dist(e.touches)), mult:S.powerChartWidthMult, mid, scrollW:Math.max(1, wrap.scrollWidth), frac:(wrap.scrollLeft+mid)/Math.max(1, wrap.scrollWidth) };
+    }
+  }, {passive:true});
+  // while the fingers are down the existing SVG is only stretched (replacing it would make the
+  // browser drop the touch); the real redraw happens when the fingers lift
+  wrap.addEventListener('touchmove', e=>{
+    if (!g || e.touches.length<2) return;
+    e.preventDefault();
+    g.target = Math.max(POWER_CHART_WIDTH_MIN, Math.min(POWER_CHART_WIDTH_MAX, g.mult*dist(e.touches)/g.d));
+    const svg = wrap.querySelector('svg'); if (!svg) return;
+    svg.style.transformOrigin = (g.frac*g.scrollW)+'px 0';
+    svg.style.transform = 'scaleX('+(g.target/g.mult)+')';
+  }, {passive:false});
+  const end = e=>{
+    if (!g || e.touches.length>=2) return;
+    const done = g; g = null;
+    if (done.target!=null){
+      S.powerChartWidthMult = done.target;
+      if (lastResults) renderPowerChart(lastResults.rows.filter(r=>!r.isSummary));
+      wrap.scrollLeft = done.frac*wrap.scrollWidth - done.mid;
+      $('#powerChartWidthMinus').disabled = S.powerChartWidthMult<=POWER_CHART_WIDTH_MIN;
+      $('#powerChartWidthPlus').disabled = S.powerChartWidthMult>=POWER_CHART_WIDTH_MAX;
+      saveState();
+    }
+  };
+  wrap.addEventListener('touchend', end); wrap.addEventListener('touchcancel', end);
+  wrap.addEventListener('gesturestart', e=>e.preventDefault());   // Safari: no page zoom while pinching the graph
+})();
 $('#powerChartWidthMinus').addEventListener('click', ()=> adjustPowerChartWidth(-POWER_CHART_WIDTH_STEP));
 $('#powerChartWidthPlus').addEventListener('click', ()=> adjustPowerChartWidth(POWER_CHART_WIDTH_STEP));
 
