@@ -503,6 +503,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
       <div class="vTools"><button type="button" data-a="in">＋</button><button type="button" data-a="out">－</button><button type="button" data-a="reset">全体</button></div>
       <div class="vTip hidden" id="vTip"></div>
     </div>
+    <div class="vRow hidden" id="vExportRow" style="margin-top:10px;"><button id="vExpPng" class="small" type="button">PNGを保存</button><button id="vExpPdf" class="small" type="button">PDFを保存</button></div>
     <div class="hint hidden" id="vHint">ドラッグで移動、指2本または＋/－で横方向を拡大縮小、タップするとその位置の各ライドの値が出ます。</div>
   </div>
 </div>
@@ -765,7 +766,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
 // (this session's own publish count so far) is reconstructed from the
 // conversation itself rather than mechanically verified — best-effort, not
 // guaranteed exact. Increment by exactly 1 on every future publish.
-const APP_VERSION = 179;
+const APP_VERSION = 180;
 
 /* ============ FIT PARSER ============ */
 const FIT_EPOCH = 631065600; // seconds between 1970-01-01 and 1989-12-31 (FIT epoch)
@@ -6090,14 +6091,24 @@ if (window.showDirectoryPicker){
 
 /* ---- step 2: load the chosen rides and overlay them ---- */
 const V_METRICS = {
-  speed: { label:'速度', unit:'km/h', get:r=> r.speed!=null ? r.speed*3.6 : null, zero:true },
-  hr:    { label:'心拍', unit:'bpm', get:r=> r.hr, zero:false },
-  power: { label:'パワー', unit:'W', get:r=> r.power, zero:true },
-  cad:   { label:'ケイデンス', unit:'rpm', get:r=> r.cad, zero:true },
-  alt:   { label:'標高', unit:'m', get:r=> r.altSmooth!=null ? r.altSmooth : r.alt, zero:false },
+  power:  { label:'パワー', unit:'W', stat:'avgPower', get:r=> r.power, zero:true },
+  speed:  { label:'速度', unit:'km/h', stat:'avgSpeedNet', get:r=> r.speed!=null ? r.speed*3.6 : null, zero:true },
+  hr:     { label:'心拍', unit:'bpm', stat:'avgHr', get:r=> r.hr, zero:false },
+  cad:    { label:'ケイデンス', unit:'rpm', stat:'avgCad', get:r=> r.cad, zero:true },
+  alt:    { label:'標高', unit:'m', stat:'avgElevation', get:r=> r.altSmooth!=null ? r.altSmooth : r.alt, zero:false },
+  temp:   { label:'気温', unit:'℃', stat:'avgTemp', get:r=> r.temp, zero:false },
+  // these exist only per section (a total or a ratio), not as a line over time
+  workKj: { label:'運動量', unit:'kJ', stat:'workKj', sum:true, zero:true },
+  kcal:   { label:'消費カロリー', unit:'kcal', stat:'kcal', sum:true, zero:true },
+  ef:     { label:'EF', unit:'', stat:'ef', zero:true },
 };
-$('#vMetric').innerHTML = Object.keys(V_METRICS).map(k=>'<option value="'+k+'">'+V_METRICS[k].label+'('+V_METRICS[k].unit+')</option>').join('');
-$('#vMetric').value = 'power';
+function vFillMetrics(){
+  const sel = $('#vMetric'), cur = sel.value || 'power';
+  const keys = Object.keys(V_METRICS).filter(k=> V.mode!=='overlay' || V_METRICS[k].get);
+  sel.innerHTML = keys.map(k=>'<option value="'+k+'">'+V_METRICS[k].label+(V_METRICS[k].unit ? '('+V_METRICS[k].unit+')' : '')+'</option>').join('');
+  sel.value = keys.includes(cur) ? cur : 'power';
+}
+
 $('#vNext').addEventListener('click', async ()=>{
   const chosen = V.items.filter(it=>V.sel.has(it.id));
   if (!chosen.length) return;
@@ -6113,18 +6124,20 @@ $('#vNext').addEventListener('click', async ()=>{
       const recs = parseFit(await fit.async('arraybuffer'));
       smoothAltitudes(recs);
       // the sections that were set in the analyser
-      let sections = [];
+      let sections = [], settingsOfRide = {};
       try{
         const jf = Object.values(zip.files).find(f=>!f.dir && /\.json$/i.test(f.name));
         const st = JSON.parse(await jf.async('string')); const set = st.settings || st;
         const off = Number(set.intervalTimeOffset)||0;
         sections = (set.intervals||[]).map((iv,k)=>{
-          const eff = iv.nameType==='b' && ((iv.startName||'').trim() || (iv.endName||'').trim());
+          const eff = !!(iv.nameType==='b' && ((iv.startName||'').trim() || (iv.endName||'').trim()));
           const name = eff ? (iv.startName||'')+'→'+(iv.endName||'') : ((iv.name||'').trim() || '区間'+(k+1));
-          return { name, start:(Number(iv.start)||0)+off, end:(Number(iv.end)||0)+off, distKm: iv.endDistanceKm!=null && iv.startDistanceKm!=null ? iv.endDistanceKm-iv.startDistanceKm : null };
+          return { idx:k, name, nameType: eff ? 'b' : 'a', startName:iv.startName||'', endName:iv.endName||'', start:(Number(iv.start)||0)+off, end:(Number(iv.end)||0)+off, distKm: iv.endDistanceKm!=null && iv.startDistanceKm!=null ? iv.endDistanceKm-iv.startDistanceKm : null };
         }).filter(x=>x.end>x.start);
+        sections.sort((a,b)=>a.start-b.start);
+        settingsOfRide = { weight:set.weight, ftp:set.ftp, age:set.age, sex:set.sex, grad:set.avgGradientMethod };
       }catch(e){}
-      if (recs.length) V.rides.push({ id:V.rides.length, item:chosen[i], recs, sections, color:V_COLORS[V.rides.length % V_COLORS.length] });
+      if (recs.length) V.rides.push({ id:V.rides.length, item:chosen[i], recs, sections, cfg:settingsOfRide, color:V_COLORS[V.rides.length % V_COLORS.length] });
     }catch(e){ console.warn('viewer load', chosen[i].name, e); }
   }
   vBuildLegend();
@@ -6146,7 +6159,9 @@ function vBuildLegend(){
 }
 // per ride: x[] and y[] for the chosen metric / axis, moving-averaged over a time window
 function vRebuildSeries(){
-  const m = V_METRICS[$('#vMetric').value], xmode = $('#vXAxis').value, win = Number($('#vSmooth').value);
+  const m = V_METRICS[$('#vMetric').value];
+  if (!m.get){ V.series = V.rides.map(()=>({xs:[],ys:[]})); return; }
+  const xmode = $('#vXAxis').value, win = Number($('#vSmooth').value);
   V.series = V.rides.map(r=>{
     const xs = [], ys = [];
     const raw = r.recs.map(x=>m.get(x));
@@ -6183,26 +6198,31 @@ function vLowerBound(a, x){ let lo=0, hi=a.length; while (lo<hi){ const m=(lo+hi
   vRebuildSeries(); vFit(false); vRefresh();
 }));
 V.mode = 'steps';
-$$('#vModeSeg button').forEach(b=> b.addEventListener('click', ()=>{ V.mode = b.dataset.m; V.cursor = null; $('#vTip').classList.add('hidden'); vFit(false); vRefresh(); }));
+vFillMetrics();
+$$('#vModeSeg button').forEach(b=> b.addEventListener('click', ()=>{ V.mode = b.dataset.m; vFillMetrics(); vRebuildSeries(); V.cursor = null; $('#vTip').classList.add('hidden'); vFit(false); vRefresh(); }));
 function vRefresh(){
   $$('#vModeSeg button').forEach(b=> b.classList.toggle('on', b.dataset.m===V.mode));
   const ov = V.mode==='overlay', st = V.mode==='steps';
   $('#vCompare').classList.toggle('hidden', ov || st);
-  $('#vChartBox').classList.toggle('hidden', !(ov || st)); $('#vHint').classList.toggle('hidden', !(ov || st));
+  $('#vChartBox').classList.toggle('hidden', !(ov || st)); $('#vHint').classList.toggle('hidden', !(ov || st)); $('#vExportRow').classList.toggle('hidden', !(ov || st));
   $$('.vOnly-overlay').forEach(e=> e.classList.toggle('hidden', !ov));
   if (ov || st) requestAnimationFrame(()=> vDraw()); else vRenderCompare();
 }
 // section by section: the average of the chosen value (power by default) for every ride
 function vSectionAvg(ride, sec, m){
-  let sum = 0, n = 0;
-  for (let i=0;i<ride.recs.length;i++){
-    const r = ride.recs[i];
-    if (r.elapsed<sec.start) continue;
-    if (r.elapsed>sec.end) break;
-    const v = m.get(r);
-    if (v!=null){ sum += v; n++; }
+  if (!sec._st){
+    // the analyser's own calculation (so the numbers match its table), run on this ride's data
+    const keep = { rec:S.records, w:S.weight, f:S.ftp, a:S.age, x:S.sex, g:S.avgGradientMethod };
+    try{
+      S.records = ride.recs; S.weight = Number(ride.cfg.weight)>0 ? Number(ride.cfg.weight) : null; S.ftp = Number(ride.cfg.ftp)>0 ? Number(ride.cfg.ftp) : null;
+      S.age = Number(ride.cfg.age)>0 ? Number(ride.cfg.age) : null; S.sex = ride.cfg.sex==='m' || ride.cfg.sex==='f' ? ride.cfg.sex : null;
+      S.avgGradientMethod = ride.cfg.grad==='gain' ? 'gain' : 'diff';
+      sec._st = computeIntervalStats({ start:sec.start, end:sec.end, name:sec.name, nameType:sec.nameType, startName:sec.startName, endName:sec.endName }, sec.idx);
+    }catch(e){ sec._st = {}; }
+    finally{ S.records = keep.rec; S.weight = keep.w; S.ftp = keep.f; S.age = keep.a; S.sex = keep.x; S.avgGradientMethod = keep.g; }
   }
-  return n ? sum/n : null;
+  const v = sec._st[m.stat];
+  return v==null || isNaN(v) ? null : v;
 }
 function vRenderCompare(){
   const box = $('#vCompare'); box.innerHTML = '';
@@ -6264,7 +6284,9 @@ function vRenderCompare(){
     const ctx = cv.getContext('2d'); ctx.setTransform(dpr,0,0,dpr,0,0); ctx.clearRect(0,0,W,H);
     const css = getComputedStyle(document.documentElement);
     const grid = css.getPropertyValue('--border').trim(), muted = css.getPropertyValue('--text-faint').trim() || '#8b9099';
-    if (V.mode==='steps'){ drawSteps(ctx, grid, muted); return; }
+    if (V.mode==='steps') drawSteps(ctx, grid, muted); else drawOverlay(ctx, grid, muted);
+  };
+  function drawOverlay(ctx, grid, muted){
     const m = V_METRICS[$('#vMetric').value], xmode = $('#vXAxis').value;
     const vis = vVisible();
     // y range from what is visible in the current x window
@@ -6319,7 +6341,7 @@ function vRenderCompare(){
       if (px>=ML && px<=W-MR){ ctx.strokeStyle = '#fff'; ctx.setLineDash([4,3]); ctx.beginPath(); ctx.moveTo(px,MT); ctx.lineTo(px,H-MB); ctx.stroke(); ctx.setLineDash([]); }
     }
     if (!vis.length){ ctx.fillStyle = muted; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('表示するライドにチェックを入れてください', W/2, H/2); }
-  };
+  }
   // ---- section-by-section step chart: one stepped line per ride, flat at each section's average,
   //      dropping to 0 over the rests between sections; x = time since the ride's first section began
   function ridesSteps(r, m){
@@ -6334,7 +6356,7 @@ function vRenderCompare(){
     secs.forEach(sec=>{
       if (sec.start-prevEnd > 1) out.push({ a:prevEnd-t0, b:sec.start-t0, v:0, rest:true });
       const v = vSectionAvg(r, sec, m);
-      out.push({ a:sec.start-t0, b:sec.end-t0, v: v!=null ? v : 0, name:sec.name, none:v==null });
+      out.push({ a:sec.start-t0, b:sec.end-t0, v: v!=null ? v : 0, name:sec.name, sec, none:v==null });
       prevEnd = sec.end;
     });
     return out;
@@ -6375,27 +6397,73 @@ function vRenderCompare(){
       ctx.lineTo(toX(steps[steps.length-1].b), y0px);
       ctx.strokeStyle = r.color; ctx.lineWidth = 2; ctx.lineJoin = 'miter'; ctx.stroke();
     });
-    // section names, standing on each step (the place the section ends at)
-    ctx.font = '10px sans-serif'; ctx.textBaseline = 'middle';
-    all.forEach(({r, steps})=>{
-      ctx.fillStyle = r.color;
-      steps.forEach(s=>{
-        if (s.rest || !s.name) return;
-        const px = (toX(s.a)+toX(s.b))/2;
-        if (toX(s.b)-toX(s.a) < 13 || px<ML || px>W-MR) return;
-        ctx.save(); ctx.translate(px, toY(s.v)-5); ctx.rotate(-Math.PI/2); ctx.textAlign = 'left'; ctx.fillText(endName(s.name), 0, 0); ctx.restore();
+    // captions, placed by the same rules as the analyser's page-3 graph: タイプb names stand at the
+    // section's own start / end; an end name equal to the next start name is left out; two
+    // names that would touch move 0.6 character apart (end to the left, start to the right)
+    {
+      const CH = 0.6*7, OVER = 12, ly = MT+14;
+      ctx.font = '10px sans-serif'; ctx.textBaseline = 'middle';
+      const put = (txt, px)=>{
+        if (!txt || px<ML-2 || px>W-MR+2) return;
+        ctx.save(); ctx.translate(px, ly); ctx.rotate(-Math.PI/2); ctx.textAlign = 'right'; ctx.fillText(txt, 0, 0); ctx.restore();
+      };
+      all.forEach(({r, steps})=>{
+        ctx.fillStyle = r.color;
+        const secs = steps.filter(s=>!s.rest);
+        secs.forEach((s,i)=>{
+          const sec = s.sec, x0 = toX(s.a), x1 = toX(s.b), prev = secs[i-1], next = secs[i+1];
+          if (sec.nameType==='b'){
+            let so = 0, eo = 0, eh = false;
+            if (prev && prev.sec.nameType==='b'){
+              const same = !!(prev.sec.endName && sec.startName && prev.sec.endName===sec.startName);
+              if (!same && Math.abs(toX(prev.b)-x0) < OVER) so = CH;
+            }
+            if (next && next.sec.nameType==='b'){
+              const same = !!(sec.endName && next.sec.startName && sec.endName===next.sec.startName);
+              if (same) eh = true; else if (Math.abs(x1-toX(next.a)) < OVER) eo = -CH;
+            }
+            put(numberPrefix(sec.idx+1)+(sec.startName||''), x0+so);
+            if (!eh) put(sec.endName||'', x1+eo);
+          } else put(numberPrefix(sec.idx+1)+sec.name, (x0+x1)/2);
+        });
       });
-    });
+    }
     ctx.restore();
     ctx.strokeStyle = grid; ctx.strokeRect(ML+.5, MT+.5, W-ML-MR, H-MT-MB);
     ctx.fillStyle = muted; ctx.font = '11px sans-serif'; ctx.textAlign = 'right'; ctx.textBaseline = 'top';
-    ctx.fillText('区間の平均'+m.label+'('+m.unit+')', W-MR-4, MT+3);
+    ctx.fillText('区間の'+(m.sum ? '' : '平均')+m.label+(m.unit ? '('+m.unit+')' : ''), W-MR-4, MT+3);
     if (V.cursor!=null){
       const px = toX(V.cursor);
       if (px>=ML && px<=W-MR){ ctx.strokeStyle = '#fff'; ctx.setLineDash([4,3]); ctx.beginPath(); ctx.moveTo(px,MT); ctx.lineTo(px,H-MB); ctx.stroke(); ctx.setLineDash([]); }
     }
     if (!vis.length){ ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('表示するライドにチェックを入れてください', W/2, H/2); }
   }
+  // ---- export: the whole graph (not the zoomed view) on a white page, with a title and the legend
+  window.vExportCanvas = function(){
+    const keep = { W, H, view:V.view, cursor:V.cursor, yr };
+    const EW = 1100, EH = 520, K = 2, HEAD = 74;
+    const plot = document.createElement('canvas'); plot.width = EW*K; plot.height = EH*K;
+    const pctx = plot.getContext('2d'); pctx.setTransform(K,0,0,K,0,0); pctx.fillStyle = '#fff'; pctx.fillRect(0,0,EW,EH);
+    W = EW; H = EH; V.view = { x0:0, x1:vXMax()||1 }; V.cursor = null;
+    try{ if (V.mode==='steps') drawSteps(pctx, '#d5d9de', '#4a5059'); else drawOverlay(pctx, '#d5d9de', '#4a5059'); }
+    finally{ W = keep.W; H = keep.H; V.view = keep.view; V.cursor = keep.cursor; yr = keep.yr; }
+    const out = document.createElement('canvas'); out.width = EW*K; out.height = (EH+HEAD)*K;
+    const o = out.getContext('2d'); o.setTransform(K,0,0,K,0,0); o.fillStyle = '#fff'; o.fillRect(0,0,EW,EH+HEAD);
+    const m = V_METRICS[$('#vMetric').value];
+    o.fillStyle = '#111'; o.font = 'bold 20px sans-serif'; o.textAlign = 'left'; o.textBaseline = 'top';
+    o.fillText(V.mode==='steps' ? '区間ごとの'+(m.sum ? '' : '平均')+m.label+(m.unit ? '('+m.unit+')' : '')+'の比較' : m.label+(m.unit ? '('+m.unit+')' : '')+'の重ね書き', 24, 14);
+    o.font = '13px sans-serif'; let lx = 24; const ly = 46;
+    vVisible().forEach(r=>{
+      const label = vDate(r.item.startTime, r.item.dateOnly)+'　'+r.item.name;
+      const w = o.measureText(label).width;
+      if (lx+w+40 > EW-20){ lx = 24; }
+      o.fillStyle = r.color; o.fillRect(lx, ly+5, 22, 4);
+      o.fillStyle = '#333'; o.fillText(label, lx+28, ly);
+      lx += w+52;
+    });
+    o.drawImage(plot, 0, HEAD, EW, EH);
+    return out;
+  };
   /* gestures */
   const ptrs = new Map(); let g = null;
   const local = e=>{ const r = cv.getBoundingClientRect(); return {x:e.clientX-r.left, y:e.clientY-r.top}; };
@@ -6477,6 +6545,43 @@ function vRenderCompare(){
   });
   new ResizeObserver(()=> vDraw()).observe(cv);
 })();
+
+// a one-page landscape A4 PDF holding the graph as a JPEG (no library needed)
+function vMakePdf(canvas){
+  const jpg = atob(canvas.toDataURL('image/jpeg', 0.93).split(',')[1]);
+  const bytes = new Uint8Array(jpg.length); for (let i=0;i<jpg.length;i++) bytes[i] = jpg.charCodeAt(i);
+  const PW = 842, PH = 595, M = 24, iw = canvas.width, ih = canvas.height;
+  const sc = Math.min((PW-2*M)/iw, (PH-2*M)/ih), dw = iw*sc, dh = ih*sc, dx = (PW-dw)/2, dy = (PH-dh)/2;
+  const enc = new TextEncoder(), parts = [], offs = [];
+  let len = 0;
+  const push = u8=>{ parts.push(u8); len += u8.length; };
+  const str = t=> push(enc.encode(t));
+  const obj = (n, body)=>{ offs[n] = len; str(n+' 0 obj\n'+body+'\nendobj\n'); };
+  str('%PDF-1.4\n');
+  obj(1, '<< /Type /Catalog /Pages 2 0 R >>');
+  obj(2, '<< /Type /Pages /Kids [3 0 R] /Count 1 >>');
+  obj(3, '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 '+PW+' '+PH+'] /Resources << /XObject << /Im0 4 0 R >> >> /Contents 5 0 R >>');
+  offs[4] = len; str('4 0 obj\n<< /Type /XObject /Subtype /Image /Width '+iw+' /Height '+ih+' /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length '+bytes.length+' >>\nstream\n'); push(bytes); str('\nendstream\nendobj\n');
+  const content = 'q '+dw.toFixed(2)+' 0 0 '+dh.toFixed(2)+' '+dx.toFixed(2)+' '+dy.toFixed(2)+' cm /Im0 Do Q';
+  obj(5, '<< /Length '+content.length+' >>\nstream\n'+content+'\nendstream');
+  const xref = len;
+  let x = 'xref\n0 6\n0000000000 65535 f \n';
+  for (let n=1;n<=5;n++) x += String(offs[n]).padStart(10,'0')+' 00000 n \n';
+  str(x+'trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n'+xref+'\n%%EOF');
+  return new Blob(parts, {type:'application/pdf'});
+}
+function vExportName(ext){
+  const d = new Date(), p = n=>String(n).padStart(2,'0');
+  return 'Quaniter-比較-'+d.getFullYear()+p(d.getMonth()+1)+p(d.getDate())+'.'+ext;
+}
+$('#vExpPng').addEventListener('click', ()=>{
+  if (!V.rides.length) return;
+  vExportCanvas().toBlob(b=>{ if (b) saveFile(vExportName('png'), b); }, 'image/png');
+});
+$('#vExpPdf').addEventListener('click', ()=>{
+  if (!V.rides.length) return;
+  saveFile(vExportName('pdf'), vMakePdf(vExportCanvas()));
+});
 
 })();
 </script>
