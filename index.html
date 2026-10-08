@@ -343,7 +343,7 @@ td.num{ text-align:right; font-variant-numeric:tabular-nums; }
 #vCanvas{ display:block; width:100%; height:360px; touch-action:none; }
 .vTools{ position:absolute; top:6px; left:6px; display:flex; gap:4px; z-index:2; }
 .vTools button{ padding:4px 10px; font-size:14px; border-radius:8px; background:rgba(29,32,37,.9); border:1px solid var(--border); color:var(--text); }
-.vOnly-overlay.hidden{ display:none; }
+.vOnly-overlay.hidden, .vOnly-chart.hidden{ display:none; }
 .vCompare{ display:flex; flex-direction:column; gap:10px; margin-top:6px; }
 .cmpRow{ border-bottom:1px solid var(--border); padding-bottom:9px; }
 .cmpRow:last-child{ border-bottom:none; }
@@ -493,7 +493,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
     </div>
     <div class="vRow">
       <label class="vSel">項目<select id="vMetric"></select></label>
-      <label class="vSel vOnly-overlay">横軸<select id="vXAxis"><option value="elapsed">経過時間</option><option value="dist">距離</option></select></label>
+      <label class="vSel vOnly-chart">横軸<select id="vXAxis"><option value="elapsed">経過時間</option><option value="dist">距離</option></select></label>
       <label class="vSel vOnly-overlay">平滑化<select id="vSmooth"><option value="0">なし</option><option value="5">5秒</option><option value="15" selected>15秒</option><option value="30">30秒</option><option value="60">60秒</option></select></label>
     </div>
     <div id="vLegend" class="vLegend"></div>
@@ -503,7 +503,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
       <div class="vTools"><button type="button" data-a="in">＋</button><button type="button" data-a="out">－</button><button type="button" data-a="reset">全体</button></div>
       <div class="vTip hidden" id="vTip"></div>
     </div>
-    <div class="vRow hidden" id="vExportRow" style="margin-top:10px;"><button id="vExpPng" class="small" type="button">PNGを保存</button><button id="vExpPdf" class="small" type="button">PDFを保存</button></div>
+    <div class="vRow hidden" id="vExportRow" style="margin-top:10px;"><button id="vExpPng" class="small" type="button">PNGを保存</button><button id="vExpPdf" class="small" type="button">PDFを保存</button><span class="hint">押すと共有メニューが開きます。「ファイルに保存」を選ぶと、ファイルアプリに保存できます。</span></div>
     <div class="hint hidden" id="vHint">ドラッグで移動、指2本または＋/－で横方向を拡大縮小、タップするとその位置の各ライドの値が出ます。</div>
   </div>
 </div>
@@ -766,7 +766,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
 // (this session's own publish count so far) is reconstructed from the
 // conversation itself rather than mechanically verified — best-effort, not
 // guaranteed exact. Increment by exactly 1 on every future publish.
-const APP_VERSION = 180;
+const APP_VERSION = 181;
 
 /* ============ FIT PARSER ============ */
 const FIT_EPOCH = 631065600; // seconds between 1970-01-01 and 1989-12-31 (FIT epoch)
@@ -1864,20 +1864,65 @@ function libShowList(){
   $('#libSheet').classList.remove('hidden');
 }
 // every stored favourite section found in this ride, overlaps resolved (best fit first)
-function libMatchAll(recs){
+function libCandidates(recs){
   if (!libEntries.length) return [];
   const all = [];
-  libEntries.forEach(e=>{ libMatch(recs, e).forEach(m=> all.push({ name:e.name, nameType:e.nameType, startName:e.startName, endName:e.endName, start:m.start, end:m.end, cover:m.cover })); });
-  all.sort((a,b)=> (b.cover-a.cover) || ((b.end-b.start)-(a.end-a.start)));
-  const kept = [];
   const minSeg = Math.max(AUTO_SPLIT.MIN_SEGMENT_S, recs[recs.length-1].elapsed*AUTO_SPLIT.MIN_SEGMENT_FRAC);
-  all.forEach(m=>{ if (m.end-m.start>=minSeg && !kept.some(k=>m.start<k.end && m.end>k.start)) kept.push(m); });
+  libEntries.forEach(e=>{ libMatch(recs, e).forEach(m=>{ if (m.end-m.start>=minSeg) all.push({ name:e.name, nameType:e.nameType, startName:e.startName, endName:e.endName, start:m.start, end:m.end, cover:m.cover }); }); });
+  return all;
+}
+// non-overlapping picks, best fit first
+function libGreedy(list){
+  const kept = [];
+  list.slice().sort((a,b)=> (b.cover-a.cover) || ((b.end-b.start)-(a.end-a.start))).forEach(m=>{ if (!kept.some(k=>m.start<k.end && m.end>k.start)) kept.push(m); });
   return kept.sort((a,b)=>a.start-b.start);
 }
-function buildAutoIntervals(recs, laps, useLaps){
+function libMatchAll(recs){ return libGreedy(libCandidates(recs)); }
+// several favourites claiming the same stretch (typically one registered whole and the same
+// stretch registered in parts): ask which to use. Returns the final, non-overlapping list.
+async function libResolveAll(recs){
+  const cands = libCandidates(recs).sort((a,b)=>a.start-b.start || b.end-a.end);
+  if (!cands.length) return [];
+  const clusters = []; let cur = null;
+  cands.forEach(c=>{ if (cur && c.start<cur.end){ cur.items.push(c); cur.end = Math.max(cur.end, c.end); } else { cur = { items:[c], end:c.end }; clusters.push(cur); } });
+  const result = [];
+  for (const cl of clusters){
+    if (cl.items.length===1){ result.push(cl.items[0]); continue; }
+    const byLen = cl.items.slice().sort((a,b)=>(b.end-b.start)-(a.end-a.start));
+    const big = byLen[0];
+    const ov = (a,b)=> Math.max(0, Math.min(a.end,b.end)-Math.max(a.start,b.start));
+    const inner = cl.items.filter(c=> c!==big && ov(c,big) >= 0.8*(c.end-c.start));
+    let options;
+    if (inner.length){
+      const parts = libGreedy(inner);
+      options = [ { label:'全体で登録: 「'+big.name+'」', items:[big] }, { label:'分割で登録: '+parts.map(p=>'「'+p.name+'」').join(''), items:parts } ];
+    } else {
+      options = libGreedy(cl.items).concat(cl.items.filter(c=>!libGreedy(cl.items).includes(c))).map(c=>({ label:'「'+c.name+'」', items:[c] }));
+    }
+    const best = libGreedy(cl.items)[0];
+    const def = Math.max(0, options.findIndex(o=>o.items.includes(best)));
+    const t0 = recs[0].t;
+    const msg = 'お気に入り区間が重なっています('+fmtClockNoSec(t0+cl.items[0].start)+'〜'+fmtClockNoSec(t0+cl.end)+')。どちらを採用しますか?';
+    const idx = await askOptions(msg, options.map(o=>o.label), def);
+    result.push(...options[idx].items);
+  }
+  return libGreedy(result);
+}
+// a question with one button per answer (no way to dismiss it without answering)
+function askOptions(message, labels, defIdx){
+  return new Promise(resolve=>{
+    const modal = document.createElement('div');
+    modal.className = 'confirmModal';
+    modal.innerHTML = '<div class="confirmBox"><p>'+escapeHtml(message)+'</p><div class="confirmBtns" style="flex-direction:column;">'+
+      labels.map((l,i)=>'<button type="button" class="small'+(i===defIdx?'':' ghost')+'" data-i="'+i+'" style="text-align:left;">'+escapeHtml(l)+'</button>').join('')+'</div></div>';
+    document.body.appendChild(modal);
+    modal.querySelectorAll('button').forEach((btn,i)=> btn.addEventListener('click', ()=>{ document.body.removeChild(modal); resolve(i); }));
+  });
+}
+function buildAutoIntervals(recs, laps, useLaps, libsPre){
   const total = recs[recs.length-1].elapsed;
   const rests = detectRests(recs);
-  const libs = libMatchAll(recs);
+  const libs = libsPre || libMatchAll(recs);
   // a climb that mostly lies inside a favourite section is that section's business
   const overlap = (a, b)=> Math.max(0, Math.min(a.end, b.end)-Math.max(a.start, b.start));
   const climbs = detectClimbs(recs, rests).filter(c=> !libs.some(l=> overlap(c, l) > (c.end-c.start)*0.5));
@@ -1973,7 +2018,8 @@ async function processFitData(arrayBuffer, displayName, opts){
     S.intervals = [{id:S.nextId++, name:'', nameType:'a', start:0, end:totalEnd, startSet:false, endSet:false}];
     let autoInfo = null;
     if (autoSplit){
-      autoInfo = buildAutoIntervals(records, S.laps, true);
+      const libsChosen = libEntries.length ? await libResolveAll(records) : [];
+      autoInfo = buildAutoIntervals(records, S.laps, true, libsChosen);
       S.intervals = autoInfo.ivs;
     }
     S.resultColumns = COLUMN_DEFS.map(d=>({key:d.k, enabled:DEFAULT_ENABLED_COLUMNS.includes(d.k)}));
@@ -5622,6 +5668,15 @@ function renderPowerChart(rows){
     const x0 = xScale(ivX0(iv)), x1 = xScale(ivX1(iv));
     const isTypeB = isTypeBEff(iv);
     const label = numberPrefix(i+1)+intervalDisplayName(iv,i);
+    // captions of a (not subdivided) section start one character above its own level and read upward;
+    // the old fixed height at the top of the plot is kept when the section has no value
+    const vTop = (rows[i] && primaryDef.get(rows[i])!=null) ? primaryScale.yScale(primaryDef.get(rows[i])) : null;
+    const capW = t=> Array.from(t).reduce((a,c)=> a + (c.charCodeAt(0)>255 ? 10.5 : 6), 0);
+    const cap = (txt, lx)=>{
+      if (vTop==null) return '<text x="'+lx+'" y="'+(padT+14)+'" text-anchor="end" font-size="10.5" fill="'+primaryDef.color+'" transform="rotate(-90 '+lx+' '+(padT+14)+')" style="pointer-events:none;">'+escapeHtml(txt)+'</text>';
+      const y0 = Math.max(padT+capW(txt)+2, vTop-11);
+      return '<text x="'+lx+'" y="'+y0+'" text-anchor="start" font-size="10.5" fill="'+primaryDef.color+'" transform="rotate(-90 '+lx+' '+y0+')" style="pointer-events:none;">'+escapeHtml(txt)+'</text>';
+    };
     if (S.powerChartSubdivisions[i]!=null){
       const y = padT; // the line itself sits exactly at the plot's top edge; the circle straddles it
       primaryBarsSvg += '<line x1="'+x0+'" y1="'+y+'" x2="'+x1+'" y2="'+y+'" stroke="'+primaryDef.color+'" stroke-width="2" style="pointer-events:none;"/>';
@@ -5647,19 +5702,17 @@ function renderPowerChart(rows){
       // separate start/end names, written vertically at the interval's own
       // start and end x-positions respectively (adjusted per the boundary
       // rules above), instead of one combined label at the centre
-      const ly = padT+14;
       const bInfo = typeBBoundaryInfo(i);
       const lxS = x0+3.5+bInfo.startOffset, lxE = x1+3.5+bInfo.endOffset;
-      if (!bInfo.startHide) primaryBarsSvg += '<text x="'+lxS+'" y="'+ly+'" text-anchor="end" font-size="10.5" fill="'+primaryDef.color+'" transform="rotate(-90 '+lxS+' '+ly+')" style="pointer-events:none;">'+escapeHtml(numberPrefix(i+1)+(iv.startName||''))+'</text>';
-      if (!bInfo.endHide) primaryBarsSvg += '<text x="'+lxE+'" y="'+ly+'" text-anchor="end" font-size="10.5" fill="'+primaryDef.color+'" transform="rotate(-90 '+lxE+' '+ly+')" style="pointer-events:none;">'+escapeHtml(iv.endName||'')+'</text>';
+      if (!bInfo.startHide) primaryBarsSvg += cap(numberPrefix(i+1)+(iv.startName||''), lxS);
+      if (!bInfo.endHide) primaryBarsSvg += cap(iv.endName||'', lxE);
     } else {
       // written vertically, running upward, centred horizontally within the
       // interval's own bar (nudged half a character further right). Anchored
       // by its END so that end always sits at the very top of the plot area,
       // regardless of how long each label is — only the start (further down)
       // varies from one label to the next.
-      const lx = (x0+x1)/2+3.5, ly = padT+14;
-      primaryBarsSvg += '<text x="'+lx+'" y="'+ly+'" text-anchor="end" font-size="10.5" fill="'+primaryDef.color+'" transform="rotate(-90 '+lx+' '+ly+')" style="pointer-events:none;">'+escapeHtml(label)+'</text>';
+      primaryBarsSvg += cap(label, (x0+x1)/2+3.5);
     }
   });
   const bars = primaryBarsSvg;
@@ -6179,7 +6232,18 @@ function vRebuildSeries(){
 }
 function vVisible(){ return V.rides.filter(r=>!V.hidden.has(r.id)); }
 // seconds from the start of a ride's first section to the end of its last one
-function vStepsEnd(r){ return r.sections.length ? r.sections[r.sections.length-1].end - r.sections[0].start : 0; }
+function vStepsEnd(r){
+  if (!r.sections.length) return 0;
+  const a = r.sections[0], b = r.sections[r.sections.length-1];
+  if ($('#vXAxis').value==='dist') return (vDistAt(r, b.end)-vDistAt(r, a.start))/1000;
+  return b.end - a.start;
+}
+// distance (m) at an elapsed time
+function vDistAt(r, t){
+  const rs = r.recs; let lo = 0, hi = rs.length-1;
+  while (lo<hi){ const m = (lo+hi)>>1; if (rs[m].elapsed<t) lo = m+1; else hi = m; }
+  return rs[lo].dist;
+}
 function vXMax(){
   let x1 = 0;
   vVisible().forEach(r=>{
@@ -6206,6 +6270,7 @@ function vRefresh(){
   $('#vCompare').classList.toggle('hidden', ov || st);
   $('#vChartBox').classList.toggle('hidden', !(ov || st)); $('#vHint').classList.toggle('hidden', !(ov || st)); $('#vExportRow').classList.toggle('hidden', !(ov || st));
   $$('.vOnly-overlay').forEach(e=> e.classList.toggle('hidden', !ov));
+  $$('.vOnly-chart').forEach(e=> e.classList.toggle('hidden', !(ov || st)));
   if (ov || st) requestAnimationFrame(()=> vDraw()); else vRenderCompare();
 }
 // section by section: the average of the chosen value (power by default) for every ride
@@ -6345,18 +6410,21 @@ function vRenderCompare(){
   // ---- section-by-section step chart: one stepped line per ride, flat at each section's average,
   //      dropping to 0 over the rests between sections; x = time since the ride's first section began
   function ridesSteps(r, m){
-    const mk = $('#vMetric').value;
-    if (r._steps && r._steps.key===mk) return r._steps.data;   // averages are computed once per metric
-    const data = ridesStepsCalc(r, m); r._steps = { key:mk, data }; return data;
+    const mk = $('#vMetric').value+'|'+$('#vXAxis').value;
+    if (r._steps && r._steps.key===mk) return r._steps.data;   // averages are computed once per metric / axis
+    const data = ridesStepsCalc(r, m, $('#vXAxis').value); r._steps = { key:mk, data }; return data;
   }
-  function ridesStepsCalc(r, m){
+  function ridesStepsCalc(r, m, xmode){
     const secs = r.sections; if (!secs.length) return [];
-    const t0 = secs[0].start, out = [];
-    let prevEnd = t0;
+    const dist = xmode==='dist';
+    const X = t=> dist ? (vDistAt(r, t)-vDistAt(r, secs[0].start))/1000 : t-secs[0].start;   // km, or seconds since the first section began
+    const out = [];
+    let prevEnd = secs[0].start;
     secs.forEach(sec=>{
-      if (sec.start-prevEnd > 1) out.push({ a:prevEnd-t0, b:sec.start-t0, v:0, rest:true });
+      // a rest has length only on the time axis (on the distance axis it takes no room)
+      if (!dist && sec.start-prevEnd > 1) out.push({ a:X(prevEnd), b:X(sec.start), v:0, rest:true });
       const v = vSectionAvg(r, sec, m);
-      out.push({ a:sec.start-t0, b:sec.end-t0, v: v!=null ? v : 0, name:sec.name, sec, none:v==null });
+      out.push({ a:X(sec.start), b:X(sec.end), v: v!=null ? v : 0, name:sec.name, sec, none:v==null });
       prevEnd = sec.end;
     });
     return out;
@@ -6371,11 +6439,13 @@ function vRenderCompare(){
     const sy = niceStep(top*1.35, 5);
     yr = { y0:0, y1: Math.ceil(top*1.35/sy)*sy };
     ctx.font = '11px sans-serif'; ctx.strokeStyle = grid; ctx.lineWidth = 1; ctx.fillStyle = muted;
+    const sdist = $('#vXAxis').value==='dist';
     const opts = [600,1800,3600,7200,14400,28800];
-    const xstep = opts.find(o=>(V.view.x1-V.view.x0)/o<=8) || 28800;
+    const xstep = sdist ? niceStep(V.view.x1-V.view.x0, 7) : (opts.find(o=>(V.view.x1-V.view.x0)/o<=8) || 28800);
     ctx.textAlign = 'center'; ctx.textBaseline = 'top';
-    for (let x=Math.ceil(V.view.x0/xstep)*xstep; x<=V.view.x1; x+=xstep){
+    for (let x=Math.ceil(V.view.x0/xstep)*xstep; x<=V.view.x1+1e-9; x+=xstep){
       const px = Math.round(toX(x))+.5; ctx.beginPath(); ctx.moveTo(px,MT); ctx.lineTo(px,H-MB); ctx.stroke();
+      if (sdist){ ctx.fillText((+x.toFixed(3))+'', px, H-MB+5); continue; }
       const h = Math.floor(x/3600), mi = Math.round((x%3600)/60);
       ctx.fillText(mi===0 ? h+'h' : h+':'+String(mi).padStart(2,'0'), px, H-MB+5);
     }
@@ -6401,11 +6471,14 @@ function vRenderCompare(){
     // section's own start / end; an end name equal to the next start name is left out; two
     // names that would touch move 0.6 character apart (end to the left, start to the right)
     {
-      const CH = 0.6*7, OVER = 12, ly = MT+14;
+      const CH = 0.6*7, OVER = 12;
       ctx.font = '10px sans-serif'; ctx.textBaseline = 'middle';
-      const put = (txt, px)=>{
+      // the caption starts one character above the section's own level and reads upward
+      const put = (txt, px, topY)=>{
         if (!txt || px<ML-2 || px>W-MR+2) return;
-        ctx.save(); ctx.translate(px, ly); ctx.rotate(-Math.PI/2); ctx.textAlign = 'right'; ctx.fillText(txt, 0, 0); ctx.restore();
+        const w = ctx.measureText(txt).width;
+        const y0 = Math.max(MT+w+4, topY-11);
+        ctx.save(); ctx.translate(px, y0); ctx.rotate(-Math.PI/2); ctx.textAlign = 'left'; ctx.fillText(txt, 0, 0); ctx.restore();
       };
       all.forEach(({r, steps})=>{
         ctx.fillStyle = r.color;
@@ -6422,16 +6495,16 @@ function vRenderCompare(){
               const same = !!(sec.endName && next.sec.startName && sec.endName===next.sec.startName);
               if (same) eh = true; else if (Math.abs(x1-toX(next.a)) < OVER) eo = -CH;
             }
-            put(numberPrefix(sec.idx+1)+(sec.startName||''), x0+so);
-            if (!eh) put(sec.endName||'', x1+eo);
-          } else put(numberPrefix(sec.idx+1)+sec.name, (x0+x1)/2);
+            put(numberPrefix(sec.idx+1)+(sec.startName||''), x0+so, toY(s.v));
+            if (!eh) put(sec.endName||'', x1+eo, toY(s.v));
+          } else put(numberPrefix(sec.idx+1)+sec.name, (x0+x1)/2, toY(s.v));
         });
       });
     }
     ctx.restore();
     ctx.strokeStyle = grid; ctx.strokeRect(ML+.5, MT+.5, W-ML-MR, H-MT-MB);
     ctx.fillStyle = muted; ctx.font = '11px sans-serif'; ctx.textAlign = 'right'; ctx.textBaseline = 'top';
-    ctx.fillText('区間の'+(m.sum ? '' : '平均')+m.label+(m.unit ? '('+m.unit+')' : ''), W-MR-4, MT+3);
+    ctx.fillText('区間の'+(m.sum ? '' : '平均')+m.label+(m.unit ? '('+m.unit+')' : '')+(sdist ? ' / 距離(km)' : ''), W-MR-4, MT+3);
     if (V.cursor!=null){
       const px = toX(V.cursor);
       if (px>=ML && px<=W-MR){ ctx.strokeStyle = '#fff'; ctx.setLineDash([4,3]); ctx.beginPath(); ctx.moveTo(px,MT); ctx.lineTo(px,H-MB); ctx.stroke(); ctx.setLineDash([]); }
@@ -6519,7 +6592,7 @@ function vRenderCompare(){
         rows.push('<span style="color:'+r.color+'">●</span> '+escapeHtml(vDate(r.item.startTime, true))+'　'+(st.rest ? '休憩' : escapeHtml(st.name)+'　<b>'+(+st.v.toFixed(1))+'</b> '+m.unit));
       });
       const tip = $('#vTip');
-      tip.innerHTML = '<b>出発から '+fmtHMS(x)+'</b><br>'+(rows.join('<br>')||'データなし');
+      tip.innerHTML = '<b>'+(xmode==='dist' ? '出発から '+(+x.toFixed(2))+' km' : '出発から '+fmtHMS(x))+'</b><br>'+(rows.join('<br>')||'データなし');
       tip.classList.remove('hidden');
       tip.style.left = Math.max(4, Math.min(box.clientWidth-tip.offsetWidth-4, p.x-tip.offsetWidth/2))+'px';
       return;
@@ -6574,13 +6647,27 @@ function vExportName(ext){
   const d = new Date(), p = n=>String(n).padStart(2,'0');
   return 'Quaniter-比較-'+d.getFullYear()+p(d.getMonth()+1)+p(d.getDate())+'.'+ext;
 }
+// On a phone the share sheet is the way to a file: its 「ファイルに保存」 puts the PNG / PDF
+// in Files. Where sharing files is not possible, a normal download is used instead.
+async function vShareOrSave(name, blob){
+  try{
+    const file = new File([blob], name, { type:blob.type });
+    if (navigator.canShare && navigator.canShare({ files:[file] })){
+      await navigator.share({ files:[file], title:name });
+      return;
+    }
+  }catch(e){
+    if (e && e.name==='AbortError') return;   // the sheet was closed
+  }
+  saveFile(name, blob);
+}
 $('#vExpPng').addEventListener('click', ()=>{
   if (!V.rides.length) return;
-  vExportCanvas().toBlob(b=>{ if (b) saveFile(vExportName('png'), b); }, 'image/png');
+  vExportCanvas().toBlob(b=>{ if (b) vShareOrSave(vExportName('png'), b); }, 'image/png');
 });
 $('#vExpPdf').addEventListener('click', ()=>{
   if (!V.rides.length) return;
-  saveFile(vExportName('pdf'), vMakePdf(vExportCanvas()));
+  vShareOrSave(vExportName('pdf'), vMakePdf(vExportCanvas()));
 });
 
 })();
