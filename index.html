@@ -242,6 +242,9 @@ td.num{ text-align:right; font-variant-numeric:tabular-nums; }
   border:1.5px solid var(--accent); overflow:hidden; touch-action:none; }
 .tlClip::before{ content:''; position:absolute; inset:0; background:var(--accent); opacity:.2; pointer-events:none; }
 .tlClip.tlHighlight::before{ opacity:.3; }
+/* sections made by the automatic split are blue; the ones made or edited by hand stay teal */
+.tlClip.tlAuto{ border-color:#6c8cff; }
+.tlClip.tlAuto::before{ background:#6c8cff; }
 .tlClip.tlHighlight{ box-shadow:0 0 0 1.5px rgba(255,255,255,.9) inset; }
 .tlClip.tlLocked .tlClipHandle{ opacity:.35; } /* only the highlighted clip's edges are editable */
 /* handles sit at the clip's real start/end, so they only appear once that
@@ -653,7 +656,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
 // (this session's own publish count so far) is reconstructed from the
 // conversation itself rather than mechanically verified — best-effort, not
 // guaranteed exact. Increment by exactly 1 on every future publish.
-const APP_VERSION = 174;
+const APP_VERSION = 175;
 
 /* ============ FIT PARSER ============ */
 const FIT_EPOCH = 631065600; // seconds between 1970-01-01 and 1989-12-31 (FIT epoch)
@@ -1789,7 +1792,7 @@ function buildAutoIntervals(recs, laps, useLaps){
     let name = within(climbs, mid) ? 'ヒルクライム' : '';
     if (lib && lib.pieces && bounds[i+1]-bounds[i] < 60) continue;   // a stray sliver after a rest inside the section
     if (lib){ lib.pieces = (lib.pieces||0)+1; name = lib.pieces>1 ? lib.name+' ('+lib.pieces+')' : lib.name; }
-    const iv = { id:S.nextId++, name, nameType:'a', start:bounds[i], end:bounds[i+1], startSet:true, endSet:true };
+    const iv = { id:S.nextId++, name, nameType:'a', origin:'auto', start:bounds[i], end:bounds[i+1], startSet:true, endSet:true };
     if (lib && lib.nameType==='b'){   // a favourite saved with start/end names comes back the same way
       iv.nameType = 'b'; iv.name = '';
       iv.startName = lib.pieces>1 ? (lib.startName||'')+' ('+lib.pieces+')' : (lib.startName||'');
@@ -1911,6 +1914,7 @@ function serializeState(){
       return {
         name: iv.name,
         nameType: iv.nameType,
+        origin: iv.origin==='auto' ? 'auto' : 'manual',
         startName: iv.startName,
         endName: iv.endName,
         start: iv.start-offset,
@@ -2029,7 +2033,7 @@ function applyState(state, mode){
       const start = Math.max(lo, Math.min(hi, (Number(iv.start)||0)+offset));
       let end = Math.max(lo, Math.min(hi, (Number(iv.end)||hi)+offset));
       if (end<=start) end = Math.min(hi, start+1);
-      return { id:S.nextId++, name: iv.name || '区間', nameType: iv.nameType||'a', startName: iv.startName, endName: iv.endName, start, end, startSet:true, endSet:true };
+      return { id:S.nextId++, name: iv.name || '区間', nameType: iv.nameType||'a', origin: iv.origin==='auto' ? 'auto' : 'manual', startName: iv.startName, endName: iv.endName, start, end, startSet:true, endSet:true };
     });
     // Records are never discarded here any more — the whole original
     // recording stays loaded regardless of where the intervals happen to
@@ -3207,8 +3211,16 @@ function mergeSelectedIntervals(){
   const byEnd = sel.slice().sort((a,b)=>b.end-a.end);
   const first = byStart[0], last = byEnd[0];
   pushIvHistory();
-  const merged = { id:S.nextId++, name:first.name, nameType:first.nameType, startName:first.startName, endName:last.endName,
-    start:first.start, end:last.end, startSet:true, endSet:true };
+  // exactly one of the sections has a name -> that name is kept; otherwise (none, or several)
+  // the first one's start and the last one's end are used as before
+  const hasName = iv=> isTypeBEff(iv) || (!!((iv.name||'').trim()) && iv.name.trim()!=='区間');
+  const named = sel.filter(hasName);
+  const pick = named.length===1 ? named[0] : null;
+  const merged = pick
+    ? { id:S.nextId++, name:pick.name, nameType:pick.nameType, startName:pick.startName, endName:pick.endName,
+        origin:'manual', start:first.start, end:last.end, startSet:true, endSet:true }
+    : { id:S.nextId++, name:first.name, nameType:first.nameType, startName:first.startName, endName:last.endName,
+        origin:'manual', start:first.start, end:last.end, startSet:true, endSet:true };
   S.intervals = S.intervals.filter(iv=>!ivSelected.has(iv.id));
   S.intervals.push(merged);
   S.intervals.sort((a,b)=>a.start-b.start);
@@ -4016,13 +4028,13 @@ function renderTimeline(){
   // Fast path: while scrolling (or gliding) only positions change — the same
   // clips stay on the same tracks with the same labels, so just move the
   // existing elements instead of rebuilding them via innerHTML.
-  const structKey = trackCount+'|'+clips.map(c=>c.ti+':'+c.iv.id+':'+(c.isActive?1:0)+(c.sel?'s':'')+':'+c.label).join('\u0001');
+  const structKey = trackCount+'|'+clips.map(c=>c.ti+':'+c.iv.id+':'+(c.isActive?1:0)+(c.sel?'s':'')+(c.iv.origin==='auto'?'a':'')+':'+c.label).join('\u0001');
   if (structKey===timelineStructKey && trackEls().length===clips.length){
     placeClips();
   } else {
     const htmlFor = ti => '<div class="tlTrack" data-track="'+ti+'">'+
       clips.filter(c=>c.ti===ti).map(c=>
-        '<div class="tlClip'+(c.isActive?' tlHighlight':' tlLocked')+(c.sel?' tlSelected':'')+'" data-id="'+c.iv.id+'">'+
+        '<div class="tlClip'+(c.isActive?' tlHighlight':' tlLocked')+(c.sel?' tlSelected':'')+(c.iv.origin==='auto'?' tlAuto':'')+'" data-id="'+c.iv.id+'">'+
           '<div class="tlClipName" data-id="'+c.iv.id+'">'+escapeHtml(c.label)+'</div>'+
           '<div class="tlClipHandle" data-edge="start" data-id="'+c.iv.id+'">◀</div>'+
           '<div class="tlClipHandle" data-edge="end" data-id="'+c.iv.id+'">▶</div>'+
@@ -4337,6 +4349,7 @@ function onClipHandleMove(e){
   }
   const iv = S.intervals.find(x=>x.id===boundaryDrag.id);
   if (!iv) return;
+  iv.origin = 'manual';   // its edge was moved by hand
   if (boundaryDrag.edge==='start'){ iv.start = Math.max(0, Math.min(iv.end-1, t)); iv.startSet = true; }
   else { iv.end = Math.min(totalDur, Math.max(iv.start+1, t)); iv.endSet = true; }
   renderTimeline();
@@ -4389,8 +4402,8 @@ $('#tlSplit').addEventListener('click', ()=>{
   const seekT = S.records[S.selection.idx].elapsed;
   if (seekT<=iv.start || seekT>=iv.end){ showHeaderMsg('シーク位置がこの区間内にありません', true); return; }
   pushIvHistory();
-  const newIv = {id:S.nextId++, name:'', nameType:'a', start:seekT, end:iv.end, startSet:true, endSet:true};
-  iv.end = seekT;
+  const newIv = {id:S.nextId++, name:'', nameType:'a', origin:'manual', start:seekT, end:iv.end, startSet:true, endSet:true};
+  iv.end = seekT; iv.origin = 'manual';   // cut by hand
   S.intervals.splice(S.intervals.indexOf(iv)+1, 0, newIv);
   S.timelineSelectedId = iv.id;
   renderTimeline();
@@ -4450,7 +4463,7 @@ $('#tlAdd').addEventListener('click', ()=>{
   const seekT = S.selection ? S.records[S.selection.idx].elapsed : 0;
   const start = Math.max(0, seekT), end = Math.min(totalDur, seekT+width); // new interval starts AT the seek position
   pushIvHistory();
-  const newIv = {id:S.nextId++, name:'', nameType:'a', start, end: Math.max(start+1,end), startSet:true, endSet:true};
+  const newIv = {id:S.nextId++, name:'', nameType:'a', origin:'manual', start, end: Math.max(start+1,end), startSet:true, endSet:true};
   S.intervals.push(newIv);
   S.intervals.sort((a,b)=>a.start-b.start);
   S.timelineSelectedId = newIv.id;
