@@ -314,6 +314,36 @@ td.num{ text-align:right; font-variant-numeric:tabular-nums; }
 .commentFoot{ display:flex; gap:8px; justify-content:flex-end; margin-top:12px; }
 .mapCommentPin{ width:26px; height:22px; border-radius:6px; background:#f2c14e; border:1.5px solid #222; box-sizing:border-box; font-size:12px; line-height:19px; text-align:center; cursor:pointer; pointer-events:auto; }
 .mapCommentPin.sel{ background:#fff; }
+/* title screen and viewer */
+.titleScreen{ min-height:80vh; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px; text-align:center; padding:24px 0; }
+.titleLogo{ font-size:44px; font-weight:800; letter-spacing:.04em; color:var(--accent); }
+.titleSub{ color:var(--text-faint); font-size:13px; margin-bottom:18px; }
+.titleBtn{ width:min(360px,100%); padding:18px 16px; display:flex; flex-direction:column; gap:4px; align-items:center; background:var(--surface); border:1px solid var(--border); border-radius:14px; color:var(--text); }
+.titleBtn b{ font-size:19px; } .titleBtn span{ font-size:12px; color:var(--text-faint); }
+.titleBtn:active{ border-color:var(--accent); }
+.titleVer{ margin-top:22px; font-size:10px; color:var(--text-faint); }
+.vRow{ display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+.vBtn{ font-size:13px; padding:9px 14px; border-radius:9px; border:1px solid var(--border); background:var(--surface-2); color:var(--text); cursor:pointer; }
+.vBtn.primary{ background:var(--accent); border-color:var(--accent); color:#08211d; font-weight:700; }
+.vSel{ display:flex; flex-direction:column; gap:3px; font-size:11px; color:var(--text-faint); }
+.vSel select{ font:inherit; font-size:13px; color:var(--text); background:var(--surface-2); border:1px solid var(--border); border-radius:8px; padding:7px 8px; }
+.vItem{ display:flex; align-items:center; gap:10px; padding:10px 6px; border-bottom:1px solid var(--border); cursor:pointer; }
+.vItem:last-child{ border-bottom:none; }
+.vItem input{ width:20px; height:20px; flex:none; }
+.vItem .main{ flex:1; min-width:0; }
+.vItem .ttl{ font-size:14px; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.vItem .sub{ font-size:11.5px; color:var(--text-faint); margin-top:2px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.vStickyBar{ position:sticky; bottom:0; padding:10px 0 calc(10px + env(safe-area-inset-bottom,0px)); background:linear-gradient(transparent, var(--bg) 30%); }
+.vLegend{ display:flex; flex-direction:column; gap:2px; margin:10px 0; }
+.vLegend label{ display:flex; align-items:center; gap:8px; font-size:13px; padding:5px 2px; cursor:pointer; }
+.vLegend input{ width:19px; height:19px; flex:none; }
+.vLegend i{ width:18px; height:4px; border-radius:2px; flex:none; }
+.vLegend span.t{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.vChartBox{ position:relative; border:1px solid var(--border); border-radius:10px; background:var(--surface); overflow:hidden; touch-action:none; }
+#vCanvas{ display:block; width:100%; height:360px; touch-action:none; }
+.vTools{ position:absolute; top:6px; left:6px; display:flex; gap:4px; z-index:2; }
+.vTools button{ padding:4px 10px; font-size:14px; border-radius:8px; background:rgba(29,32,37,.9); border:1px solid var(--border); color:var(--text); }
+.vTip{ position:absolute; z-index:3; pointer-events:none; background:rgba(0,0,0,.88); border:1px solid var(--accent); border-radius:8px; padding:6px 9px; font-size:12px; line-height:1.55; white-space:nowrap; top:34px; }
 /* original-quality viewer */
 .photoViewer{ position:fixed; inset:0; z-index:70; background:#000; display:flex; flex-direction:column; }
 .photoViewer.hidden{ display:none; }
@@ -405,9 +435,67 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
 
 <div id="headerMsg" class="headerMsg"><span id="headerMsgText"></span></div>
 
-<div id="page1" class="page">
+<div id="page0" class="page">
+  <div class="titleScreen">
+    <div class="titleLogo">Quaniter</div>
+    <div class="titleSub">ライドを区切り、振り返り、比べる</div>
+    <button id="goAnalyzer" class="titleBtn" type="button"><b>アナライザー</b><span>ライドを区間に分けて解析する</span></button>
+    <button id="goViewer" class="titleBtn" type="button"><b>ビュワー</b><span>解析済みのライドを振り返る・比べる</span></button>
+    <div class="titleVer" id="titleVer"></div>
+  </div>
+</div>
+
+<div id="pageV1" class="page hidden">
+  <div class="panel">
+    <div class="panel-head">
+      <button id="v1Back" class="small ghost icon-btn" type="button" title="タイトルへ">←</button>
+      <h2>ビュワー:ライドを選ぶ</h2>
+    </div>
+    <div class="vRow">
+      <label class="vBtn primary" for="vDirInput">📁 フォルダを選ぶ</label>
+      <input type="file" id="vDirInput" webkitdirectory directory multiple hidden>
+      <label class="vBtn" for="vFileInput">ZIPを選ぶ(複数可)</label>
+      <input type="file" id="vFileInput" accept=".zip,application/zip" multiple hidden>
+      <button id="vPickDir" class="small hidden" type="button">フォルダを選ぶ(PC)</button>
+    </div>
+    <div class="hint" id="vStatus" style="margin-top:8px;">解析済みのZIP(Quaniterのアナライザーで「保存」したもの)を、フォルダの下から全部探します。</div>
+  </div>
+  <div class="panel hidden" id="vListPanel">
+    <div class="vRow" style="margin-bottom:8px;">
+      <button id="vAll" class="small ghost" type="button">すべて選ぶ</button>
+      <button id="vNone" class="small ghost" type="button">選択を解除</button>
+      <span class="hint" id="vCount" style="margin-left:auto;"></span>
+    </div>
+    <div id="vList"></div>
+  </div>
+  <div class="vStickyBar hidden" id="vNextBar"><button id="vNext" class="primary wideConfirm" type="button" disabled>選んだライドを見る</button></div>
+</div>
+
+<div id="pageV2" class="page hidden">
+  <div class="panel">
+    <div class="panel-head">
+      <button id="v2Back" class="small ghost icon-btn" type="button" title="ライド選択へ">←</button>
+      <h2>ビュワー:重ね書き</h2>
+    </div>
+    <div class="vRow">
+      <label class="vSel">項目<select id="vMetric"></select></label>
+      <label class="vSel">横軸<select id="vXAxis"><option value="elapsed">経過時間</option><option value="dist">距離</option></select></label>
+      <label class="vSel">平滑化<select id="vSmooth"><option value="0">なし</option><option value="5">5秒</option><option value="15" selected>15秒</option><option value="30">30秒</option><option value="60">60秒</option></select></label>
+    </div>
+    <div id="vLegend" class="vLegend"></div>
+    <div class="vChartBox" id="vChartBox">
+      <canvas id="vCanvas"></canvas>
+      <div class="vTools"><button type="button" data-a="in">＋</button><button type="button" data-a="out">－</button><button type="button" data-a="reset">全体</button></div>
+      <div class="vTip hidden" id="vTip"></div>
+    </div>
+    <div class="hint" id="vHint">ドラッグで移動、指2本または＋/－で横方向を拡大縮小、タップするとその位置の各ライドの値が出ます。</div>
+  </div>
+</div>
+
+<div id="page1" class="page hidden">
   <div class="panel" id="uploadPanel">
     <div id="p1TopRow">
+      <button id="homeBtn" class="small ghost icon-btn" type="button" title="タイトルへ">⌂</button>
       <span id="appVersionLabel" style="font-size:10px; color:var(--text-faint);"></span>
       <div style="flex:1;"></div>
       <button id="undoBtn" class="small ghost icon-btn" type="button" title="取り消し" disabled>↶</button>
@@ -662,7 +750,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
 // (this session's own publish count so far) is reconstructed from the
 // conversation itself rather than mechanically verified — best-effort, not
 // guaranteed exact. Increment by exactly 1 on every future publish.
-const APP_VERSION = 176;
+const APP_VERSION = 177;
 
 /* ============ FIT PARSER ============ */
 const FIT_EPOCH = 631065600; // seconds between 1970-01-01 and 1989-12-31 (FIT epoch)
@@ -1260,9 +1348,10 @@ function renderTimelineThrottled(){
   timelineRenderQueued = true;
   requestAnimationFrame(()=>{ timelineRenderQueued = false; renderTimeline(); });
 }
-let currentPageNum = 1;
+let currentPageNum = 0;
 function showPage(n){
   currentPageNum = n;
+  if (n==='V2' && typeof vDraw==='function') requestAnimationFrame(()=> vDraw());
   $$('.page').forEach(p=> p.classList.add('hidden'));
   $('#page'+n).classList.remove('hidden');
   document.querySelector('.wrap').classList.toggle('p2Active', n===2);
@@ -5890,6 +5979,325 @@ $('#expJpg').addEventListener('click', async ()=>{
   const canvas = await html2canvas(el, {backgroundColor: cssVar('--surface') || '#ffffff', scale:2});
   canvas.toBlob(blob=>{ saveAs('png', S.fileBaseName+'-区間分析.png', blob, 'image/png', 'png', 'PNG', $('#expJpg')); }, 'image/png');
 });
+
+/* ============ TITLE SCREEN AND VIEWER ============ */
+$('#titleVer').textContent = 'v'+APP_VERSION;
+$('#goAnalyzer').addEventListener('click', ()=> showPage(1));
+$('#goViewer').addEventListener('click', ()=> showPage('V1'));
+$('#homeBtn').addEventListener('click', ()=> showPage(0));
+$('#v1Back').addEventListener('click', ()=> showPage(0));
+$('#v2Back').addEventListener('click', ()=> showPage('V1'));
+
+const V = { items:[], sel:new Set(), rides:[], hidden:new Set(), view:null, cursor:null, series:null };
+const V_COLORS = ['#17b8a4','#f2994a','#6c8cff','#f0506a','#c9a227','#b57cf0','#4fc3f7','#9ccc65','#ff8a80','#a1887f'];
+function vDate(ts, dateOnly){
+  if (ts==null) return '日時不明';
+  const d = new Date(ts*1000), p = n=>String(n).padStart(2,'0');
+  return d.getFullYear()+'/'+p(d.getMonth()+1)+'/'+p(d.getDate())+(dateOnly ? '' : ' '+d.getHours()+':'+p(d.getMinutes()));
+}
+function vNameDate(name){      // 260606 / 20260606 in a file name
+  const m = /(?:^|[^0-9])(?:20)?(\d{2})(\d{2})(\d{2})(?!\d)/.exec(name||'');
+  if (!m || +m[2]<1 || +m[2]>12 || +m[3]<1 || +m[3]>31) return null;
+  return new Date(2000+ +m[1], +m[2]-1, +m[3]).getTime()/1000;
+}
+
+/* ---- step 1: find the analysed .zip files under a folder ---- */
+async function vScan(entries){
+  const zips = entries.filter(e=>/\.zip$/i.test(e.file.name));
+  if (!window.JSZip){ $('#vStatus').textContent = 'ZIP展開ライブラリを読み込めませんでした。ネットワーク状態を確認してください。'; return; }
+  const items = []; let skipped = 0;
+  for (let i=0;i<zips.length;i++){
+    $('#vStatus').textContent = 'ZIPを調べています… '+i+' / '+zips.length;
+    await new Promise(r=>setTimeout(r,0));
+    try{
+      const zip = await JSZip.loadAsync(zips[i].file);
+      const fit = Object.values(zip.files).find(f=>!f.dir && /\.fit$/i.test(f.name));
+      const json = Object.values(zip.files).find(f=>!f.dir && /\.json$/i.test(f.name));
+      if (!fit || !json){ skipped++; continue; }          // not an analysed ride
+      const parsed = JSON.parse(await json.async('string'));
+      const st = parsed.settings || parsed;
+      const src = st.sourceFile || parsed.sourceFile || {};
+      items.push({ id:items.length, file:zips[i].file, path:zips[i].path,
+        name: parsed.fitFile || src.fileName || zips[i].file.name.replace(/\.zip$/i,''),
+        startTime: src.startTime!=null ? Number(src.startTime) : vNameDate(parsed.fitFile || zips[i].file.name),
+        dateOnly: src.startTime==null,
+        distanceM: src.distanceM!=null ? Number(src.distanceM) : null,
+        durationSec: src.durationSec!=null ? Number(src.durationSec) : null,
+        nSections: Array.isArray(st.intervals) ? st.intervals.length : null });
+    }catch(e){ skipped++; }
+  }
+  items.sort((a,b)=> (b.startTime||0)-(a.startTime||0));
+  items.forEach((it,i)=> it.id = i);
+  V.items = items; V.sel = new Set();
+  $('#vStatus').textContent = 'ZIP '+zips.length+'件を調べ、解析済みのライド '+items.length+'件が見つかりました'+(skipped?'('+skipped+'件は解析済みではないため除外)':'')+'。';
+  vRenderList();
+}
+function vRenderList(){
+  const box = $('#vList'); box.innerHTML = '';
+  $('#vListPanel').classList.toggle('hidden', !V.items.length);
+  $('#vNextBar').classList.toggle('hidden', !V.items.length);
+  V.items.forEach(it=>{
+    const row = document.createElement('label'); row.className = 'vItem';
+    const dist = it.distanceM!=null ? (it.distanceM/1000).toFixed(1)+' km' : '';
+    const dur = it.durationSec!=null ? fmtHMS(it.durationSec) : '';
+    row.innerHTML = '<input type="checkbox"'+(V.sel.has(it.id)?' checked':'')+'><div class="main"><div class="ttl">'+escapeHtml(vDate(it.startTime, it.dateOnly))+'　'+escapeHtml(it.name)+'</div><div class="sub">'+
+      [dist, dur, it.nSections!=null ? it.nSections+'区間' : '', it.path].filter(Boolean).map(escapeHtml).join(' ・ ')+'</div></div>';
+    row.querySelector('input').addEventListener('change', e=>{ if (e.target.checked) V.sel.add(it.id); else V.sel.delete(it.id); vUpdateSel(); });
+    box.appendChild(row);
+  });
+  vUpdateSel();
+}
+function vUpdateSel(){
+  $('#vCount').textContent = V.sel.size+' / '+V.items.length+' 件を選択中';
+  $('#vNext').disabled = !V.sel.size;
+  $('#vNext').textContent = V.sel.size>1 ? V.sel.size+'件を重ねて見る' : '選んだライドを見る';
+}
+$('#vAll').addEventListener('click', ()=>{ V.items.forEach(it=>V.sel.add(it.id)); vRenderList(); });
+$('#vNone').addEventListener('click', ()=>{ V.sel.clear(); vRenderList(); });
+$('#vDirInput').addEventListener('change', e=> vScan([...e.target.files].map(f=>({file:f, path:f.webkitRelativePath||f.name}))));
+$('#vFileInput').addEventListener('change', e=> vScan([...e.target.files].map(f=>({file:f, path:f.name}))));
+if (window.showDirectoryPicker){
+  $('#vPickDir').classList.remove('hidden');
+  $('#vPickDir').addEventListener('click', async ()=>{
+    try{
+      const root = await window.showDirectoryPicker();
+      const out = [];
+      await (async function walk(dir, prefix){
+        for await (const [name, h] of dir.entries()){
+          if (h.kind==='directory') await walk(h, prefix+name+'/');
+          else if (/\.zip$/i.test(name)) out.push({file:await h.getFile(), path:prefix+name});
+        }
+      })(root, root.name+'/');
+      vScan(out);
+    }catch(e){ /* cancelled */ }
+  });
+}
+
+/* ---- step 2: load the chosen rides and overlay them ---- */
+const V_METRICS = {
+  speed: { label:'速度', unit:'km/h', get:r=> r.speed!=null ? r.speed*3.6 : null, zero:true },
+  hr:    { label:'心拍', unit:'bpm', get:r=> r.hr, zero:false },
+  power: { label:'パワー', unit:'W', get:r=> r.power, zero:true },
+  cad:   { label:'ケイデンス', unit:'rpm', get:r=> r.cad, zero:true },
+  alt:   { label:'標高', unit:'m', get:r=> r.altSmooth!=null ? r.altSmooth : r.alt, zero:false },
+};
+$('#vMetric').innerHTML = Object.keys(V_METRICS).map(k=>'<option value="'+k+'">'+V_METRICS[k].label+'('+V_METRICS[k].unit+')</option>').join('');
+$('#vNext').addEventListener('click', async ()=>{
+  const chosen = V.items.filter(it=>V.sel.has(it.id));
+  if (!chosen.length) return;
+  showPage('V2');
+  $('#vLegend').textContent = 'ライドを読み込んでいます…';
+  V.rides = []; V.hidden = new Set(); V.view = null; V.cursor = null;
+  for (let i=0;i<chosen.length;i++){
+    $('#vLegend').textContent = 'ライドを読み込んでいます… '+(i)+' / '+chosen.length;
+    await new Promise(r=>setTimeout(r,0));
+    try{
+      const zip = await JSZip.loadAsync(chosen[i].file);
+      const fit = Object.values(zip.files).find(f=>!f.dir && /\.fit$/i.test(f.name));
+      const recs = parseFit(await fit.async('arraybuffer'));
+      smoothAltitudes(recs);
+      if (recs.length) V.rides.push({ id:V.rides.length, item:chosen[i], recs, color:V_COLORS[V.rides.length % V_COLORS.length] });
+    }catch(e){ console.warn('viewer load', chosen[i].name, e); }
+  }
+  vBuildLegend();
+  vRebuildSeries(); vFit(); vDraw();
+});
+function vBuildLegend(){
+  const box = $('#vLegend'); box.innerHTML = '';
+  if (!V.rides.length){ box.textContent = '読み込めたライドがありません。'; return; }
+  V.rides.forEach(r=>{
+    const lab = document.createElement('label');
+    lab.innerHTML = '<input type="checkbox" checked><i style="background:'+r.color+'"></i><span class="t">'+escapeHtml(vDate(r.item.startTime, r.item.dateOnly))+'　'+escapeHtml(r.item.name)+'</span>';
+    lab.querySelector('input').addEventListener('change', e=>{
+      if (e.target.checked) V.hidden.delete(r.id); else V.hidden.add(r.id);
+      V.cursor = null; $('#vTip').classList.add('hidden');
+      vFit(true); vDraw();
+    });
+    box.appendChild(lab);
+  });
+}
+// per ride: x[] and y[] for the chosen metric / axis, moving-averaged over a time window
+function vRebuildSeries(){
+  const m = V_METRICS[$('#vMetric').value], xmode = $('#vXAxis').value, win = Number($('#vSmooth').value);
+  V.series = V.rides.map(r=>{
+    const xs = [], ys = [];
+    const raw = r.recs.map(x=>m.get(x));
+    let lo = 0, sum = 0, cnt = 0;
+    for (let i=0;i<r.recs.length;i++){
+      const t = r.recs[i].elapsed;
+      if (raw[i]!=null){ sum += raw[i]; cnt++; }
+      while (lo<i && r.recs[lo].elapsed < t-win){ if (raw[lo]!=null){ sum -= raw[lo]; cnt--; } lo++; }
+      if (raw[i]==null) continue;
+      xs.push(xmode==='dist' ? r.recs[i].dist/1000 : t);
+      ys.push(win>0 ? sum/cnt : raw[i]);
+    }
+    return { xs, ys };
+  });
+}
+function vVisible(){ return V.rides.filter(r=>!V.hidden.has(r.id)); }
+function vFit(keepX){
+  const vis = vVisible();
+  let x1 = 0;
+  vis.forEach(r=>{ const xs = V.series[r.id].xs; if (xs.length) x1 = Math.max(x1, xs[xs.length-1]); });
+  if (!V.view || !keepX) V.view = { x0:0, x1:x1||1 };
+}
+function vLowerBound(a, x){ let lo=0, hi=a.length; while (lo<hi){ const m=(lo+hi)>>1; if (a[m]<x) lo=m+1; else hi=m; } return lo; }
+['#vMetric','#vXAxis','#vSmooth'].forEach(id=> $(id).addEventListener('change', ()=>{
+  V.cursor = null; $('#vTip').classList.add('hidden');
+  vRebuildSeries(); vFit(false); vDraw();
+}));
+
+/* ---- the chart: canvas, pan / pinch / wheel on x, tap for values ---- */
+(function(){
+  const cv = $('#vCanvas'), box = $('#vChartBox');
+  const ML = 46, MR = 12, MT = 12, MB = 30;
+  let W = 0, H = 0, yr = {y0:0, y1:1};
+  const toX = x=> ML + (x-V.view.x0)/(V.view.x1-V.view.x0)*(W-ML-MR);
+  const fromX = px=> V.view.x0 + (px-ML)/(W-ML-MR)*(V.view.x1-V.view.x0);
+  const toY = y=> MT + (1-(y-yr.y0)/(yr.y1-yr.y0))*(H-MT-MB);
+  function niceStep(range, target){
+    const raw = range/target, p = Math.pow(10, Math.floor(Math.log10(Math.max(raw,1e-12)))), f = raw/p;
+    return (f<1.5?1:f<3.5?2:f<7.5?5:10)*p;
+  }
+  function fmtX(x, xmode){
+    if (xmode==='dist') return (+x.toFixed(2))+'';
+    const sec = Math.round(x), h = Math.floor(sec/3600), m = Math.floor((sec%3600)/60);
+    return h>0 ? h+':'+String(m).padStart(2,'0') : (m+'分');
+  }
+  window.vDraw = function(){
+    if (!V.view || !V.series) return;
+    const dpr = window.devicePixelRatio||1;
+    W = cv.clientWidth; H = cv.clientHeight;
+    if (!W || !H) return;
+    if (cv.width!==Math.round(W*dpr) || cv.height!==Math.round(H*dpr)){ cv.width = Math.round(W*dpr); cv.height = Math.round(H*dpr); }
+    const ctx = cv.getContext('2d'); ctx.setTransform(dpr,0,0,dpr,0,0); ctx.clearRect(0,0,W,H);
+    const css = getComputedStyle(document.documentElement);
+    const grid = css.getPropertyValue('--border').trim(), muted = css.getPropertyValue('--text-faint').trim() || '#8b9099';
+    const m = V_METRICS[$('#vMetric').value], xmode = $('#vXAxis').value;
+    const vis = vVisible();
+    // y range from what is visible in the current x window
+    let lo = Infinity, hi = -Infinity;
+    vis.forEach(r=>{
+      const s = V.series[r.id];
+      for (let i=vLowerBound(s.xs, V.view.x0); i<s.xs.length && s.xs[i]<=V.view.x1; i++){ if (s.ys[i]<lo) lo = s.ys[i]; if (s.ys[i]>hi) hi = s.ys[i]; }
+    });
+    if (!isFinite(lo)){ lo = 0; hi = 1; }
+    if (m.zero) lo = Math.min(lo, 0);
+    if (hi-lo < 1e-9){ hi = lo+1; }
+    const pad = (hi-lo)*0.06; yr = { y0: m.zero && lo===0 ? 0 : lo-pad, y1: hi+pad };
+    ctx.font = '11px sans-serif'; ctx.fillStyle = muted; ctx.strokeStyle = grid; ctx.lineWidth = 1;
+    const sx = niceStep((V.view.x1-V.view.x0), 5) * (xmode==='elapsed' ? 1 : 1), sy = niceStep(yr.y1-yr.y0, 5);
+    // time ticks fall on whole minutes (or hours when zoomed out)
+    let xstep = sx;
+    if (xmode==='elapsed'){ const opts = [10,30,60,120,300,600,900,1800,3600,7200,14400]; xstep = opts.find(o=>(V.view.x1-V.view.x0)/o<=6) || 14400; }
+    ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+    for (let x=Math.ceil(V.view.x0/xstep)*xstep; x<=V.view.x1; x+=xstep){
+      const px = Math.round(toX(x))+.5; ctx.beginPath(); ctx.moveTo(px,MT); ctx.lineTo(px,H-MB); ctx.stroke();
+      ctx.fillText(fmtX(x, xmode), px, H-MB+5);
+    }
+    ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+    for (let y=Math.ceil(yr.y0/sy)*sy; y<=yr.y1; y+=sy){
+      const py = Math.round(toY(y))+.5; ctx.beginPath(); ctx.moveTo(ML,py); ctx.lineTo(W-MR,py); ctx.stroke();
+      ctx.fillText((+y.toFixed(4)).toString(), ML-5, py);
+    }
+    ctx.textAlign = 'right'; ctx.textBaseline = 'top';
+    ctx.fillText(m.label+'('+m.unit+')  /  '+(xmode==='dist' ? '距離(km)' : '経過時間'), W-MR-4, MT+3);
+    // the lines
+    ctx.save(); ctx.beginPath(); ctx.rect(ML, MT, W-ML-MR, H-MT-MB); ctx.clip();
+    ctx.lineWidth = 1.6; ctx.lineJoin = 'round';
+    vis.forEach(r=>{
+      const s = V.series[r.id];
+      const i0 = Math.max(0, vLowerBound(s.xs, V.view.x0)-1);
+      let i1 = vLowerBound(s.xs, V.view.x1)+1; if (i1>s.xs.length) i1 = s.xs.length;
+      const stride = Math.max(1, Math.floor((i1-i0)/((W-ML-MR)*1.5)));
+      ctx.strokeStyle = r.color; ctx.beginPath();
+      let started = false, lastX = null;
+      for (let i=i0; i<i1; i+=stride){
+        const px = toX(s.xs[i]), py = toY(s.ys[i]);
+        const gap = xmode!=='dist' && lastX!=null && (s.xs[i]-lastX) > Math.max(30, stride*3);   // recording gap: lift the pen
+        if (!started || gap) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+        started = true; lastX = s.xs[i];
+      }
+      ctx.stroke();
+    });
+    ctx.restore();
+    ctx.strokeRect(ML+.5, MT+.5, W-ML-MR, H-MT-MB);
+    if (V.cursor!=null){
+      const px = toX(V.cursor);
+      if (px>=ML && px<=W-MR){ ctx.strokeStyle = '#fff'; ctx.setLineDash([4,3]); ctx.beginPath(); ctx.moveTo(px,MT); ctx.lineTo(px,H-MB); ctx.stroke(); ctx.setLineDash([]); }
+    }
+    if (!vis.length){ ctx.fillStyle = muted; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('表示するライドにチェックを入れてください', W/2, H/2); }
+  };
+  /* gestures */
+  const ptrs = new Map(); let g = null;
+  const local = e=>{ const r = cv.getBoundingClientRect(); return {x:e.clientX-r.left, y:e.clientY-r.top}; };
+  function zoomAt(px, k){
+    const cx = fromX(px), v = V.view;
+    V.view = { x0:cx-(cx-v.x0)/k, x1:cx+(v.x1-cx)/k };
+    clampView();
+  }
+  function clampView(){
+    const vis = vVisible(); let max = 0;
+    vis.forEach(r=>{ const xs = V.series[r.id].xs; if (xs.length) max = Math.max(max, xs[xs.length-1]); });
+    max = max || 1;
+    let w = Math.min(V.view.x1-V.view.x0, max*1.02), x0 = V.view.x0;
+    if (w < max*0.002) w = max*0.002;
+    x0 = Math.max(-max*0.01, Math.min(max*1.01-w, x0));
+    V.view = { x0, x1:x0+w };
+  }
+  cv.addEventListener('pointerdown', e=>{
+    cv.setPointerCapture(e.pointerId); ptrs.set(e.pointerId, local(e));
+    if (ptrs.size===1) g = { type:'pan', start:local(e), t:performance.now(), moved:false, view:{...V.view} };
+    else if (ptrs.size===2){ const [a,b] = [...ptrs.values()]; g = { type:'pinch', d:Math.max(1,Math.abs(a.x-b.x)), mid:(a.x+b.x)/2, view:{...V.view}, moved:true }; }
+  });
+  cv.addEventListener('pointermove', e=>{
+    if (!ptrs.has(e.pointerId) || !g) return;
+    ptrs.set(e.pointerId, local(e));
+    if (g.type==='pan' && ptrs.size===1){
+      const p = local(e), dx = p.x-g.start.x;
+      if (Math.abs(dx)>5 || Math.abs(p.y-g.start.y)>5) g.moved = true;
+      if (!g.moved) return;
+      const wx = (g.view.x1-g.view.x0)/(W-ML-MR);
+      V.view = { x0:g.view.x0-dx*wx, x1:g.view.x1-dx*wx }; clampView(); vDraw();
+    } else if (g.type==='pinch' && ptrs.size>=2){
+      const [a,b] = [...ptrs.values()];
+      V.view = {...g.view}; zoomAt(g.mid, Math.max(1,Math.abs(a.x-b.x))/g.d); vDraw();
+    }
+  });
+  function up(e){
+    if (!ptrs.has(e.pointerId)) return;
+    const p = local(e), was = g;
+    ptrs.delete(e.pointerId);
+    if (ptrs.size===0){ if (was && was.type==='pan' && !was.moved && performance.now()-was.t<500) tap(p); g = null; }
+    else if (ptrs.size===1){ const rem = [...ptrs.values()][0]; g = { type:'pan', start:rem, t:performance.now(), moved:true, view:{...V.view} }; }
+  }
+  cv.addEventListener('pointerup', up); cv.addEventListener('pointercancel', up);
+  cv.addEventListener('wheel', e=>{ e.preventDefault(); zoomAt(local(e).x, e.deltaY<0 ? 1.2 : 1/1.2); vDraw(); }, {passive:false});
+  function tap(p){
+    if (!V.view || p.x<ML || p.x>W-MR){ V.cursor = null; $('#vTip').classList.add('hidden'); vDraw(); return; }
+    const x = fromX(p.x), m = V_METRICS[$('#vMetric').value], xmode = $('#vXAxis').value;
+    V.cursor = x; vDraw();
+    const rows = [];
+    vVisible().forEach(r=>{
+      const s = V.series[r.id]; if (!s.xs.length) return;
+      let i = vLowerBound(s.xs, x); if (i>=s.xs.length) i = s.xs.length-1;
+      if (i>0 && Math.abs(s.xs[i-1]-x) < Math.abs(s.xs[i]-x)) i--;
+      if (Math.abs(s.xs[i]-x) > (V.view.x1-V.view.x0)*0.05) return;      // that ride has no data here
+      rows.push('<span style="color:'+r.color+'">●</span> '+escapeHtml(vDate(r.item.startTime, true))+'　<b>'+(+s.ys[i].toFixed(1))+'</b> '+m.unit);
+    });
+    const tip = $('#vTip');
+    tip.innerHTML = '<b>'+(xmode==='dist' ? (+x.toFixed(2))+' km' : fmtHMS(x))+'</b><br>'+(rows.join('<br>')||'データなし');
+    tip.classList.remove('hidden');
+    tip.style.left = Math.max(4, Math.min(box.clientWidth-tip.offsetWidth-4, p.x-tip.offsetWidth/2))+'px';
+  }
+  box.querySelector('.vTools').addEventListener('click', e=>{
+    const a = e.target.dataset && e.target.dataset.a; if (!a || !V.view) return;
+    const c = (ML+W-MR)/2;
+    if (a==='in') zoomAt(c, 1.5); else if (a==='out') zoomAt(c, 1/1.5); else { V.cursor = null; $('#vTip').classList.add('hidden'); vFit(false); }
+    vDraw();
+  });
+  new ResizeObserver(()=> vDraw()).observe(cv);
+})();
 
 })();
 </script>
