@@ -325,6 +325,8 @@ td.num{ text-align:right; font-variant-numeric:tabular-nums; }
 .vRow{ display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
 .vBtn{ font-size:13px; padding:9px 14px; border-radius:9px; border:1px solid var(--border); background:var(--surface-2); color:var(--text); cursor:pointer; }
 .vBtn.primary{ background:var(--accent); border-color:var(--accent); color:#08211d; font-weight:700; }
+.vAxBtn{ position:absolute; z-index:3; display:block; font-size:10px; line-height:1; letter-spacing:-1px; padding:4px 5px; border:1px solid var(--border); border-radius:6px; background:var(--surface-2); color:var(--text-dim); cursor:pointer; white-space:nowrap; }
+.vAxBtn select{ position:absolute; inset:0; width:100%; height:100%; opacity:0; font-size:16px; }
 .vSel{ display:flex; flex-direction:column; gap:3px; font-size:11px; color:var(--text-faint); }
 .vSel select{ font:inherit; font-size:13px; color:var(--text); background:var(--surface-2); border:1px solid var(--border); border-radius:8px; padding:7px 8px; }
 .vItem{ display:flex; align-items:center; gap:10px; padding:10px 6px; border-bottom:1px solid var(--border); cursor:pointer; }
@@ -359,6 +361,7 @@ td.num{ text-align:right; font-variant-numeric:tabular-nums; }
 .vTbl{ table-layout:fixed; font-size:12px; }
 .vTbl th,.vTbl td{ white-space:nowrap; padding:4px 7px; overflow:hidden; text-overflow:ellipsis; }
 .vTbl th.vFn,.vTbl td.vFn{ position:sticky; left:0; z-index:2; background:var(--surface-2); box-shadow:2px 0 4px rgba(0,0,0,.12); }
+.vTbl th.vPin,.vTbl td.vPin{ position:sticky; left:24px; z-index:2; background:var(--surface-2); box-shadow:2px 0 4px rgba(0,0,0,.12); }
 .vColRow{ display:flex; align-items:center; gap:6px; }
 .vColRow.dragging{ background:var(--accent-soft,rgba(128,128,128,.25)); border-radius:6px; }
 .vColRow label{ white-space:nowrap; font-size:13px; }
@@ -499,17 +502,14 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
       <button id="v2Back" class="small ghost icon-btn" type="button" title="ライド選択へ">←</button>
       <h2>ビュワー:ライドの比較</h2>
     </div>
-    <div class="vRow">
-      <label class="vSel">項目<select id="vMetric"></select></label>
-      <label class="vSel">横軸<select id="vXAxis"><option value="elapsed">経過時間</option><option value="dist">距離</option></select></label>
-    </div>
     <div id="vLegend" class="vLegend"></div>
     <div class="vChartBox" id="vChartBox">
       <canvas id="vCanvas"></canvas>
+      <label class="vAxBtn" id="vYBtn" title="縦軸の項目">▲▼<select id="vMetric"></select></label>
+      <label class="vAxBtn" id="vXBtn" title="横軸の項目">▲▼<select id="vXAxis"><option value="elapsed">経過時間</option><option value="dist">距離</option></select></label>
     </div>
     <div class="vTip hidden" id="vTip"></div>
-    <div class="vRow" id="vExportRow" style="margin-top:10px;"><button id="vSplitBtn" class="small primary" type="button" disabled>区間を分割</button><button id="vExpPng" class="small" type="button">PNGを保存</button><button id="vExpPdf" class="small" type="button">PDFを保存</button><span class="hint">押すと共有メニューが開きます。「ファイルに保存」を選ぶと、ファイルアプリに保存できます。</span></div>
-    <div class="hint" id="vHint">ドラッグで移動(はじくと慣性で流れます)、指2本で横方向を拡大縮小、タップでシークバーを置き、長押ししてドラッグするとシークバーが動きます。「区間を分割」は、シークバーが重なっている一番手前のライドの区間を、指定した間隔に分けます。</div>
+    <div class="vRow" id="vExportRow" style="margin-top:10px;"><button id="vSplitBtn" class="small primary" type="button" disabled>区間を分割</button><button id="vExpPng" class="small" type="button">PNGを保存</button><button id="vExpPdf" class="small" type="button">PDFを保存</button></div>
   </div>
 </div>
 
@@ -771,7 +771,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
 // (this session's own publish count so far) is reconstructed from the
 // conversation itself rather than mechanically verified — best-effort, not
 // guaranteed exact. Increment by exactly 1 on every future publish.
-const APP_VERSION = 188;
+const APP_VERSION = 189;
 
 /* ============ FIT PARSER ============ */
 const FIT_EPOCH = 631065600; // seconds between 1970-01-01 and 1989-12-31 (FIT epoch)
@@ -6237,8 +6237,6 @@ $('#vNext').addEventListener('click', async ()=>{
 function vBuildLegend(){
   const box = $('#vLegend'); box.innerHTML = '';
   if (!V.rides.length){ box.textContent = '読み込めたライドがありません。'; return; }
-  const hint = document.createElement('div'); hint.className = 'hint'; hint.textContent = '上にあるライドほど手前に表示されます(区間名は一番上のライドだけ)。▲▼で順番を入れ替えられます。';
-  box.appendChild(hint);
   V.order.forEach((id, pos)=>{
     const r = V.rides[id];
     const lab = document.createElement('div'); lab.className = 'vLegRow';
@@ -6364,6 +6362,14 @@ function vSectionAvg(ride, sec, m){
     const css = getComputedStyle(document.documentElement);
     const grid = css.getPropertyValue('--border').trim(), muted = css.getPropertyValue('--text-faint').trim() || '#8b9099';
     drawSteps(ctx, grid, muted);
+    // the ▲▼ pickers sit next to the axis titles
+    const m = V_METRICS[$('#vMetric').value], sdist = $('#vXAxis').value==='dist';
+    ctx.font = '11px sans-serif';
+    const yl = ctx.measureText('区間の'+(m.sum ? '' : '平均')+m.label+(m.unit ? '('+m.unit+')' : '')).width;
+    const xl = ctx.measureText(sdist ? '出発からの距離(km)' : '出発からの経過時間(休憩を含む)').width;
+    const yb = $('#vYBtn'), xb = $('#vXBtn');
+    yb.style.left = '2px'; yb.style.top = Math.min(H-MB-4, (MT+H-MB)/2 + yl/2 + 6)+'px';
+    xb.style.left = Math.min(W-40, (ML+W-MR)/2 + xl/2 + 6)+'px'; xb.style.top = (H-22)+'px';
   };
   // ---- section-by-section step chart: one stepped line per ride, flat at each section's average,
   //      dropping to 0 over the rests between sections; x = time since the ride's first section began
@@ -6504,6 +6510,8 @@ function vSectionAvg(ride, sec, m){
           const sec = s.sec, x0 = toX(s.a), x1 = toX(s.b), prev = secs[i-1], next = secs[i+1];
           if (sec.nameType==='b'){
             let so = 0, eo = 0, eh = false;
+            if (!prev) so = 10;      // the ride's true start / end: one character inside
+            if (!next) eo = -10;
             if (prev && prev.sec.nameType==='b'){
               const same = !!(prev.sec.endName && sec.startName && prev.sec.endName===sec.startName);
               if (!same && Math.abs(toX(prev.b)-x0) < OVER) so = CH;
@@ -6661,7 +6669,7 @@ function vSectionAvg(ride, sec, m){
     const order = cur.filter(k=>k!=='fname').concat(allKeys.filter(k=>k!=='fname' && !cur.includes(k)));
     const rowHtml = k=>'<div class="vColRow" data-k="'+k+'"><span class="vGrip" title="ドラッグで並べ替え">≡</span><label><input type="checkbox" value="'+k+'"'+(cur.includes(k)?' checked':'')+'> '+escapeHtml(vColLabel(k))+'</label></div>';
     const modal = document.createElement('div'); modal.className = 'confirmModal';
-    modal.innerHTML = '<div class="confirmBox" style="max-height:80vh;overflow-y:auto;"><p>表に出す項目を選び、≡をドラッグして順番を入れ替えます。<br><span style="font-size:11.5px;color:var(--text-faint);">先頭列は常に固定です(●と、ファイル名にチェックがあればファイル名)。</span></p>'+
+    modal.innerHTML = '<div class="confirmBox" style="max-height:80vh;overflow-y:auto;"><p>表に出す項目を選び、≡をドラッグして順番を入れ替えます。</p>'+
       '<label class="vColFn"><input type="checkbox" id="vColFn"'+(cur.includes('fname')?' checked':'')+'> ファイル名を先頭列に表示</label>'+
       '<div class="vColList" id="vColList" style="grid-template-rows:repeat('+Math.ceil(order.length/2)+',auto);">'+order.map(rowHtml).join('')+
       '</div><div class="confirmBtns"><button type="button" class="small" data-ok="1">決定</button><button type="button" class="small ghost" data-ok="0">キャンセル</button></div></div>';
@@ -6725,20 +6733,21 @@ function vSectionAvg(ride, sec, m){
     V.cursor = x;
     const all = vCols(), cols = all.filter(c=>c!=='fname'), showFn = all.includes('fname');
     const cw = vColWidths(all, m), fnW = showFn ? cw.fname : 24;
+    const pin = showFn ? -1 : 0;   // the first item column is pinned next to the ● when the file name is hidden
     const tw = fnW + cols.reduce((a,c)=>a+cw[c],0);
     let html = '<div class="vTipHead"><b>'+(xmode==='dist' ? '出発から '+(+x.toFixed(2))+' km' : '出発から '+vHms(x, true))+'</b><button type="button" class="small ghost" id="vColBtn" title="表示項目">⚙</button></div>'+
       '<div class="vTipScroll"><table class="vTbl" style="width:'+tw+'px;"><colgroup><col style="width:'+fnW+'px;">'+cols.map(c=>'<col style="width:'+cw[c]+'px;">').join('')+'</colgroup>'+
-      '<thead><tr><th class="vFn">'+(showFn ? 'ファイル名' : '')+'</th>'+cols.map(c=>'<th>'+escapeHtml(vColLabel(c))+'</th>').join('')+'</tr></thead><tbody>';
+      '<thead><tr><th class="vFn">'+(showFn ? 'ファイル名' : '')+'</th>'+cols.map((c,i)=>'<th'+(i===pin ? ' class="vPin"' : '')+'>'+escapeHtml(vColLabel(c))+'</th>').join('')+'</tr></thead><tbody>';
     let n = 0;
     vVisible().forEach(r=>{
       const st = ridesSteps(r, m).find(s=> x>=s.a && x<=s.b);
       if (!st) return;
       n++;
       let cells = '';
-      if (st.rest) cells = '<td colspan="'+Math.max(1,cols.length)+'">休憩</td>';
+      if (st.rest) cells = showFn || !cols.length ? '<td colspan="'+Math.max(1,cols.length)+'">休憩</td>' : '<td class="vPin">休憩</td>'+(cols.length>1 ? '<td colspan="'+(cols.length-1)+'"></td>' : '');
       else {
         vSectionAvg(r, st.sec, V_METRICS.power);   // makes sure the full stats exist
-        cells = cols.map(c=> '<td'+(c==='secname' ? ' class="vSec"' : '')+'>'+escapeHtml(vCellText(c, r, st))+'</td>').join('');
+        cells = cols.map((c,i)=> '<td'+(i===pin ? ' class="vPin"' : '')+'>'+escapeHtml(vCellText(c, r, st))+'</td>').join('');
       }
       html += '<tr><td class="vFn"><span style="color:'+r.color+'">●</span>'+(showFn ? ' '+escapeHtml(r.item.name) : '')+'</td>'+cells+'</tr>';
     });
@@ -6770,20 +6779,18 @@ function vSectionAvg(ride, sec, m){
     return new Promise(resolve=>{
       const last = V.splitLast || { n:60, unit:'s' };
       const modal = document.createElement('div'); modal.className = 'confirmModal';
-      modal.innerHTML = '<div class="confirmBox"><p>どの間隔で分割しますか?<br><span style="font-size:11.5px;color:var(--text-faint);">1秒にすると、生データそのものが折れ線で出ます。それより長いと、区切りごとの平均がヒストグラムで出ます。</span></p>'+
-        '<div style="display:flex;gap:8px;margin-bottom:14px;"><select id="vSplitN" style="flex:1;font-size:16px;padding:8px;"></select>'+
-        '<select id="vSplitU" style="font-size:15px;padding:8px;"><option value="s"'+(last.unit==='s'?' selected':'')+'>秒</option><option value="m"'+(last.unit==='m'?' selected':'')+'>分</option></select></div>'+
+      const opts = SPLIT_CHOICES.map(n=>({v:n, t:n+'秒'})).concat(SPLIT_CHOICES.map(n=>({v:n*60, t:n+'分'})));
+      const cur = last.n*(last.unit==='m' ? 60 : 1);
+      modal.innerHTML = '<div class="confirmBox"><p>どの間隔で分割しますか?</p>'+
+        '<div style="margin-bottom:14px;"><select id="vSplitN" style="width:100%;font-size:16px;padding:8px;">'+opts.map(o=>'<option value="'+o.v+'"'+(o.v===cur ? ' selected' : '')+'>'+o.t+'</option>').join('')+'</select></div>'+
         '<div class="confirmBtns"><button type="button" class="small" data-ok="1">分割する</button><button type="button" class="small ghost" data-ok="0">キャンセル</button></div></div>';
       document.body.appendChild(modal);
-      const nSel = modal.querySelector('#vSplitN');
-      nSel.innerHTML = SPLIT_CHOICES.map(n=>'<option value="'+n+'"'+(n===last.n?' selected':'')+'>'+n+'</option>').join('');
-      if (!SPLIT_CHOICES.includes(last.n)) nSel.value = '60';
       const close = v=>{ document.body.removeChild(modal); resolve(v); };
       modal.querySelector('[data-ok="0"]').addEventListener('click', ()=> close(null));
       modal.querySelector('[data-ok="1"]').addEventListener('click', ()=>{
-        const n = parseInt(nSel.value,10), u = modal.querySelector('#vSplitU').value;
-        V.splitLast = { n, unit:u };
-        close(n*(u==='m' ? 60 : 1));
+        const sec = parseInt(modal.querySelector('#vSplitN').value,10);
+        V.splitLast = { n:sec, unit:'s' };
+        close(sec);
       });
     });
   }
