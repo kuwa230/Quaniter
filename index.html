@@ -335,7 +335,9 @@ td.num{ text-align:right; font-variant-numeric:tabular-nums; }
 .vItem .sub{ font-size:11.5px; color:var(--text-faint); margin-top:2px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .vStickyBar{ position:sticky; bottom:0; padding:10px 0 calc(10px + env(safe-area-inset-bottom,0px)); background:linear-gradient(transparent, var(--bg) 30%); }
 .vLegend{ display:flex; flex-direction:column; gap:2px; margin:10px 0; }
-.vLegend label{ display:flex; align-items:center; gap:8px; font-size:13px; padding:5px 2px; cursor:pointer; }
+.vLegRow{ display:flex; align-items:center; gap:6px; }
+.vLegRow label{ flex:1; min-width:0; display:flex; align-items:center; gap:8px; font-size:13px; padding:5px 2px; cursor:pointer; }
+.vLegRow .vMv{ padding:3px 9px; font-size:12px; }
 .vLegend input{ width:19px; height:19px; flex:none; }
 .vLegend i{ width:18px; height:4px; border-radius:2px; flex:none; }
 .vLegend span.t{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -501,7 +503,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
       <div class="vTools"><button type="button" data-a="in">＋</button><button type="button" data-a="out">－</button><button type="button" data-a="reset">全体</button></div>
     </div>
     <div class="vTip hidden" id="vTip"></div>
-    <div class="vRow hidden" id="vExportRow" style="margin-top:10px;"><button id="vExpPng" class="small" type="button">PNGを保存</button><button id="vExpPdf" class="small" type="button">PDFを保存</button><span class="hint">押すと共有メニューが開きます。「ファイルに保存」を選ぶと、ファイルアプリに保存できます。</span></div>
+    <div class="vRow hidden" id="vExportRow" style="margin-top:10px;"><button id="vExpPng" class="small" type="button">PNGを保存</button><button id="vExpPdf" class="small" type="button">PDFを保存</button><button id="vRawClear" class="small ghost" type="button" disabled>生データ表示を解除</button><span class="hint">押すと共有メニューが開きます。「ファイルに保存」を選ぶと、ファイルアプリに保存できます。</span></div>
     <div class="hint hidden" id="vHint">ドラッグで移動、指2本または＋/－で横方向を拡大縮小、タップするとその位置の各ライドの値が出ます。</div>
   </div>
 </div>
@@ -1365,6 +1367,7 @@ function renderTimelineThrottled(){
 let currentPageNum = 0;
 function showPage(n){
   currentPageNum = n;
+  if (n===0 && typeof vReset==='function') vReset();
   if (n==='V2' && typeof vRefresh==='function' && V.rides.length) vRefresh();
   $$('.page').forEach(p=> p.classList.add('hidden'));
   $('#page'+n).classList.remove('hidden');
@@ -6064,7 +6067,7 @@ $('#homeBtn').addEventListener('click', ()=> showPage(0));
 $('#v1Back').addEventListener('click', ()=> showPage(0));
 $('#v2Back').addEventListener('click', ()=> showPage('V1'));
 
-const V = { items:[], sel:new Set(), rides:[], hidden:new Set(), view:null, cursor:null, series:null };
+const V = { items:[], sel:new Set(), rides:[], order:[], hidden:new Set(), view:null, cursor:null, series:null, rawSec:null, nextId:0, rawQ:0 };
 const V_COLORS = ['#17b8a4','#f2994a','#6c8cff','#f0506a','#c9a227','#b57cf0','#4fc3f7','#9ccc65','#ff8a80','#a1887f'];
 function vDate(ts, dateOnly){
   if (ts==null) return '日時不明';
@@ -6081,10 +6084,14 @@ function vNameDate(name){      // 260606 / 20260606 in a file name
 async function vScan(entries){
   const zips = entries.filter(e=>/\.zip$/i.test(e.file.name));
   if (!window.JSZip){ $('#vStatus').textContent = 'ZIP展開ライブラリを読み込めませんでした。ネットワーク状態を確認してください。'; return; }
-  const items = []; let skipped = 0;
+  // files are ADDED to what is already listed (the same file picked twice is only listed once)
+  const have = new Set(V.items.map(it=>it.key));
+  let added = 0, skipped = 0, dup = 0;
   for (let i=0;i<zips.length;i++){
     $('#vStatus').textContent = 'ZIPを調べています… '+i+' / '+zips.length;
     await new Promise(r=>setTimeout(r,0));
+    const key = zips[i].file.name+'|'+zips[i].file.size+'|'+zips[i].file.lastModified;
+    if (have.has(key)){ dup++; continue; }
     try{
       const zip = await JSZip.loadAsync(zips[i].file);
       const fit = Object.values(zip.files).find(f=>!f.dir && /\.fit$/i.test(f.name));
@@ -6093,20 +6100,30 @@ async function vScan(entries){
       const parsed = JSON.parse(await json.async('string'));
       const st = parsed.settings || parsed;
       const src = st.sourceFile || parsed.sourceFile || {};
-      items.push({ id:items.length, file:zips[i].file, path:zips[i].path,
+      V.items.push({ id:V.nextId++, key, file:zips[i].file, path:zips[i].path,
         name: parsed.fitFile || src.fileName || zips[i].file.name.replace(/\.zip$/i,''),
         startTime: src.startTime!=null ? Number(src.startTime) : vNameDate(parsed.fitFile || zips[i].file.name),
         dateOnly: src.startTime==null,
         distanceM: src.distanceM!=null ? Number(src.distanceM) : null,
         durationSec: src.durationSec!=null ? Number(src.durationSec) : null,
         nSections: Array.isArray(st.intervals) ? st.intervals.length : null });
+      have.add(key); added++;
     }catch(e){ skipped++; }
   }
-  items.sort((a,b)=> (b.startTime||0)-(a.startTime||0));
-  items.forEach((it,i)=> it.id = i);
-  V.items = items; V.sel = new Set();
-  $('#vStatus').textContent = 'ZIP '+zips.length+'件を調べ、解析済みのライド '+items.length+'件が見つかりました'+(skipped?'('+skipped+'件は解析済みではないため除外)':'')+'。';
+  V.items.sort((a,b)=> (b.startTime||0)-(a.startTime||0));
+  $('#vStatus').textContent = 'ZIP '+zips.length+'件を調べ、'+added+'件を追加しました(一覧は全'+V.items.length+'件)'+(skipped?'。'+skipped+'件は解析済みではないため除外':'')+(dup?'。'+dup+'件は追加済み':'')+'。';
   vRenderList();
+}
+// back to the title: everything imported is dropped and the viewer starts afresh
+function vReset(){
+  V.items = []; V.sel = new Set(); V.rides = []; V.order = []; V.hidden = new Set();
+  V.view = null; V.cursor = null; V.series = null; V.rawSec = null; V.nextId = 0; V.rawQ = 0;
+  $('#vList').innerHTML = ''; $('#vLegend').innerHTML = '';
+  $('#vListPanel').classList.add('hidden'); $('#vNextBar').classList.add('hidden');
+  $('#vStatus').textContent = '解析済みのZIP(Quaniterのアナライザーで「保存」したもの)を、フォルダの下から全部探します。';
+  $('#vTip').classList.add('hidden');
+  $('#vDirInput').value = ''; $('#vFileInput').value = '';
+  vUpdateSel();
 }
 function vRenderList(){
   const box = $('#vList'); box.innerHTML = '';
@@ -6130,8 +6147,8 @@ function vUpdateSel(){
 }
 $('#vAll').addEventListener('click', ()=>{ V.items.forEach(it=>V.sel.add(it.id)); vRenderList(); });
 $('#vNone').addEventListener('click', ()=>{ V.sel.clear(); vRenderList(); });
-$('#vDirInput').addEventListener('change', e=> vScan([...e.target.files].map(f=>({file:f, path:f.webkitRelativePath||f.name}))));
-$('#vFileInput').addEventListener('change', e=> vScan([...e.target.files].map(f=>({file:f, path:f.name}))));
+$('#vDirInput').addEventListener('change', e=>{ const l = [...e.target.files].map(f=>({file:f, path:f.webkitRelativePath||f.name})); e.target.value = ''; vScan(l); });
+$('#vFileInput').addEventListener('change', e=>{ const l = [...e.target.files].map(f=>({file:f, path:f.name})); e.target.value = ''; vScan(l); });
 if (window.showDirectoryPicker){
   $('#vPickDir').classList.remove('hidden');
   $('#vPickDir').addEventListener('click', async ()=>{
@@ -6174,7 +6191,7 @@ $('#vNext').addEventListener('click', async ()=>{
   if (!chosen.length) return;
   showPage('V2');
   $('#vLegend').textContent = 'ライドを読み込んでいます…';
-  V.rides = []; V.hidden = new Set(); V.view = null; V.cursor = null;
+  V.rides = []; V.order = []; V.hidden = new Set(); V.view = null; V.cursor = null; V.rawSec = null;
   for (let i=0;i<chosen.length;i++){
     $('#vLegend').textContent = 'ライドを読み込んでいます… '+(i)+' / '+chosen.length;
     await new Promise(r=>setTimeout(r,0));
@@ -6200,22 +6217,44 @@ $('#vNext').addEventListener('click', async ()=>{
       if (recs.length) V.rides.push({ id:V.rides.length, item:chosen[i], recs, sections, cfg:settingsOfRide, color:V_COLORS[V.rides.length % V_COLORS.length] });
     }catch(e){ console.warn('viewer load', chosen[i].name, e); }
   }
+  V.order = V.rides.map(r=>r.id);
   vBuildLegend();
   vRebuildSeries(); vFit(); vRefresh();
 });
 function vBuildLegend(){
   const box = $('#vLegend'); box.innerHTML = '';
   if (!V.rides.length){ box.textContent = '読み込めたライドがありません。'; return; }
-  V.rides.forEach(r=>{
-    const lab = document.createElement('label');
-    lab.innerHTML = '<input type="checkbox" checked><i style="background:'+r.color+'"></i><span class="t">'+escapeHtml(vDate(r.item.startTime, r.item.dateOnly))+'　'+escapeHtml(r.item.name)+'</span>';
+  const hint = document.createElement('div'); hint.className = 'hint'; hint.textContent = '上にあるライドほど手前に表示されます(区間名は一番上のライドだけ)。▲▼で順番を入れ替えられます。';
+  box.appendChild(hint);
+  V.order.forEach((id, pos)=>{
+    const r = V.rides[id];
+    const lab = document.createElement('div'); lab.className = 'vLegRow';
+    lab.innerHTML = '<label><input type="checkbox"'+(V.hidden.has(r.id)?'':' checked')+'><i style="background:'+r.color+'"></i><span class="t">'+escapeHtml(vDate(r.item.startTime, r.item.dateOnly))+'　'+escapeHtml(r.item.name)+'</span></label>'+
+      '<button type="button" class="small ghost vMv" data-d="-1"'+(pos===0?' disabled':'')+'>▲</button><button type="button" class="small ghost vMv" data-d="1"'+(pos===V.order.length-1?' disabled':'')+'>▼</button>';
     lab.querySelector('input').addEventListener('change', e=>{
       if (e.target.checked) V.hidden.delete(r.id); else V.hidden.add(r.id);
-      V.cursor = null; $('#vTip').classList.add('hidden');
-      vFit(true); vRefresh();
+      vAfterLayerChange();
     });
+    lab.querySelectorAll('.vMv').forEach(btn=> btn.addEventListener('click', ()=>{
+      const d = Number(btn.dataset.d), j = pos+d; if (j<0 || j>=V.order.length) return;
+      const t = V.order[pos]; V.order[pos] = V.order[j]; V.order[j] = t;
+      vBuildLegend(); vAfterLayerChange();
+    }));
     box.appendChild(lab);
   });
+}
+function vUpdateRawBtn(){
+  const b = $('#vRawClear'); if (!b) return;
+  b.classList.toggle('hidden', V.mode!=='overlay');
+  b.disabled = !V.rawSec;
+}
+$('#vRawClear').addEventListener('click', ()=>{ V.rawSec = null; vUpdateRawBtn(); vDraw(); });
+// what depends on which ride is in front
+function vAfterLayerChange(){
+  const front = vVisible()[0];
+  if (V.rawSec && (!front || front.id!==V.rawSec.rideId)) V.rawSec = null;
+  V.cursor = null; $('#vTip').classList.add('hidden');
+  vFit(true); vRefresh();
 }
 // per ride: x[] and y[] for the chosen metric / axis, moving-averaged over a time window
 function vRebuildSeries(){
@@ -6240,7 +6279,8 @@ function vRebuildSeries(){
     return { xs, ys };
   });
 }
-function vVisible(){ return V.rides.filter(r=>!V.hidden.has(r.id)); }
+// top of the list first = frontmost layer
+function vVisible(){ return V.order.map(id=>V.rides[id]).filter(r=>r && !V.hidden.has(r.id)); }
 // seconds from the start of a ride's first section to the end of its last one
 function vStepsEnd(r){
   if (!r.sections.length) return 0;
@@ -6269,10 +6309,28 @@ function vFit(keepX){
 function vLowerBound(a, x){ let lo=0, hi=a.length; while (lo<hi){ const m=(lo+hi)>>1; if (a[m]<x) lo=m+1; else hi=m; } return lo; }
 ['#vMetric','#vXAxis','#vSmooth'].forEach(id=> $(id).addEventListener('change', ()=>{
   V.cursor = null; $('#vTip').classList.add('hidden');
+  if (id==='#vXAxis') vConvertAxis();   // same place and scale, in the other unit (judged on the front ride)
   vRebuildSeries();
-  if (id==='#vXAxis') vFit(false);    // a different unit: start from the whole again
   vRefresh();
 }));
+V.xPrev = 'elapsed';
+// time <-> distance, using the ride in front as the yardstick
+function vTimeAtDist(r, dist){
+  const rs = r.recs; let lo = 0, hi = rs.length-1;
+  while (lo<hi){ const m = (lo+hi)>>1; if (rs[m].dist<dist) lo = m+1; else hi = m; }
+  return rs[lo].elapsed;
+}
+function vConvertAxis(){
+  const to = $('#vXAxis').value, from = V.xPrev; V.xPrev = to;
+  const r = vVisible()[0];
+  if (!V.view || !r || !r.sections.length || from===to){ if (to!==from) vFit(false); return; }
+  const origin = r.sections[0].start, d0 = vDistAt(r, origin);
+  const conv = x=> to==='dist' ? (vDistAt(r, origin+Math.max(0,x))-d0)/1000 : vTimeAtDist(r, d0+Math.max(0,x)*1000)-origin;
+  const nv = { x0:conv(V.view.x0), x1:conv(V.view.x1) };
+  if (!(nv.x1>nv.x0)){ vFit(false); return; }
+  V.view = nv;
+  if (V.cursor!=null) V.cursor = conv(V.cursor);
+}
 V.mode = 'steps';
 vFillMetrics();
 $$('#vModeSeg button').forEach(b=> b.addEventListener('click', ()=>{ V.mode = b.dataset.m; vFillMetrics(); vRebuildSeries(); if (!V.view) vFit(false); vRefresh(); }));   // the zoom / position stay as they are
@@ -6283,6 +6341,7 @@ function vRefresh(){
   $$('.vOnly-overlay').forEach(e=> e.classList.toggle('hidden', !ov));
   $$('.vOnly-chart').forEach(e=> e.classList.toggle('hidden', !(ov || st)));
   requestAnimationFrame(()=> vDraw());
+  vUpdateRawBtn();
 }
 // section by section: the average of the chosen value (power by default) for every ride
 function vSectionAvg(ride, sec, m){
@@ -6304,7 +6363,7 @@ function vSectionAvg(ride, sec, m){
 /* ---- the chart: canvas, pan / pinch / wheel on x, tap for values ---- */
 (function(){
   const cv = $('#vCanvas'), box = $('#vChartBox');
-  const ML = 46, MR = 12, MT = 12, MB = 30;
+  const ML = 60, MR = 12, MT = 12, MB = 50;
   let W = 0, H = 0, yr = {y0:0, y1:1};
   const toX = x=> ML + (x-V.view.x0)/(V.view.x1-V.view.x0)*(W-ML-MR);
   const fromX = px=> V.view.x0 + (px-ML)/(W-ML-MR)*(V.view.x1-V.view.x0);
@@ -6383,7 +6442,7 @@ function vSectionAvg(ride, sec, m){
     }
     ctx.save(); ctx.beginPath(); ctx.rect(ML, MT, W-ML-MR, H-MT-MB); ctx.clip();
     const y0px = toY(0);
-    all.forEach(({r, steps})=>{
+    all.slice().reverse().forEach(({r, steps})=>{   // the first ride of the list is drawn last = in front
       if (!steps.length) return;
       ctx.beginPath(); ctx.moveTo(toX(steps[0].a), y0px);
       steps.forEach(s=>{ ctx.lineTo(toX(s.a), toY(s.v)); ctx.lineTo(toX(s.b), toY(s.v)); });
@@ -6394,14 +6453,14 @@ function vSectionAvg(ride, sec, m){
       ctx.lineTo(toX(steps[steps.length-1].b), y0px);
       ctx.globalAlpha = raw ? 0.35 : 1; ctx.strokeStyle = r.color; ctx.lineWidth = raw ? 1.2 : 2; ctx.lineJoin = 'miter'; ctx.stroke(); ctx.globalAlpha = 1;
     });
-    if (raw && V.series){
-      ctx.lineWidth = 1.5; ctx.lineJoin = 'round';
-      vis.forEach(r=>{
-        const sr = V.series[r.id]; if (!sr || !sr.xs.length) return;
-        const i0 = Math.max(0, vLowerBound(sr.xs, V.view.x0)-1);
-        let i1 = vLowerBound(sr.xs, V.view.x1)+1; if (i1>sr.xs.length) i1 = sr.xs.length;
-        const stride = Math.max(1, Math.floor((i1-i0)/((W-ML-MR)*1.5)));
-        ctx.strokeStyle = r.color; ctx.beginPath();
+    // raw data: only the section the seek bar was put on, of the ride in front; it stays until released
+    if (raw && V.rawSec && all.length && all[0].r.id===V.rawSec.rideId && V.series){
+      const front = all[0], st = front.steps.find(x=>!x.rest && x.sec.idx===V.rawSec.idx), sr = V.series[front.r.id];
+      if (st && sr && sr.xs.length){
+        const i0 = vLowerBound(sr.xs, st.a), i1 = Math.min(sr.xs.length, vLowerBound(sr.xs, st.b)+1);
+        const stride = Math.max(1, Math.floor((i1-i0)/((W-ML-MR)*2)));
+        ctx.save(); ctx.beginPath(); ctx.rect(ML, MT, W-ML-MR, H-MT-MB); ctx.clip();
+        ctx.strokeStyle = front.r.color; ctx.lineWidth = 1.8; ctx.lineJoin = 'round'; ctx.beginPath();
         let started = false, lastX = null;
         for (let i=i0; i<i1; i+=stride){
           const px = toX(sr.xs[i]), py = toY(sr.ys[i]);
@@ -6409,8 +6468,8 @@ function vSectionAvg(ride, sec, m){
           if (!started || gap) ctx.moveTo(px, py); else ctx.lineTo(px, py);
           started = true; lastX = sr.xs[i];
         }
-        ctx.stroke();
-      });
+        ctx.stroke(); ctx.restore();
+      }
     }
     // captions, placed by the same rules as the analyser's page-3 graph: タイプb names stand at the
     // section's own start / end; an end name equal to the next start name is left out; two
@@ -6425,7 +6484,7 @@ function vSectionAvg(ride, sec, m){
         const y0 = Math.max(MT+w+4, topY-11);
         ctx.save(); ctx.translate(px, y0); ctx.rotate(-Math.PI/2); ctx.textAlign = 'left'; ctx.fillText(txt, 0, 0); ctx.restore();
       };
-      all.forEach(({r, steps})=>{
+      all.slice(0,1).forEach(({r, steps})=>{   // section names only for the ride in front
         ctx.fillStyle = r.color;
         const secs = steps.filter(s=>!s.rest);
         secs.forEach((s,i)=>{
@@ -6453,8 +6512,11 @@ function vSectionAvg(ride, sec, m){
     }
     ctx.restore();
     ctx.strokeStyle = grid; ctx.strokeRect(ML+.5, MT+.5, W-ML-MR, H-MT-MB);
-    ctx.fillStyle = muted; ctx.font = '11px sans-serif'; ctx.textAlign = 'right'; ctx.textBaseline = 'top';
-    ctx.fillText('区間の'+(m.sum ? '' : '平均')+m.label+(m.unit ? '('+m.unit+')' : '')+(sdist ? ' / 距離(km)' : ''), W-MR-4, MT+3);
+    ctx.fillStyle = muted; ctx.font = '11px sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+    ctx.fillText(sdist ? '出発からの距離(km)' : '出発からの経過時間(休憩を含む)', (ML+W-MR)/2, H-4);
+    ctx.save(); ctx.translate(13, (MT+H-MB)/2); ctx.rotate(-Math.PI/2); ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText((raw ? '' : '区間の'+(m.sum ? '' : '平均'))+m.label+(m.unit ? '('+m.unit+')' : ''), 0, 0); ctx.restore();
     if (V.cursor!=null){
       const px = toX(V.cursor);
       if (px>=ML && px<=W-MR){ ctx.strokeStyle = '#fff'; ctx.setLineDash([4,3]); ctx.beginPath(); ctx.moveTo(px,MT); ctx.lineTo(px,H-MB); ctx.stroke(); ctx.setLineDash([]); }
@@ -6533,30 +6595,23 @@ function vSectionAvg(ride, sec, m){
   function tap(p){
     if (!V.view || p.x<ML || p.x>W-MR){ V.cursor = null; $('#vTip').classList.add('hidden'); vDraw(); return; }
     const x = fromX(p.x), m = V_METRICS[$('#vMetric').value], xmode = $('#vXAxis').value;
-    V.cursor = x; vDraw();
-    if (V.mode==='steps'){
-      const rows = [];
-      vVisible().forEach(r=>{
-        const st = ridesSteps(r, m).find(s=> x>=s.a && x<=s.b);
-        if (!st) return;
-        rows.push('<span style="color:'+r.color+'">●</span> '+escapeHtml(vDate(r.item.startTime, true))+'　'+(st.rest ? '休憩' : escapeHtml(st.name)+'　<b>'+(+st.v.toFixed(1))+'</b> '+m.unit));
-      });
-      const tip = $('#vTip');
-      tip.innerHTML = '<b>'+(xmode==='dist' ? '出発から '+(+x.toFixed(2))+' km' : '出発から '+fmtHMS(x))+'</b><br>'+(rows.join('<br>')||'データなし');
-      tip.classList.remove('hidden');
-      return;
-    }
+    V.cursor = x;
+    const vis = vVisible();
     const rows = [];
-    vVisible().forEach(r=>{
-      const s = V.series[r.id]; if (!s.xs.length) return;
-      let i = vLowerBound(s.xs, x); if (i>=s.xs.length) i = s.xs.length-1;
-      if (i>0 && Math.abs(s.xs[i-1]-x) < Math.abs(s.xs[i]-x)) i--;
-      if (Math.abs(s.xs[i]-x) > (V.view.x1-V.view.x0)*0.05) return;      // that ride has no data here
-      rows.push('<span style="color:'+r.color+'">●</span> '+escapeHtml(vDate(r.item.startTime, true))+'　<b>'+(+s.ys[i].toFixed(1))+'</b> '+m.unit);
+    vis.forEach(r=>{
+      const st = ridesSteps(r, m).find(s=> x>=s.a && x<=s.b);
+      if (!st) return;
+      rows.push('<span style="color:'+r.color+'">●</span> '+escapeHtml(vDate(r.item.startTime, true))+'　'+(st.rest ? '休憩' : escapeHtml(st.name)+'　<b>'+(+st.v.toFixed(1))+'</b> '+m.unit));
     });
+    // raw mode: the section of the front ride under the seek bar gets its raw data (until released)
+    if (V.mode==='overlay' && vis.length){
+      const st = ridesSteps(vis[0], m).find(s=> !s.rest && x>=s.a && x<=s.b);
+      if (st) V.rawSec = { rideId:vis[0].id, idx:st.sec.idx };
+    }
     const tip = $('#vTip');
-    tip.innerHTML = '<b>'+(xmode==='dist' ? (+x.toFixed(2))+' km' : fmtHMS(x))+'</b><br>'+(rows.join('<br>')||'データなし');
+    tip.innerHTML = '<b>'+(xmode==='dist' ? '出発から '+(+x.toFixed(2))+' km' : '出発から '+fmtHMS(x))+'</b><br>'+(rows.join('<br>')||'データなし');
     tip.classList.remove('hidden');
+    vDraw(); vUpdateRawBtn();
   }
   box.querySelector('.vTools').addEventListener('click', e=>{
     const a = e.target.dataset && e.target.dataset.a; if (!a || !V.view) return;
