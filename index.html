@@ -359,7 +359,7 @@ td.num{ text-align:right; font-variant-numeric:tabular-nums; }
 .vTbl{ width:max-content; min-width:100%; font-size:12px; }
 .vTbl th,.vTbl td{ white-space:nowrap; padding:4px 7px; }
 .vTbl td.vFn{ max-width:42vw; overflow:hidden; text-overflow:ellipsis; }
-.vColList{ display:grid; grid-template-columns:1fr 1fr; gap:6px 10px; margin-bottom:14px; font-size:13.5px; }
+.vColList{ display:grid; grid-template-columns:1fr 1fr; grid-auto-flow:column; gap:6px 10px; margin-bottom:14px; font-size:13.5px; }
 .vTip{ margin-top:8px; padding:8px 11px; border:1px solid var(--accent); border-radius:8px; background:var(--surface-2); font-size:12.5px; line-height:1.65; }
 /* original-quality viewer */
 .photoViewer{ position:fixed; inset:0; z-index:70; background:#000; display:flex; flex-direction:column; }
@@ -766,7 +766,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
 // (this session's own publish count so far) is reconstructed from the
 // conversation itself rather than mechanically verified — best-effort, not
 // guaranteed exact. Increment by exactly 1 on every future publish.
-const APP_VERSION = 186;
+const APP_VERSION = 187;
 
 /* ============ FIT PARSER ============ */
 const FIT_EPOCH = 631065600; // seconds between 1970-01-01 and 1989-12-31 (FIT epoch)
@@ -6652,7 +6652,7 @@ function vSectionAvg(ride, sec, m){
     const cur = new Set(vCols());
     const all = [{k:'secname',label:'区間名'}].concat(COLUMN_DEFS.map(d=>({k:d.k,label:d.label})));
     const modal = document.createElement('div'); modal.className = 'confirmModal';
-    modal.innerHTML = '<div class="confirmBox" style="max-height:80vh;overflow-y:auto;"><p>表に出す項目を選んでください(ファイル名は常に先頭列です)</p><div class="vColList">'+
+    modal.innerHTML = '<div class="confirmBox" style="max-height:80vh;overflow-y:auto;"><p>表に出す項目を選んでください(ファイル名は常に先頭列です)</p><div class="vColList" style="grid-template-rows:repeat('+Math.ceil(all.length/2)+',auto);">'+
       all.map(o=>'<label><input type="checkbox" value="'+o.k+'"'+(cur.has(o.k)?' checked':'')+'> '+escapeHtml(o.label)+'</label>').join('')+
       '</div><div class="confirmBtns"><button type="button" class="small" data-ok="1">決定</button><button type="button" class="small ghost" data-ok="0">キャンセル</button></div></div>';
     document.body.appendChild(modal);
@@ -6672,7 +6672,7 @@ function vSectionAvg(ride, sec, m){
     const x = fromX(px), m = V_METRICS[$('#vMetric').value], xmode = $('#vXAxis').value;
     V.cursor = x;
     const cols = vCols();
-    let html = '<div class="vTipHead"><b>'+(xmode==='dist' ? '出発から '+(+x.toFixed(2))+' km' : '出発から '+vHms(x, true))+'</b><button type="button" class="small ghost" id="vColBtn">表示項目</button></div>'+
+    let html = '<div class="vTipHead"><b>'+(xmode==='dist' ? '出発から '+(+x.toFixed(2))+' km' : '出発から '+vHms(x, true))+'</b><button type="button" class="small ghost" id="vColBtn" title="表示項目">⚙</button></div>'+
       '<div class="vTipScroll"><table class="vTbl"><thead><tr><th>ファイル名</th>'+cols.map(c=>'<th>'+(c==='secname' ? '区間' : COL_META[c].label)+'</th>').join('')+'</tr></thead><tbody>';
     let n = 0;
     vVisible().forEach(r=>{
@@ -6691,7 +6691,9 @@ function vSectionAvg(ride, sec, m){
     html += '</tbody></table></div>';
     if (!n) html = html.replace(/<div class="vTipScroll">.*$/, '')+'<div>データなし</div>';
     const tip = $('#vTip');
+    const oldSc = tip.querySelector('.vTipScroll'), keepLeft = oldSc ? oldSc.scrollLeft : 0;
     tip.innerHTML = html;
+    const newSc = tip.querySelector('.vTipScroll'); if (newSc) newSc.scrollLeft = keepLeft;
     tip.querySelector('#vColBtn').addEventListener('click', vPickCols);
     tip.classList.remove('hidden');
     vDraw(); vUpdateSplitBtn();
