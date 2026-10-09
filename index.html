@@ -354,6 +354,12 @@ td.num{ text-align:right; font-variant-numeric:tabular-nums; }
 .cmpBar{ position:relative; height:20px; margin:3px 0; background:var(--surface-2); border-radius:4px; overflow:hidden; }
 .cmpBar i{ position:absolute; left:0; top:0; bottom:0; border-radius:4px; opacity:.9; }
 .cmpBar span{ position:absolute; left:8px; top:0; line-height:20px; font-size:12px; font-weight:700; color:#fff; text-shadow:0 0 3px #000, 0 0 3px #000; white-space:nowrap; }
+.vTipHead{ display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:4px; }
+.vTipScroll{ overflow-x:auto; }
+.vTbl{ width:max-content; min-width:100%; font-size:12px; }
+.vTbl th,.vTbl td{ white-space:nowrap; padding:4px 7px; }
+.vTbl td.vFn{ max-width:42vw; overflow:hidden; text-overflow:ellipsis; }
+.vColList{ display:grid; grid-template-columns:1fr 1fr; gap:6px 10px; margin-bottom:14px; font-size:13.5px; }
 .vTip{ margin-top:8px; padding:8px 11px; border:1px solid var(--accent); border-radius:8px; background:var(--surface-2); font-size:12.5px; line-height:1.65; }
 /* original-quality viewer */
 .photoViewer{ position:fixed; inset:0; z-index:70; background:#000; display:flex; flex-direction:column; }
@@ -760,7 +766,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
 // (this session's own publish count so far) is reconstructed from the
 // conversation itself rather than mechanically verified — best-effort, not
 // guaranteed exact. Increment by exactly 1 on every future publish.
-const APP_VERSION = 185;
+const APP_VERSION = 186;
 
 /* ============ FIT PARSER ============ */
 const FIT_EPOCH = 631065600; // seconds between 1970-01-01 and 1989-12-31 (FIT epoch)
@@ -6634,22 +6640,59 @@ function vSectionAvg(ride, sec, m){
     if (!V.view || p.x<ML || p.x>W-MR){ V.cursor = null; $('#vTip').classList.add('hidden'); vDraw(); vUpdateSplitBtn(); return; }
     setCursorAt(p.x);
   }
+  const V_DEFAULT_COLS = ['secname','distance','netTime','avgPower','avgSpeedNet','avgHr'];
+  function vCols(){
+    if (!V.cols){
+      try{ const a = JSON.parse(localStorage.getItem('quaniterVCols')||'null'); if (Array.isArray(a)) V.cols = a.filter(c=> c==='secname' || COL_META[c]); }catch(e){}
+      if (!V.cols) V.cols = V_DEFAULT_COLS.slice();
+    }
+    return V.cols;
+  }
+  function vPickCols(){
+    const cur = new Set(vCols());
+    const all = [{k:'secname',label:'区間名'}].concat(COLUMN_DEFS.map(d=>({k:d.k,label:d.label})));
+    const modal = document.createElement('div'); modal.className = 'confirmModal';
+    modal.innerHTML = '<div class="confirmBox" style="max-height:80vh;overflow-y:auto;"><p>表に出す項目を選んでください(ファイル名は常に先頭列です)</p><div class="vColList">'+
+      all.map(o=>'<label><input type="checkbox" value="'+o.k+'"'+(cur.has(o.k)?' checked':'')+'> '+escapeHtml(o.label)+'</label>').join('')+
+      '</div><div class="confirmBtns"><button type="button" class="small" data-ok="1">決定</button><button type="button" class="small ghost" data-ok="0">キャンセル</button></div></div>';
+    document.body.appendChild(modal);
+    modal.querySelector('[data-ok="0"]').addEventListener('click', ()=> document.body.removeChild(modal));
+    modal.querySelector('[data-ok="1"]').addEventListener('click', ()=>{
+      const on = new Set([...modal.querySelectorAll('input:checked')].map(i=>i.value));
+      V.cols = all.map(o=>o.k).filter(k=>on.has(k));
+      try{ localStorage.setItem('quaniterVCols', JSON.stringify(V.cols)); }catch(e){}
+      document.body.removeChild(modal);
+      if (V.cursor!=null && V.view) setCursorAt(toX(V.cursor));
+    });
+  }
   // put the seek bar at a screen position and show the values under it
   function setCursorAt(px){
     if (!V.view) return;
     px = Math.max(ML, Math.min(W-MR, px));
     const x = fromX(px), m = V_METRICS[$('#vMetric').value], xmode = $('#vXAxis').value;
     V.cursor = x;
-    const rows = [];
+    const cols = vCols();
+    let html = '<div class="vTipHead"><b>'+(xmode==='dist' ? '出発から '+(+x.toFixed(2))+' km' : '出発から '+vHms(x, true))+'</b><button type="button" class="small ghost" id="vColBtn">表示項目</button></div>'+
+      '<div class="vTipScroll"><table class="vTbl"><thead><tr><th>ファイル名</th>'+cols.map(c=>'<th>'+(c==='secname' ? '区間' : COL_META[c].label)+'</th>').join('')+'</tr></thead><tbody>';
+    let n = 0;
     vVisible().forEach(r=>{
       const st = ridesSteps(r, m).find(s=> x>=s.a && x<=s.b);
       if (!st) return;
-      let extra = '';
-      if (st.split && st.split.bars){ const bar = st.split.bars.find(b=> x>=b.a && x<=b.b); if (bar) extra = '(ここの区切り '+(+bar.v.toFixed(1))+' '+m.unit+')'; }
-      rows.push('<span style="color:'+r.color+'">●</span> '+escapeHtml(vDate(r.item.startTime, true))+'　'+(st.rest ? '休憩' : escapeHtml(st.name)+'　<b>'+(+st.v.toFixed(1))+'</b> '+m.unit+extra));
+      n++;
+      let cells = '';
+      if (st.rest) cells = '<td colspan="'+Math.max(1,cols.length)+'">休憩</td>';
+      else {
+        vSectionAvg(r, st.sec, V_METRICS.power);   // makes sure the full stats exist
+        const stt = st.sec._st || {};
+        cells = cols.map(c=> '<td>'+(c==='secname' ? escapeHtml(st.name) : escapeHtml(COL_META[c].fmt(stt[c]==null || isNaN(stt[c]) ? null : stt[c])))+'</td>').join('');
+      }
+      html += '<tr><td class="vFn"><span style="color:'+r.color+'">●</span> '+escapeHtml(r.item.name)+'</td>'+cells+'</tr>';
     });
+    html += '</tbody></table></div>';
+    if (!n) html = html.replace(/<div class="vTipScroll">.*$/, '')+'<div>データなし</div>';
     const tip = $('#vTip');
-    tip.innerHTML = '<b>'+(xmode==='dist' ? '出発から '+(+x.toFixed(2))+' km' : '出発から '+vHms(x, true))+'</b><br>'+(rows.join('<br>')||'データなし');
+    tip.innerHTML = html;
+    tip.querySelector('#vColBtn').addEventListener('click', vPickCols);
     tip.classList.remove('hidden');
     vDraw(); vUpdateSplitBtn();
   }
@@ -6666,24 +6709,25 @@ function vSectionAvg(ride, sec, m){
     if (!c){ b.disabled = true; b.textContent = '区間を分割'; return; }
     b.disabled = false; b.textContent = V.splits.has(c.ride.id+':'+c.sec.idx) ? '分割解除' : '区間を分割';
   };
+  const SPLIT_CHOICES = [1,2,3,4,5,10,15,20,30,40,60];
   function askInterval(){
     return new Promise(resolve=>{
       const last = V.splitLast || { n:60, unit:'s' };
       const modal = document.createElement('div'); modal.className = 'confirmModal';
-      modal.innerHTML = '<div class="confirmBox"><p>何秒(何分)ごとに分割しますか?(1秒〜60分)<br><span style="font-size:11.5px;color:var(--text-faint);">1秒にすると、生データそのものが折れ線で出ます。それより長いと、区切りごとの平均がヒストグラムで出ます。</span></p>'+
-        '<div style="display:flex;gap:8px;margin-bottom:14px;"><input type="number" id="vSplitN" min="1" step="1" value="'+last.n+'" style="flex:1;font-size:16px;padding:8px;">'+
+      modal.innerHTML = '<div class="confirmBox"><p>どの間隔で分割しますか?<br><span style="font-size:11.5px;color:var(--text-faint);">1秒にすると、生データそのものが折れ線で出ます。それより長いと、区切りごとの平均がヒストグラムで出ます。</span></p>'+
+        '<div style="display:flex;gap:8px;margin-bottom:14px;"><select id="vSplitN" style="flex:1;font-size:16px;padding:8px;"></select>'+
         '<select id="vSplitU" style="font-size:15px;padding:8px;"><option value="s"'+(last.unit==='s'?' selected':'')+'>秒</option><option value="m"'+(last.unit==='m'?' selected':'')+'>分</option></select></div>'+
-        '<div id="vSplitErr" class="hint" style="color:var(--danger);display:none;margin-bottom:8px;"></div>'+
         '<div class="confirmBtns"><button type="button" class="small" data-ok="1">分割する</button><button type="button" class="small ghost" data-ok="0">キャンセル</button></div></div>';
       document.body.appendChild(modal);
+      const nSel = modal.querySelector('#vSplitN');
+      nSel.innerHTML = SPLIT_CHOICES.map(n=>'<option value="'+n+'"'+(n===last.n?' selected':'')+'>'+n+'</option>').join('');
+      if (!SPLIT_CHOICES.includes(last.n)) nSel.value = '60';
       const close = v=>{ document.body.removeChild(modal); resolve(v); };
       modal.querySelector('[data-ok="0"]').addEventListener('click', ()=> close(null));
       modal.querySelector('[data-ok="1"]').addEventListener('click', ()=>{
-        const n = parseFloat(modal.querySelector('#vSplitN').value), u = modal.querySelector('#vSplitU').value;
-        const sec = n*(u==='m' ? 60 : 1);
-        if (!(n>0) || sec<1 || sec>3600){ const er = modal.querySelector('#vSplitErr'); er.textContent = '1秒〜60分の間で指定してください。'; er.style.display = 'block'; return; }
+        const n = parseInt(nSel.value,10), u = modal.querySelector('#vSplitU').value;
         V.splitLast = { n, unit:u };
-        close(sec);
+        close(n*(u==='m' ? 60 : 1));
       });
     });
   }
