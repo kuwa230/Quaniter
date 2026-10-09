@@ -352,7 +352,7 @@ td.num{ text-align:right; font-variant-numeric:tabular-nums; }
 .cmpBar{ position:relative; height:20px; margin:3px 0; background:var(--surface-2); border-radius:4px; overflow:hidden; }
 .cmpBar i{ position:absolute; left:0; top:0; bottom:0; border-radius:4px; opacity:.9; }
 .cmpBar span{ position:absolute; left:8px; top:0; line-height:20px; font-size:12px; font-weight:700; color:#fff; text-shadow:0 0 3px #000, 0 0 3px #000; white-space:nowrap; }
-.vTip{ position:absolute; z-index:3; pointer-events:none; background:rgba(0,0,0,.88); border:1px solid var(--accent); border-radius:8px; padding:6px 9px; font-size:12px; line-height:1.55; white-space:nowrap; top:34px; }
+.vTip{ margin-top:8px; padding:8px 11px; border:1px solid var(--accent); border-radius:8px; background:var(--surface-2); font-size:12.5px; line-height:1.65; }
 /* original-quality viewer */
 .photoViewer{ position:fixed; inset:0; z-index:70; background:#000; display:flex; flex-direction:column; }
 .photoViewer.hidden{ display:none; }
@@ -488,8 +488,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
     </div>
     <div class="seg" id="vModeSeg" style="margin-bottom:10px;">
       <button type="button" data-m="steps" class="on">区間ごとのグラフ</button>
-      <button type="button" data-m="compare">一覧</button>
-      <button type="button" data-m="overlay">重ね書き</button>
+      <button type="button" data-m="overlay">生データ</button>
     </div>
     <div class="vRow">
       <label class="vSel">項目<select id="vMetric"></select></label>
@@ -497,12 +496,11 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
       <label class="vSel vOnly-overlay">平滑化<select id="vSmooth"><option value="0">なし</option><option value="5">5秒</option><option value="15" selected>15秒</option><option value="30">30秒</option><option value="60">60秒</option></select></label>
     </div>
     <div id="vLegend" class="vLegend"></div>
-    <div id="vCompare" class="vCompare"></div>
     <div class="vChartBox hidden" id="vChartBox">
       <canvas id="vCanvas"></canvas>
       <div class="vTools"><button type="button" data-a="in">＋</button><button type="button" data-a="out">－</button><button type="button" data-a="reset">全体</button></div>
-      <div class="vTip hidden" id="vTip"></div>
     </div>
+    <div class="vTip hidden" id="vTip"></div>
     <div class="vRow hidden" id="vExportRow" style="margin-top:10px;"><button id="vExpPng" class="small" type="button">PNGを保存</button><button id="vExpPdf" class="small" type="button">PDFを保存</button><span class="hint">押すと共有メニューが開きます。「ファイルに保存」を選ぶと、ファイルアプリに保存できます。</span></div>
     <div class="hint hidden" id="vHint">ドラッグで移動、指2本または＋/－で横方向を拡大縮小、タップするとその位置の各ライドの値が出ます。</div>
   </div>
@@ -766,7 +764,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
 // (this session's own publish count so far) is reconstructed from the
 // conversation itself rather than mechanically verified — best-effort, not
 // guaranteed exact. Increment by exactly 1 on every future publish.
-const APP_VERSION = 181;
+const APP_VERSION = 182;
 
 /* ============ FIT PARSER ============ */
 const FIT_EPOCH = 631065600; // seconds between 1970-01-01 and 1989-12-31 (FIT epoch)
@@ -5670,9 +5668,11 @@ function renderPowerChart(rows){
     const label = numberPrefix(i+1)+intervalDisplayName(iv,i);
     // captions of a (not subdivided) section start one character above its own level and read upward;
     // the old fixed height at the top of the plot is kept when the section has no value
-    const vTop = (rows[i] && primaryDef.get(rows[i])!=null) ? primaryScale.yScale(primaryDef.get(rows[i])) : null;
+    const yOfRow = k=> (rows[k] && primaryDef.get(rows[k])!=null) ? primaryScale.yScale(primaryDef.get(rows[k])) : null;
+    const vTop0 = yOfRow(i);
     const capW = t=> Array.from(t).reduce((a,c)=> a + (c.charCodeAt(0)>255 ? 10.5 : 6), 0);
-    const cap = (txt, lx)=>{
+    const cap = (txt, lx, top)=>{
+      const vTop = top!==undefined ? top : vTop0;
       if (vTop==null) return '<text x="'+lx+'" y="'+(padT+14)+'" text-anchor="end" font-size="10.5" fill="'+primaryDef.color+'" transform="rotate(-90 '+lx+' '+(padT+14)+')" style="pointer-events:none;">'+escapeHtml(txt)+'</text>';
       const y0 = Math.max(padT+capW(txt)+2, vTop-11);
       return '<text x="'+lx+'" y="'+y0+'" text-anchor="start" font-size="10.5" fill="'+primaryDef.color+'" transform="rotate(-90 '+lx+' '+y0+')" style="pointer-events:none;">'+escapeHtml(txt)+'</text>';
@@ -5704,8 +5704,14 @@ function renderPowerChart(rows){
       // rules above), instead of one combined label at the centre
       const bInfo = typeBBoundaryInfo(i);
       const lxS = x0+3.5+bInfo.startOffset, lxE = x1+3.5+bInfo.endOffset;
-      if (!bInfo.startHide) primaryBarsSvg += cap(numberPrefix(i+1)+(iv.startName||''), lxS);
-      if (!bInfo.endHide) primaryBarsSvg += cap(iv.endName||'', lxE);
+      // where a neighbour touches this section and is higher, the caption rises to the neighbour's level
+      let topS = vTop0, topE = vTop0;
+      if (vTop0!=null){
+        if (i>0 && yOfRow(i-1)!=null && Math.abs(xScale(ivX1(S.intervals[i-1]))-x0) < 12) topS = Math.min(vTop0, yOfRow(i-1));
+        if (i<S.intervals.length-1 && yOfRow(i+1)!=null && Math.abs(xScale(ivX0(S.intervals[i+1]))-x1) < 12) topE = Math.min(vTop0, yOfRow(i+1));
+      }
+      if (!bInfo.startHide) primaryBarsSvg += cap(numberPrefix(i+1)+(iv.startName||''), lxS, topS);
+      if (!bInfo.endHide) primaryBarsSvg += cap(iv.endName||'', lxE, topE);
     } else {
       // written vertically, running upward, centred horizontally within the
       // interval's own bar (nudged half a character further right). Anchored
@@ -6217,6 +6223,7 @@ function vRebuildSeries(){
   const xmode = $('#vXAxis').value, win = Number($('#vSmooth').value);
   V.series = V.rides.map(r=>{
     const xs = [], ys = [];
+    const origin = r.sections.length ? r.sections[0].start : 0, d0 = vDistAt(r, origin);
     const raw = r.recs.map(x=>m.get(x));
     let lo = 0, sum = 0, cnt = 0;
     for (let i=0;i<r.recs.length;i++){
@@ -6224,7 +6231,7 @@ function vRebuildSeries(){
       if (raw[i]!=null){ sum += raw[i]; cnt++; }
       while (lo<i && r.recs[lo].elapsed < t-win){ if (raw[lo]!=null){ sum -= raw[lo]; cnt--; } lo++; }
       if (raw[i]==null) continue;
-      xs.push(xmode==='dist' ? r.recs[i].dist/1000 : t);
+      xs.push(xmode==='dist' ? (r.recs[i].dist-d0)/1000 : t-origin);
       ys.push(win>0 ? sum/cnt : raw[i]);
     }
     return { xs, ys };
@@ -6259,19 +6266,20 @@ function vFit(keepX){
 function vLowerBound(a, x){ let lo=0, hi=a.length; while (lo<hi){ const m=(lo+hi)>>1; if (a[m]<x) lo=m+1; else hi=m; } return lo; }
 ['#vMetric','#vXAxis','#vSmooth'].forEach(id=> $(id).addEventListener('change', ()=>{
   V.cursor = null; $('#vTip').classList.add('hidden');
-  vRebuildSeries(); vFit(false); vRefresh();
+  vRebuildSeries();
+  if (id==='#vXAxis') vFit(false);    // a different unit: start from the whole again
+  vRefresh();
 }));
 V.mode = 'steps';
 vFillMetrics();
-$$('#vModeSeg button').forEach(b=> b.addEventListener('click', ()=>{ V.mode = b.dataset.m; vFillMetrics(); vRebuildSeries(); V.cursor = null; $('#vTip').classList.add('hidden'); vFit(false); vRefresh(); }));
+$$('#vModeSeg button').forEach(b=> b.addEventListener('click', ()=>{ V.mode = b.dataset.m; vFillMetrics(); vRebuildSeries(); if (!V.view) vFit(false); vRefresh(); }));   // the zoom / position stay as they are
 function vRefresh(){
   $$('#vModeSeg button').forEach(b=> b.classList.toggle('on', b.dataset.m===V.mode));
   const ov = V.mode==='overlay', st = V.mode==='steps';
-  $('#vCompare').classList.toggle('hidden', ov || st);
-  $('#vChartBox').classList.toggle('hidden', !(ov || st)); $('#vHint').classList.toggle('hidden', !(ov || st)); $('#vExportRow').classList.toggle('hidden', !(ov || st));
+  $('#vChartBox').classList.toggle('hidden', false); $('#vHint').classList.toggle('hidden', false); $('#vExportRow').classList.toggle('hidden', false);
   $$('.vOnly-overlay').forEach(e=> e.classList.toggle('hidden', !ov));
   $$('.vOnly-chart').forEach(e=> e.classList.toggle('hidden', !(ov || st)));
-  if (ov || st) requestAnimationFrame(()=> vDraw()); else vRenderCompare();
+  requestAnimationFrame(()=> vDraw());
 }
 // section by section: the average of the chosen value (power by default) for every ride
 function vSectionAvg(ride, sec, m){
@@ -6288,39 +6296,6 @@ function vSectionAvg(ride, sec, m){
   }
   const v = sec._st[m.stat];
   return v==null || isNaN(v) ? null : v;
-}
-function vRenderCompare(){
-  const box = $('#vCompare'); box.innerHTML = '';
-  const m = V_METRICS[$('#vMetric').value], vis = vVisible();
-  if (!V.rides.length) return;
-  if (!vis.length){ box.textContent = '表示するライドにチェックを入れてください。'; return; }
-  // one row per section name; the ride with the most sections sets the order, the rest follow
-  const order = [], seen = new Set();
-  // 「A→B」と「A-B」は同じ区間として扱う(名前の付け方がライドごとに違っても揃う)
-  const keyOf = n=> n.replace(/\s*[→\-－‐–—]\s*/g, '-');
-  const label = {};
-  V.rides.slice().sort((a,b)=>b.sections.length-a.sections.length).forEach(r=> r.sections.forEach(s=>{ const k = keyOf(s.name); if (!seen.has(k)){ seen.add(k); order.push(k); label[k] = s.name; } }));
-  const rows = order.map(k=>{
-    const vals = vis.map(r=>{ const sec = r.sections.find(s=>keyOf(s.name)===k); return { ride:r, sec, v: sec ? vSectionAvg(r, sec, m) : null }; });
-    return { name:label[k], vals };
-  }).filter(row=> row.vals.some(x=>x.v!=null));
-  if (!rows.length){ box.textContent = 'この項目の値がある区間がありません(解析済みの区間が無いか、センサーの記録がありません)。'; return; }
-  let max = 0; rows.forEach(row=> row.vals.forEach(x=>{ if (x.v!=null && x.v>max) max = x.v; }));
-  max = max || 1;
-  // with exactly two rides shown, also the difference (newer minus older)
-  const two = vis.length===2 ? vis.slice().sort((a,b)=>(a.item.startTime||0)-(b.item.startTime||0)) : null;
-  rows.forEach(row=>{
-    const el = document.createElement('div'); el.className = 'cmpRow';
-    let diff = '';
-    if (two){
-      const a = row.vals.find(x=>x.ride===two[0]), b = row.vals.find(x=>x.ride===two[1]);
-      if (a && b && a.v!=null && b.v!=null){ const d = b.v-a.v; diff = '<small>'+(d>=0?'+':'−')+Math.abs(Math.round(d*10)/10)+' '+m.unit+'</small>'; }
-    }
-    const km = row.vals.map(x=>x.sec && x.sec.distKm).find(v=>v!=null);
-    el.innerHTML = '<div class="cmpName">'+escapeHtml(row.name)+(km!=null ? '<small>'+km.toFixed(1)+' km</small>' : '')+diff+'</div>'+
-      row.vals.map(x=> '<div class="cmpBar"><i style="width:'+(x.v!=null ? Math.max(1, x.v/max*100) : 0)+'%;background:'+x.ride.color+'"></i><span>'+(x.v!=null ? Math.round(x.v*10)/10+' '+m.unit+'　' : '— 　')+escapeHtml(vDate(x.ride.item.startTime, true))+'</span></div>').join('');
-    box.appendChild(el);
-  });
 }
 
 /* ---- the chart: canvas, pan / pinch / wheel on x, tap for values ---- */
@@ -6495,8 +6470,12 @@ function vRenderCompare(){
               const same = !!(sec.endName && next.sec.startName && sec.endName===next.sec.startName);
               if (same) eh = true; else if (Math.abs(x1-toX(next.a)) < OVER) eo = -CH;
             }
-            put(numberPrefix(sec.idx+1)+(sec.startName||''), x0+so, toY(s.v));
-            if (!eh) put(sec.endName||'', x1+eo, toY(s.v));
+            // at a boundary where the neighbour is higher, the caption rises to the neighbour's level
+            const yOwn = toY(s.v);
+            const yStart = (prev && Math.abs(toX(prev.b)-x0) < OVER) ? Math.min(yOwn, toY(prev.v)) : yOwn;
+            const yEnd = (next && Math.abs(toX(next.a)-x1) < OVER) ? Math.min(yOwn, toY(next.v)) : yOwn;
+            put(numberPrefix(sec.idx+1)+(sec.startName||''), x0+so, yStart);
+            if (!eh) put(sec.endName||'', x1+eo, yEnd);
           } else put(numberPrefix(sec.idx+1)+sec.name, (x0+x1)/2, toY(s.v));
         });
       });
@@ -6524,7 +6503,7 @@ function vRenderCompare(){
     const o = out.getContext('2d'); o.setTransform(K,0,0,K,0,0); o.fillStyle = '#fff'; o.fillRect(0,0,EW,EH+HEAD);
     const m = V_METRICS[$('#vMetric').value];
     o.fillStyle = '#111'; o.font = 'bold 20px sans-serif'; o.textAlign = 'left'; o.textBaseline = 'top';
-    o.fillText(V.mode==='steps' ? '区間ごとの'+(m.sum ? '' : '平均')+m.label+(m.unit ? '('+m.unit+')' : '')+'の比較' : m.label+(m.unit ? '('+m.unit+')' : '')+'の重ね書き', 24, 14);
+    o.fillText(V.mode==='steps' ? '区間ごとの'+(m.sum ? '' : '平均')+m.label+(m.unit ? '('+m.unit+')' : '')+'の比較' : m.label+(m.unit ? '('+m.unit+')' : '')+'の生データ', 24, 14);
     o.font = '13px sans-serif'; let lx = 24; const ly = 46;
     vVisible().forEach(r=>{
       const label = vDate(r.item.startTime, r.item.dateOnly)+'　'+r.item.name;
@@ -6594,7 +6573,6 @@ function vRenderCompare(){
       const tip = $('#vTip');
       tip.innerHTML = '<b>'+(xmode==='dist' ? '出発から '+(+x.toFixed(2))+' km' : '出発から '+fmtHMS(x))+'</b><br>'+(rows.join('<br>')||'データなし');
       tip.classList.remove('hidden');
-      tip.style.left = Math.max(4, Math.min(box.clientWidth-tip.offsetWidth-4, p.x-tip.offsetWidth/2))+'px';
       return;
     }
     const rows = [];
@@ -6608,7 +6586,6 @@ function vRenderCompare(){
     const tip = $('#vTip');
     tip.innerHTML = '<b>'+(xmode==='dist' ? (+x.toFixed(2))+' km' : fmtHMS(x))+'</b><br>'+(rows.join('<br>')||'データなし');
     tip.classList.remove('hidden');
-    tip.style.left = Math.max(4, Math.min(box.clientWidth-tip.offsetWidth-4, p.x-tip.offsetWidth/2))+'px';
   }
   box.querySelector('.vTools').addEventListener('click', e=>{
     const a = e.target.dataset && e.target.dataset.a; if (!a || !V.view) return;
