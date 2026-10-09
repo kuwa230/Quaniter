@@ -488,23 +488,17 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
       <button id="v2Back" class="small ghost icon-btn" type="button" title="ライド選択へ">←</button>
       <h2>ビュワー:ライドの比較</h2>
     </div>
-    <div class="seg" id="vModeSeg" style="margin-bottom:10px;">
-      <button type="button" data-m="steps" class="on">区間ごとのグラフ</button>
-      <button type="button" data-m="overlay">生データ</button>
-    </div>
     <div class="vRow">
       <label class="vSel">項目<select id="vMetric"></select></label>
-      <label class="vSel vOnly-chart">横軸<select id="vXAxis"><option value="elapsed">経過時間</option><option value="dist">距離</option></select></label>
-      <label class="vSel vOnly-overlay">平滑化<select id="vSmooth"><option value="0">なし</option><option value="5">5秒</option><option value="15" selected>15秒</option><option value="30">30秒</option><option value="60">60秒</option></select></label>
+      <label class="vSel">横軸<select id="vXAxis"><option value="elapsed">経過時間</option><option value="dist">距離</option></select></label>
     </div>
     <div id="vLegend" class="vLegend"></div>
-    <div class="vChartBox hidden" id="vChartBox">
+    <div class="vChartBox" id="vChartBox">
       <canvas id="vCanvas"></canvas>
-      <div class="vTools"><button type="button" data-a="in">＋</button><button type="button" data-a="out">－</button><button type="button" data-a="reset">全体</button></div>
     </div>
     <div class="vTip hidden" id="vTip"></div>
-    <div class="vRow hidden" id="vExportRow" style="margin-top:10px;"><button id="vExpPng" class="small" type="button">PNGを保存</button><button id="vExpPdf" class="small" type="button">PDFを保存</button><button id="vRawClear" class="small ghost" type="button" disabled>生データ表示を解除</button><span class="hint">押すと共有メニューが開きます。「ファイルに保存」を選ぶと、ファイルアプリに保存できます。</span></div>
-    <div class="hint hidden" id="vHint">ドラッグで移動、指2本または＋/－で横方向を拡大縮小、タップするとその位置の各ライドの値が出ます。</div>
+    <div class="vRow" id="vExportRow" style="margin-top:10px;"><button id="vSplitBtn" class="small primary" type="button" disabled>区間を分割</button><button id="vExpPng" class="small" type="button">PNGを保存</button><button id="vExpPdf" class="small" type="button">PDFを保存</button><span class="hint">押すと共有メニューが開きます。「ファイルに保存」を選ぶと、ファイルアプリに保存できます。</span></div>
+    <div class="hint" id="vHint">ドラッグで移動(はじくと慣性で流れます)、指2本で横方向を拡大縮小、タップでシークバーを置き、長押ししてドラッグするとシークバーが動きます。「区間を分割」は、シークバーが重なっている一番手前のライドの区間を、指定した間隔に分けます。</div>
   </div>
 </div>
 
@@ -766,7 +760,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
 // (this session's own publish count so far) is reconstructed from the
 // conversation itself rather than mechanically verified — best-effort, not
 // guaranteed exact. Increment by exactly 1 on every future publish.
-const APP_VERSION = 183;
+const APP_VERSION = 185;
 
 /* ============ FIT PARSER ============ */
 const FIT_EPOCH = 631065600; // seconds between 1970-01-01 and 1989-12-31 (FIT epoch)
@@ -6067,8 +6061,16 @@ $('#homeBtn').addEventListener('click', ()=> showPage(0));
 $('#v1Back').addEventListener('click', ()=> showPage(0));
 $('#v2Back').addEventListener('click', ()=> showPage('V1'));
 
-const V = { items:[], sel:new Set(), rides:[], order:[], hidden:new Set(), view:null, cursor:null, series:null, rawSec:null, nextId:0, rawQ:0 };
+const V = { items:[], sel:new Set(), rides:[], order:[], hidden:new Set(), view:null, cursor:null, series:null, splits:new Map(), splitVer:0, nextId:0 };
 const V_COLORS = ['#17b8a4','#f2994a','#6c8cff','#f0506a','#c9a227','#b57cf0','#4fc3f7','#9ccc65','#ff8a80','#a1887f'];
+// 1h30m00s style (hours and minutes dropped while they are zero)
+function vHms(sec, withSec){
+  sec = Math.max(0, Math.round(sec));
+  const h = Math.floor(sec/3600), m = Math.floor((sec%3600)/60), sc = sec%60, p2 = n=>String(n).padStart(2,'0');
+  if (h>0) return h+'h'+p2(m)+'m'+(withSec ? p2(sc)+'s' : '');
+  if (m>0) return m+'m'+(withSec ? p2(sc)+'s' : '');
+  return sc+'s';
+}
 function vDate(ts, dateOnly){
   if (ts==null) return '日時不明';
   const d = new Date(ts*1000), p = n=>String(n).padStart(2,'0');
@@ -6117,7 +6119,7 @@ async function vScan(entries){
 // back to the title: everything imported is dropped and the viewer starts afresh
 function vReset(){
   V.items = []; V.sel = new Set(); V.rides = []; V.order = []; V.hidden = new Set();
-  V.view = null; V.cursor = null; V.series = null; V.rawSec = null; V.nextId = 0; V.rawQ = 0;
+  V.view = null; V.cursor = null; V.series = null; V.splits = new Map(); V.splitVer++; V.nextId = 0;
   $('#vList').innerHTML = ''; $('#vLegend').innerHTML = '';
   $('#vListPanel').classList.add('hidden'); $('#vNextBar').classList.add('hidden');
   $('#vStatus').textContent = '解析済みのZIP(Quaniterのアナライザーで「保存」したもの)を、フォルダの下から全部探します。';
@@ -6191,7 +6193,7 @@ $('#vNext').addEventListener('click', async ()=>{
   if (!chosen.length) return;
   showPage('V2');
   $('#vLegend').textContent = 'ライドを読み込んでいます…';
-  V.rides = []; V.order = []; V.hidden = new Set(); V.view = null; V.cursor = null; V.rawSec = null;
+  V.rides = []; V.order = []; V.hidden = new Set(); V.view = null; V.cursor = null; V.splits = new Map(); V.splitVer++;
   for (let i=0;i<chosen.length;i++){
     $('#vLegend').textContent = 'ライドを読み込んでいます… '+(i)+' / '+chosen.length;
     await new Promise(r=>setTimeout(r,0));
@@ -6243,42 +6245,13 @@ function vBuildLegend(){
     box.appendChild(lab);
   });
 }
-function vUpdateRawBtn(){
-  const b = $('#vRawClear'); if (!b) return;
-  b.classList.toggle('hidden', V.mode!=='overlay');
-  b.disabled = !V.rawSec;
-}
-$('#vRawClear').addEventListener('click', ()=>{ V.rawSec = null; vUpdateRawBtn(); vDraw(); });
 // what depends on which ride is in front
 function vAfterLayerChange(){
-  const front = vVisible()[0];
-  if (V.rawSec && (!front || front.id!==V.rawSec.rideId)) V.rawSec = null;
   V.cursor = null; $('#vTip').classList.add('hidden');
   vFit(true); vRefresh();
 }
 // per ride: x[] and y[] for the chosen metric / axis, moving-averaged over a time window
-function vRebuildSeries(){
-  const m = V_METRICS[$('#vMetric').value];
-  if (!m.get){ V.rawQ = 0; V.series = V.rides.map(()=>({xs:[],ys:[]})); return; }
-  const xmode = $('#vXAxis').value, win = Number($('#vSmooth').value);
-  V.rawQ = 0;
-  V.series = V.rides.map(r=>{
-    const xs = [], ys = [];
-    const origin = r.sections.length ? r.sections[0].start : 0, d0 = vDistAt(r, origin);
-    const raw = r.recs.map(x=>m.get(x));
-    let lo = 0, sum = 0, cnt = 0;
-    for (let i=0;i<r.recs.length;i++){
-      const t = r.recs[i].elapsed;
-      if (raw[i]!=null){ sum += raw[i]; cnt++; }
-      while (lo<i && r.recs[lo].elapsed < t-win){ if (raw[lo]!=null){ sum -= raw[lo]; cnt--; } lo++; }
-      if (raw[i]==null) continue;
-      xs.push(xmode==='dist' ? (r.recs[i].dist-d0)/1000 : t-origin);
-      ys.push(win>0 ? sum/cnt : raw[i]);
-    }
-    if (ys.length){ const srt = ys.slice().sort((a,b)=>a-b); V.rawQ = Math.max(V.rawQ, srt[Math.min(srt.length-1, Math.floor(srt.length*0.995))]); }   // the scale ignores the odd spike
-    return { xs, ys };
-  });
-}
+function vRebuildSeries(){}   // (the raw series are no longer drawn as a whole)
 // top of the list first = frontmost layer
 function vVisible(){ return V.order.map(id=>V.rides[id]).filter(r=>r && !V.hidden.has(r.id)); }
 // seconds from the start of a ride's first section to the end of its last one
@@ -6297,8 +6270,7 @@ function vDistAt(r, t){
 function vXMax(){
   let x1 = 0;
   vVisible().forEach(r=>{
-    if (V.mode==='steps') x1 = Math.max(x1, vStepsEnd(r));
-    else { const xs = V.series[r.id].xs; if (xs.length) x1 = Math.max(x1, xs[xs.length-1]); }
+    x1 = Math.max(x1, vStepsEnd(r));
   });
   return x1;
 }
@@ -6307,7 +6279,7 @@ function vFit(keepX){
   if (!V.view || !keepX) V.view = { x0:0, x1:x1||1 };
 }
 function vLowerBound(a, x){ let lo=0, hi=a.length; while (lo<hi){ const m=(lo+hi)>>1; if (a[m]<x) lo=m+1; else hi=m; } return lo; }
-['#vMetric','#vXAxis','#vSmooth'].forEach(id=> $(id).addEventListener('change', ()=>{
+['#vMetric','#vXAxis'].forEach(id=> $(id).addEventListener('change', ()=>{
   V.cursor = null; $('#vTip').classList.add('hidden');
   if (id==='#vXAxis') vConvertAxis();   // same place and scale, in the other unit (judged on the front ride)
   vRebuildSeries();
@@ -6333,15 +6305,9 @@ function vConvertAxis(){
 }
 V.mode = 'steps';
 vFillMetrics();
-$$('#vModeSeg button').forEach(b=> b.addEventListener('click', ()=>{ V.mode = b.dataset.m; vFillMetrics(); vRebuildSeries(); if (!V.view) vFit(false); vRefresh(); }));   // the zoom / position stay as they are
 function vRefresh(){
-  $$('#vModeSeg button').forEach(b=> b.classList.toggle('on', b.dataset.m===V.mode));
-  const ov = V.mode==='overlay', st = V.mode==='steps';
-  $('#vChartBox').classList.toggle('hidden', false); $('#vHint').classList.toggle('hidden', false); $('#vExportRow').classList.toggle('hidden', false);
-  $$('.vOnly-overlay').forEach(e=> e.classList.toggle('hidden', !ov));
-  $$('.vOnly-chart').forEach(e=> e.classList.toggle('hidden', !(ov || st)));
   requestAnimationFrame(()=> vDraw());
-  vUpdateRawBtn();
+  vUpdateSplitBtn();
 }
 // section by section: the average of the chosen value (power by default) for every ride
 function vSectionAvg(ride, sec, m){
@@ -6378,7 +6344,7 @@ function vSectionAvg(ride, sec, m){
     return h>0 ? h+':'+String(m).padStart(2,'0') : (m+'分');
   }
   window.vDraw = function(){
-    if (!V.view || !V.series) return;
+    if (!V.view) return;
     const dpr = window.devicePixelRatio||1;
     W = cv.clientWidth; H = cv.clientHeight;
     if (!W || !H) return;
@@ -6386,12 +6352,46 @@ function vSectionAvg(ride, sec, m){
     const ctx = cv.getContext('2d'); ctx.setTransform(dpr,0,0,dpr,0,0); ctx.clearRect(0,0,W,H);
     const css = getComputedStyle(document.documentElement);
     const grid = css.getPropertyValue('--border').trim(), muted = css.getPropertyValue('--text-faint').trim() || '#8b9099';
-    drawSteps(ctx, grid, muted, V.mode==='overlay');
+    drawSteps(ctx, grid, muted);
   };
   // ---- section-by-section step chart: one stepped line per ride, flat at each section's average,
   //      dropping to 0 over the rests between sections; x = time since the ride's first section began
+  // a section cut into pieces of `iv` seconds: the average of each piece as a bar (histogram),
+  // or, when the piece is one recording step (1 s), the raw values as a line
+  function vSplitSection(r, sec, m, iv, X){
+    if (m.get && iv<=1){
+      const pts = [];
+      for (let i=0;i<r.recs.length;i++){
+        const rc = r.recs[i];
+        if (rc.elapsed<sec.start) continue;
+        if (rc.elapsed>sec.end) break;
+        const v = m.get(rc); if (v!=null) pts.push({ x:X(rc.elapsed), y:v });
+      }
+      return { line:pts };
+    }
+    const bars = [];
+    if (m.get){
+      let i = 0;
+      for (let t=sec.start; t<sec.end-1e-9; t+=iv){
+        const te = Math.min(sec.end, t+iv);
+        let sum = 0, n = 0;
+        while (i<r.recs.length && r.recs[i].elapsed<t) i++;
+        let j = i;
+        while (j<r.recs.length && r.recs[j].elapsed<te){ const v = m.get(r.recs[j]); if (v!=null){ sum += v; n++; } j++; }
+        bars.push({ a:X(t), b:X(te), v: n ? sum/n : 0 });
+      }
+    } else {
+      if ((sec.end-sec.start)/iv > 300) return { bars:[], tooFine:true };   // totals / ratios are costlier to work out
+      for (let t=sec.start; t<sec.end-1e-9; t+=iv){
+        const te = Math.min(sec.end, t+iv);
+        const v = vSectionAvg(r, { start:t, end:te, idx:sec.idx, name:sec.name, nameType:sec.nameType, startName:sec.startName, endName:sec.endName }, m);
+        bars.push({ a:X(t), b:X(te), v: v!=null ? v : 0 });
+      }
+    }
+    return { bars };
+  }
   function ridesSteps(r, m){
-    const mk = $('#vMetric').value+'|'+$('#vXAxis').value;
+    const mk = $('#vMetric').value+'|'+$('#vXAxis').value+'|'+V.splitVer;
     if (r._steps && r._steps.key===mk) return r._steps.data;   // averages are computed once per metric / axis
     const data = ridesStepsCalc(r, m, $('#vXAxis').value); r._steps = { key:mk, data }; return data;
   }
@@ -6405,20 +6405,25 @@ function vSectionAvg(ride, sec, m){
       // a rest has length only on the time axis (on the distance axis it takes no room)
       if (!dist && sec.start-prevEnd > 1) out.push({ a:X(prevEnd), b:X(sec.start), v:0, rest:true });
       const v = vSectionAvg(r, sec, m);
-      out.push({ a:X(sec.start), b:X(sec.end), v: v!=null ? v : 0, name:sec.name, sec, none:v==null });
+      const ent = { a:X(sec.start), b:X(sec.end), v: v!=null ? v : 0, name:sec.name, sec, none:v==null };
+      const iv = V.splits.get(r.id+':'+sec.idx);
+      if (iv) ent.split = vSplitSection(r, sec, m, iv, X);
+      out.push(ent);
       prevEnd = sec.end;
     });
     return out;
   }
   function endName(n){ const p = n.split(/\s*[→\-－‐–—]\s*/); return p.length>1 ? p[p.length-1] : n; }
-  function drawSteps(ctx, grid, muted, raw){
+  function drawSteps(ctx, grid, muted){
     const m = V_METRICS[$('#vMetric').value], vis = vVisible();
     const all = vis.map(r=>({ r, steps:ridesSteps(r, m) }));
     let top = 0;
-    all.forEach(o=> o.steps.forEach(s=>{ if (s.v>top) top = s.v; }));
+    all.forEach(o=> o.steps.forEach(s=>{
+      if (s.v>top) top = s.v;
+      if (s.split){ (s.split.bars||[]).forEach(b=>{ if (b.v>top) top = b.v; }); (s.split.line||[]).forEach(p=>{ if (p.y>top) top = p.y; }); }
+    }));
     top = top || 1;
-    // one vertical scale for both modes, so switching to the raw data changes nothing
-    const need = Math.max(top*1.35, (V.rawQ||0)*1.08);
+    const need = top*1.2;
     const sy = niceStep(need, 5);
     yr = { y0:0, y1: Math.ceil(need/sy)*sy };
     ctx.font = '11px sans-serif'; ctx.strokeStyle = grid; ctx.lineWidth = 1; ctx.fillStyle = muted;
@@ -6429,11 +6434,7 @@ function vSectionAvg(ride, sec, m){
     for (let x=Math.ceil(V.view.x0/xstep)*xstep; x<=V.view.x1+1e-9; x+=xstep){
       const px = Math.round(toX(x))+.5; ctx.beginPath(); ctx.moveTo(px,MT); ctx.lineTo(px,H-MB); ctx.stroke();
       if (sdist){ ctx.fillText((+x.toFixed(3))+'', px, H-MB+5); continue; }
-      const h = Math.floor(x/3600), mi = Math.floor((x%3600)/60), sc = Math.round(x%60), p2 = n=>String(n).padStart(2,'0');
-      let lab;
-      if (xstep>=60) lab = (mi===0 && h>=0) ? h+'h' : (h>0 ? h+':'+p2(mi) : mi+'分');
-      else lab = h>0 ? h+':'+p2(mi)+':'+p2(sc) : mi+':'+p2(sc);
-      ctx.fillText(lab, px, H-MB+5);
+      ctx.fillText(vHms(x, xstep<60), px, H-MB+5);   // seconds appear once the scale is that fine
     }
     ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
     for (let y=0; y<=yr.y1+1e-9; y+=sy){
@@ -6442,35 +6443,36 @@ function vSectionAvg(ride, sec, m){
     }
     ctx.save(); ctx.beginPath(); ctx.rect(ML, MT, W-ML-MR, H-MT-MB); ctx.clip();
     const y0px = toY(0);
+    // the outline of a ride: flat at each section's average, through the pieces / raw line of a split section
+    const outline = steps=>{
+      const pts = [];
+      steps.forEach(st=>{
+        const sp = st.split;
+        if (sp && sp.line && sp.line.length){ sp.line.forEach(p=> pts.push([toX(p.x), toY(p.y)])); }
+        else if (sp && sp.bars && sp.bars.length){ sp.bars.forEach(b=>{ pts.push([toX(b.a), toY(b.v)]); pts.push([toX(b.b), toY(b.v)]); }); }
+        else { pts.push([toX(st.a), toY(st.v)]); pts.push([toX(st.b), toY(st.v)]); }
+      });
+      return pts;
+    };
     all.slice().reverse().forEach(({r, steps})=>{   // the first ride of the list is drawn last = in front
       if (!steps.length) return;
-      ctx.beginPath(); ctx.moveTo(toX(steps[0].a), y0px);
-      steps.forEach(s=>{ ctx.lineTo(toX(s.a), toY(s.v)); ctx.lineTo(toX(s.b), toY(s.v)); });
-      ctx.lineTo(toX(steps[steps.length-1].b), y0px); ctx.closePath();
+      const pts = outline(steps);
+      ctx.beginPath(); ctx.moveTo(pts[0][0], y0px);
+      pts.forEach(p=> ctx.lineTo(p[0], p[1]));
+      ctx.lineTo(pts[pts.length-1][0], y0px); ctx.closePath();
       ctx.globalAlpha = 0.13; ctx.fillStyle = r.color; ctx.fill(); ctx.globalAlpha = 1;
-      ctx.beginPath(); ctx.moveTo(toX(steps[0].a), y0px);
-      steps.forEach(s=>{ ctx.lineTo(toX(s.a), toY(s.v)); ctx.lineTo(toX(s.b), toY(s.v)); });
-      ctx.lineTo(toX(steps[steps.length-1].b), y0px);
-      ctx.globalAlpha = raw ? 0.35 : 1; ctx.strokeStyle = r.color; ctx.lineWidth = raw ? 1.2 : 2; ctx.lineJoin = 'miter'; ctx.stroke(); ctx.globalAlpha = 1;
+      ctx.beginPath(); ctx.moveTo(pts[0][0], y0px);
+      pts.forEach(p=> ctx.lineTo(p[0], p[1]));
+      ctx.lineTo(pts[pts.length-1][0], y0px);
+      ctx.strokeStyle = r.color; ctx.lineWidth = 2; ctx.lineJoin = 'miter'; ctx.stroke();
+      // histogram pieces: the dividing lines between the bars
+      steps.forEach(st=>{
+        if (!st.split || !st.split.bars || st.split.bars.length<2) return;
+        ctx.globalAlpha = 0.5; ctx.lineWidth = 1; ctx.beginPath();
+        st.split.bars.forEach(b=>{ const px = toX(b.a); ctx.moveTo(px, toY(b.v)); ctx.lineTo(px, y0px); });
+        ctx.stroke(); ctx.globalAlpha = 1;
+      });
     });
-    // raw data: only the section the seek bar was put on, of the ride in front; it stays until released
-    if (raw && V.rawSec && all.length && all[0].r.id===V.rawSec.rideId && V.series){
-      const front = all[0], st = front.steps.find(x=>!x.rest && x.sec.idx===V.rawSec.idx), sr = V.series[front.r.id];
-      if (st && sr && sr.xs.length){
-        const i0 = vLowerBound(sr.xs, st.a), i1 = Math.min(sr.xs.length, vLowerBound(sr.xs, st.b)+1);
-        const stride = Math.max(1, Math.floor((i1-i0)/((W-ML-MR)*2)));
-        ctx.save(); ctx.beginPath(); ctx.rect(ML, MT, W-ML-MR, H-MT-MB); ctx.clip();
-        ctx.strokeStyle = front.r.color; ctx.lineWidth = 1.8; ctx.lineJoin = 'round'; ctx.beginPath();
-        let started = false, lastX = null;
-        for (let i=i0; i<i1; i+=stride){
-          const px = toX(sr.xs[i]), py = toY(sr.ys[i]);
-          const gap = !sdist && lastX!=null && (sr.xs[i]-lastX) > Math.max(30, stride*3);
-          if (!started || gap) ctx.moveTo(px, py); else ctx.lineTo(px, py);
-          started = true; lastX = sr.xs[i];
-        }
-        ctx.stroke(); ctx.restore();
-      }
-    }
     // captions, placed by the same rules as the analyser's page-3 graph: タイプb names stand at the
     // section's own start / end; an end name equal to the next start name is left out; two
     // names that would touch move 0.6 character apart (end to the left, start to the right)
@@ -6516,7 +6518,7 @@ function vSectionAvg(ride, sec, m){
     ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
     ctx.fillText(sdist ? '出発からの距離(km)' : '出発からの経過時間(休憩を含む)', (ML+W-MR)/2, H-4);
     ctx.save(); ctx.translate(13, (MT+H-MB)/2); ctx.rotate(-Math.PI/2); ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText((raw ? '' : '区間の'+(m.sum ? '' : '平均'))+m.label+(m.unit ? '('+m.unit+')' : ''), 0, 0); ctx.restore();
+    ctx.fillText('区間の'+(m.sum ? '' : '平均')+m.label+(m.unit ? '('+m.unit+')' : ''), 0, 0); ctx.restore();
     if (V.cursor!=null){
       const px = toX(V.cursor);
       if (px>=ML && px<=W-MR){ ctx.strokeStyle = '#fff'; ctx.setLineDash([4,3]); ctx.beginPath(); ctx.moveTo(px,MT); ctx.lineTo(px,H-MB); ctx.stroke(); ctx.setLineDash([]); }
@@ -6530,13 +6532,13 @@ function vSectionAvg(ride, sec, m){
     const plot = document.createElement('canvas'); plot.width = EW*K; plot.height = EH*K;
     const pctx = plot.getContext('2d'); pctx.setTransform(K,0,0,K,0,0); pctx.fillStyle = '#fff'; pctx.fillRect(0,0,EW,EH);
     W = EW; H = EH; V.view = { x0:0, x1:vXMax()||1 }; V.cursor = null;
-    try{ drawSteps(pctx, '#d5d9de', '#4a5059', V.mode==='overlay'); }
+    try{ drawSteps(pctx, '#d5d9de', '#4a5059'); }
     finally{ W = keep.W; H = keep.H; V.view = keep.view; V.cursor = keep.cursor; yr = keep.yr; }
     const out = document.createElement('canvas'); out.width = EW*K; out.height = (EH+HEAD)*K;
     const o = out.getContext('2d'); o.setTransform(K,0,0,K,0,0); o.fillStyle = '#fff'; o.fillRect(0,0,EW,EH+HEAD);
     const m = V_METRICS[$('#vMetric').value];
     o.fillStyle = '#111'; o.font = 'bold 20px sans-serif'; o.textAlign = 'left'; o.textBaseline = 'top';
-    o.fillText(V.mode==='steps' ? '区間ごとの'+(m.sum ? '' : '平均')+m.label+(m.unit ? '('+m.unit+')' : '')+'の比較' : m.label+(m.unit ? '('+m.unit+')' : '')+'の生データ', 24, 14);
+    o.fillText('区間ごとの'+(m.sum ? '' : '平均')+m.label+(m.unit ? '('+m.unit+')' : '')+'の比較', 24, 14);
     o.font = '13px sans-serif'; let lx = 24; const ly = 46;
     vVisible().forEach(r=>{
       const label = vDate(r.item.startTime, r.item.dateOnly)+'　'+r.item.name;
@@ -6549,9 +6551,27 @@ function vSectionAvg(ride, sec, m){
     o.drawImage(plot, 0, HEAD, EW, EH);
     return out;
   };
-  /* gestures */
-  const ptrs = new Map(); let g = null;
+  /* gestures: drag = scroll (and it glides on), two fingers = zoom, tap = seek bar,
+     long press then drag = move the seek bar */
+  const ptrs = new Map(); let g = null, momRAF = null;
+  const tracker = createVelocityTracker();
   const local = e=>{ const r = cv.getBoundingClientRect(); return {x:e.clientX-r.left, y:e.clientY-r.top}; };
+  function stopMom(){ if (momRAF!=null){ cancelAnimationFrame(momRAF); momRAF = null; } }
+  function startMom(v0){   // v0: px per ms, positive = the finger was moving right
+    stopMom();
+    let v = v0, last = null;
+    const step = t=>{
+      const dt = last==null ? 16 : Math.min(48, t-last); last = t;
+      if (dt<=0){ momRAF = requestAnimationFrame(step); return; }
+      v *= Math.pow(MOMENTUM_DECELERATION, dt);
+      if (Math.abs(v) < MOMENTUM_STOP_THRESHOLD){ momRAF = null; return; }
+      const wx = (V.view.x1-V.view.x0)/(W-ML-MR), before = V.view.x0;
+      V.view = { x0:V.view.x0-v*dt*wx, x1:V.view.x1-v*dt*wx }; clampView(); vDraw();
+      if (Math.abs(V.view.x0-before) < 1e-9){ momRAF = null; return; }    // reached an end
+      momRAF = requestAnimationFrame(step);
+    };
+    momRAF = requestAnimationFrame(step);
+  }
   function zoomAt(px, k){
     const cx = fromX(px), v = V.view;
     V.view = { x0:cx-(cx-v.x0)/k, x1:cx+(v.x1-cx)/k };
@@ -6565,16 +6585,25 @@ function vSectionAvg(ride, sec, m){
     V.view = { x0, x1:x0+w };
   }
   cv.addEventListener('pointerdown', e=>{
+    stopMom();
     cv.setPointerCapture(e.pointerId); ptrs.set(e.pointerId, local(e));
-    if (ptrs.size===1) g = { type:'pan', start:local(e), t:performance.now(), moved:false, view:{...V.view} };
-    else if (ptrs.size===2){ const [a,b] = [...ptrs.values()]; g = { type:'pinch', d:Math.max(1,Math.abs(a.x-b.x)), mid:(a.x+b.x)/2, view:{...V.view}, moved:true }; }
+    if (g && g.lp) clearTimeout(g.lp);
+    if (ptrs.size===1){
+      g = { type:'pan', start:local(e), t:performance.now(), moved:false, view:{...V.view} };
+      tracker.reset(local(e).x, e.timeStamp || performance.now());
+      g.lp = setTimeout(()=>{            // held without moving: from now on the finger carries the seek bar
+        if (g && g.type==='pan' && !g.moved && ptrs.size===1){ g.type = 'seek'; if (navigator.vibrate) navigator.vibrate(8); setCursorAt(g.start.x); }
+      }, 380);
+    } else if (ptrs.size===2){ const [a,b] = [...ptrs.values()]; g = { type:'pinch', d:Math.max(1,Math.abs(a.x-b.x)), mid:(a.x+b.x)/2, view:{...V.view}, moved:true }; }
   });
   cv.addEventListener('pointermove', e=>{
     if (!ptrs.has(e.pointerId) || !g) return;
     ptrs.set(e.pointerId, local(e));
+    if (g.type==='seek'){ setCursorAt(local(e).x); return; }
     if (g.type==='pan' && ptrs.size===1){
       const p = local(e), dx = p.x-g.start.x;
-      if (Math.abs(dx)>5 || Math.abs(p.y-g.start.y)>5) g.moved = true;
+      tracker.add(e, cv.getBoundingClientRect().left);
+      if (Math.abs(dx)>5 || Math.abs(p.y-g.start.y)>5){ g.moved = true; if (g.lp){ clearTimeout(g.lp); g.lp = null; } }
       if (!g.moved) return;
       const wx = (g.view.x1-g.view.x0)/(W-ML-MR);
       V.view = { x0:g.view.x0-dx*wx, x1:g.view.x1-dx*wx }; clampView(); vDraw();
@@ -6587,37 +6616,86 @@ function vSectionAvg(ride, sec, m){
     if (!ptrs.has(e.pointerId)) return;
     const p = local(e), was = g;
     ptrs.delete(e.pointerId);
-    if (ptrs.size===0){ if (was && was.type==='pan' && !was.moved && performance.now()-was.t<500) tap(p); g = null; }
-    else if (ptrs.size===1){ const rem = [...ptrs.values()][0]; g = { type:'pan', start:rem, t:performance.now(), moved:true, view:{...V.view} }; }
+    if (was && was.lp){ clearTimeout(was.lp); was.lp = null; }
+    if (ptrs.size===0){
+      if (was && was.type==='pan'){
+        if (!was.moved && performance.now()-was.t<500) tap(p);
+        else if (was.moved && e.type==='pointerup'){
+          const v = tracker.velocity(e.timeStamp || performance.now());
+          if (Math.abs(v) > MOMENTUM_TRIGGER_THRESHOLD) startMom(v);
+        }
+      }
+      g = null;
+    } else if (ptrs.size===1){ const rem = [...ptrs.values()][0]; g = { type:'pan', start:rem, t:performance.now(), moved:true, view:{...V.view} }; tracker.reset(rem.x, performance.now()); }
   }
   cv.addEventListener('pointerup', up); cv.addEventListener('pointercancel', up);
-  cv.addEventListener('wheel', e=>{ e.preventDefault(); zoomAt(local(e).x, e.deltaY<0 ? 1.2 : 1/1.2); vDraw(); }, {passive:false});
+  cv.addEventListener('wheel', e=>{ e.preventDefault(); stopMom(); zoomAt(local(e).x, e.deltaY<0 ? 1.2 : 1/1.2); vDraw(); }, {passive:false});
   function tap(p){
-    if (!V.view || p.x<ML || p.x>W-MR){ V.cursor = null; $('#vTip').classList.add('hidden'); vDraw(); return; }
-    const x = fromX(p.x), m = V_METRICS[$('#vMetric').value], xmode = $('#vXAxis').value;
+    if (!V.view || p.x<ML || p.x>W-MR){ V.cursor = null; $('#vTip').classList.add('hidden'); vDraw(); vUpdateSplitBtn(); return; }
+    setCursorAt(p.x);
+  }
+  // put the seek bar at a screen position and show the values under it
+  function setCursorAt(px){
+    if (!V.view) return;
+    px = Math.max(ML, Math.min(W-MR, px));
+    const x = fromX(px), m = V_METRICS[$('#vMetric').value], xmode = $('#vXAxis').value;
     V.cursor = x;
-    const vis = vVisible();
     const rows = [];
-    vis.forEach(r=>{
+    vVisible().forEach(r=>{
       const st = ridesSteps(r, m).find(s=> x>=s.a && x<=s.b);
       if (!st) return;
-      rows.push('<span style="color:'+r.color+'">●</span> '+escapeHtml(vDate(r.item.startTime, true))+'　'+(st.rest ? '休憩' : escapeHtml(st.name)+'　<b>'+(+st.v.toFixed(1))+'</b> '+m.unit));
+      let extra = '';
+      if (st.split && st.split.bars){ const bar = st.split.bars.find(b=> x>=b.a && x<=b.b); if (bar) extra = '(ここの区切り '+(+bar.v.toFixed(1))+' '+m.unit+')'; }
+      rows.push('<span style="color:'+r.color+'">●</span> '+escapeHtml(vDate(r.item.startTime, true))+'　'+(st.rest ? '休憩' : escapeHtml(st.name)+'　<b>'+(+st.v.toFixed(1))+'</b> '+m.unit+extra));
     });
-    // raw mode: the section of the front ride under the seek bar gets its raw data (until released)
-    if (V.mode==='overlay' && vis.length){
-      const st = ridesSteps(vis[0], m).find(s=> !s.rest && x>=s.a && x<=s.b);
-      if (st) V.rawSec = { rideId:vis[0].id, idx:st.sec.idx };
-    }
     const tip = $('#vTip');
-    tip.innerHTML = '<b>'+(xmode==='dist' ? '出発から '+(+x.toFixed(2))+' km' : '出発から '+fmtHMS(x))+'</b><br>'+(rows.join('<br>')||'データなし');
+    tip.innerHTML = '<b>'+(xmode==='dist' ? '出発から '+(+x.toFixed(2))+' km' : '出発から '+vHms(x, true))+'</b><br>'+(rows.join('<br>')||'データなし');
     tip.classList.remove('hidden');
-    vDraw(); vUpdateRawBtn();
+    vDraw(); vUpdateSplitBtn();
   }
-  box.querySelector('.vTools').addEventListener('click', e=>{
-    const a = e.target.dataset && e.target.dataset.a; if (!a || !V.view) return;
-    const c = (ML+W-MR)/2;
-    if (a==='in') zoomAt(c, 1.5); else if (a==='out') zoomAt(c, 1/1.5); else { V.cursor = null; $('#vTip').classList.add('hidden'); vFit(false); }
-    vDraw();
+  // ---- 区間を分割 / 分割解除: for the section of the front ride that the seek bar is on
+  function vCursorSection(){
+    const r = vVisible()[0];
+    if (!r || V.cursor==null) return null;
+    const st = ridesSteps(r, V_METRICS[$('#vMetric').value]).find(s=> !s.rest && V.cursor>=s.a && V.cursor<=s.b);
+    return st ? { ride:r, sec:st.sec } : null;
+  }
+  window.vUpdateSplitBtn = function(){
+    const b = $('#vSplitBtn'); if (!b) return;
+    const c = vCursorSection();
+    if (!c){ b.disabled = true; b.textContent = '区間を分割'; return; }
+    b.disabled = false; b.textContent = V.splits.has(c.ride.id+':'+c.sec.idx) ? '分割解除' : '区間を分割';
+  };
+  function askInterval(){
+    return new Promise(resolve=>{
+      const last = V.splitLast || { n:60, unit:'s' };
+      const modal = document.createElement('div'); modal.className = 'confirmModal';
+      modal.innerHTML = '<div class="confirmBox"><p>何秒(何分)ごとに分割しますか?(1秒〜60分)<br><span style="font-size:11.5px;color:var(--text-faint);">1秒にすると、生データそのものが折れ線で出ます。それより長いと、区切りごとの平均がヒストグラムで出ます。</span></p>'+
+        '<div style="display:flex;gap:8px;margin-bottom:14px;"><input type="number" id="vSplitN" min="1" step="1" value="'+last.n+'" style="flex:1;font-size:16px;padding:8px;">'+
+        '<select id="vSplitU" style="font-size:15px;padding:8px;"><option value="s"'+(last.unit==='s'?' selected':'')+'>秒</option><option value="m"'+(last.unit==='m'?' selected':'')+'>分</option></select></div>'+
+        '<div id="vSplitErr" class="hint" style="color:var(--danger);display:none;margin-bottom:8px;"></div>'+
+        '<div class="confirmBtns"><button type="button" class="small" data-ok="1">分割する</button><button type="button" class="small ghost" data-ok="0">キャンセル</button></div></div>';
+      document.body.appendChild(modal);
+      const close = v=>{ document.body.removeChild(modal); resolve(v); };
+      modal.querySelector('[data-ok="0"]').addEventListener('click', ()=> close(null));
+      modal.querySelector('[data-ok="1"]').addEventListener('click', ()=>{
+        const n = parseFloat(modal.querySelector('#vSplitN').value), u = modal.querySelector('#vSplitU').value;
+        const sec = n*(u==='m' ? 60 : 1);
+        if (!(n>0) || sec<1 || sec>3600){ const er = modal.querySelector('#vSplitErr'); er.textContent = '1秒〜60分の間で指定してください。'; er.style.display = 'block'; return; }
+        V.splitLast = { n, unit:u };
+        close(sec);
+      });
+    });
+  }
+  $('#vSplitBtn').addEventListener('click', async ()=>{
+    const c = vCursorSection(); if (!c) return;
+    const key = c.ride.id+':'+c.sec.idx;
+    if (V.splits.has(key)){ V.splits.delete(key); V.splitVer++; vDraw(); vUpdateSplitBtn(); return; }
+    const iv = await askInterval(); if (iv==null) return;
+    V.splits.set(key, iv); V.splitVer++;
+    const st = ridesSteps(c.ride, V_METRICS[$('#vMetric').value]).find(s=> !s.rest && s.sec.idx===c.sec.idx);
+    if (st && st.split && st.split.tooFine){ V.splits.delete(key); V.splitVer++; showHeaderMsg('この項目は、区間を300個を超えて細かく分割できません。間隔を長くしてください。', true); }
+    vDraw(); vUpdateSplitBtn();
   });
   new ResizeObserver(()=> vDraw()).observe(cv);
 })();
