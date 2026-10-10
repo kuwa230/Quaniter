@@ -512,6 +512,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
       <label class="vAxBtn" id="vXBtn" title="横軸の項目">▲▼<select id="vXAxis"><option value="elapsed">経過時間</option><option value="dist">距離</option><option value="kcal">消費エネルギー</option></select></label>
     </div>
     <div class="vTip hidden" id="vTip"></div>
+    <div class="vTip hidden" id="vWhole"></div>
     <div class="vRow" id="vExportRow" style="margin-top:10px;"><button id="vSplitBtn" class="small primary" type="button" disabled>区間を分割</button><button id="vExpPng" class="small" type="button">PNGを保存</button><button id="vExpPdf" class="small" type="button">PDFを保存</button></div>
   </div>
 </div>
@@ -774,7 +775,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
 // (this session's own publish count so far) is reconstructed from the
 // conversation itself rather than mechanically verified — best-effort, not
 // guaranteed exact. Increment by exactly 1 on every future publish.
-const APP_VERSION = 190;
+const APP_VERSION = 191;
 
 /* ============ FIT PARSER ============ */
 const FIT_EPOCH = 631065600; // seconds between 1970-01-01 and 1989-12-31 (FIT epoch)
@@ -6363,18 +6364,48 @@ function vAvgCad(ride, sec){
   }
   return n ? t/n : null;
 }
-function vSectionAvg(ride, sec, m){
-  if (!sec._st){
+function vCompute(ride, sec){
+  let st = {};
+  {
     // the analyser's own calculation (so the numbers match its table), run on this ride's data
     const keep = { rec:S.records, w:S.weight, f:S.ftp, a:S.age, x:S.sex, g:S.avgGradientMethod };
     try{
       S.records = ride.recs; S.weight = Number(ride.cfg.weight)>0 ? Number(ride.cfg.weight) : null; S.ftp = Number(ride.cfg.ftp)>0 ? Number(ride.cfg.ftp) : null;
       S.age = Number(ride.cfg.age)>0 ? Number(ride.cfg.age) : null; S.sex = ride.cfg.sex==='m' || ride.cfg.sex==='f' ? ride.cfg.sex : null;
       S.avgGradientMethod = ride.cfg.grad==='gain' ? 'gain' : 'diff';
-      sec._st = computeIntervalStats({ start:sec.start, end:sec.end, name:sec.name, nameType:sec.nameType, startName:sec.startName, endName:sec.endName }, sec.idx);
-    }catch(e){ sec._st = {}; }
+      st = computeIntervalStats({ start:sec.start, end:sec.end, name:sec.name, nameType:sec.nameType, startName:sec.startName, endName:sec.endName }, sec.idx);
+    }catch(e){ st = {}; }
     finally{ S.records = keep.rec; S.weight = keep.w; S.ftp = keep.f; S.age = keep.a; S.sex = keep.x; S.avgGradientMethod = keep.g; }
   }
+  return st;
+}
+// aerobic decoupling (Pw:HR): how far the power-per-heartbeat of the second half of the moving time fell below the first half's, in %
+function vPwHr(ride){
+  const rs = ride.recs, S2 = [];
+  let mt = 0;
+  for (let i=0;i<rs.length-1;i++){
+    const dt = Math.min(10, rs[i+1].elapsed-rs[i].elapsed), p = rs[i].power, h = rs[i].hr, sp = rs[i].speed;
+    if (p==null) continue;
+    const mv = sp==null ? p>0 : sp>0.5;
+    if (!mv) continue;
+    S2.push({ t:mt, dt, p, h }); mt += dt;
+  }
+  if (mt<1200) return null;
+  const agg = a=>{ let ps=0, tp=0, hs=0, th=0; a.forEach(x=>{ ps += x.p*x.dt; tp += x.dt; if (x.h!=null){ hs += x.h*x.dt; th += x.dt; } }); return th ? (ps/tp)/(hs/th) : null; };
+  const e1 = agg(S2.filter(x=>x.t<mt/2)), e2 = agg(S2.filter(x=>x.t>=mt/2));
+  return e1 && e2 ? (e1-e2)/e1*100 : null;
+}
+// the whole ride as one section (cached)
+function vWholeStats(ride){
+  if (!ride._all){
+    const rs = ride.recs;
+    ride._all = vCompute(ride, { start:rs[0].elapsed, end:rs[rs.length-1].elapsed, name:'全体', nameType:'a', startName:'', endName:'', idx:0 });
+    ride._all.pwhr = vPwHr(ride);
+  }
+  return ride._all;
+}
+function vSectionAvg(ride, sec, m){
+  if (!sec._st) sec._st = vCompute(ride, sec);
   const v = m.stat==='avgCad' ? vAvgCad(ride, sec) : sec._st[m.stat];
   return v==null || isNaN(v) ? null : v;
 }
@@ -6408,6 +6439,8 @@ function vSectionAvg(ride, sec, m){
     drawSteps(ctx, grid, muted);
     const tsig = [V.cursor==null ? '' : V.cursor.toFixed(4), vVisible().map(r=>r.id).join('.'), vCols().join(','), $('#vMetric').value, $('#vXAxis').value, V.splitVer, V.cadZero ? 1 : 0].join('|');
     if (V._tipSig!==tsig || V._tipRides!==V.rides || $('#vTip').classList.contains('hidden')){ V._tipSig = tsig; V._tipRides = V.rides; vRenderTip(); }
+    const asig = [vVisible().map(r=>r.id).join('.'), vColsAll().join(','), V.cadZero ? 1 : 0].join('|');
+    if (V._allSig!==asig || V._allRides!==V.rides){ V._allSig = asig; V._allRides = V.rides; vRenderAll(); }
     // the ▲▼ pickers sit next to the axis titles
     const m = V_METRICS[$('#vMetric').value];
     ctx.font = '11px sans-serif';
@@ -6704,7 +6737,7 @@ function vSectionAvg(ride, sec, m){
   }
   const V_DEFAULT_COLS = ['fname','secname','distance','netTime','avgPower','avgSpeedNet','avgHr'];
   const vColOk = c=> c==='fname' || c==='secname' || !!COL_META[c];
-  const vColLabel = c=> c==='fname' ? 'ファイル名' : c==='secname' ? '区間名' : COL_META[c].label;
+  const vColLabel = c=> c==='fname' ? 'ファイル名' : c==='secname' ? '区間名' : c==='pwhr' ? 'Pw:HR(デカップリング)' : COL_META[c].label;
   function vCols(){
     if (V.cadZero===undefined){ try{ V.cadZero = localStorage.getItem('quaniterCadZero')==='1'; }catch(e){ V.cadZero = false; } }
     if (!V.cols){
@@ -6713,9 +6746,10 @@ function vSectionAvg(ride, sec, m){
     }
     return V.cols;
   }
-  function vPickCols(){
-    const cur = vCols();
-    const allKeys = ['fname','secname'].concat(COLUMN_DEFS.map(d=>d.k));
+  function vPickCols(which){
+    const isAll = which==='all';
+    const cur = isAll ? vColsAll() : vCols();
+    const allKeys = isAll ? ['fname'].concat(COLUMN_DEFS.map(d=>d.k), ['pwhr']) : ['fname','secname'].concat(COLUMN_DEFS.map(d=>d.k));
     const order = cur.filter(k=>k!=='fname').concat(allKeys.filter(k=>k!=='fname' && !cur.includes(k)));
     const rowHtml = k=>'<div class="vColRow" data-k="'+k+'"><span class="vGrip" title="ドラッグで並べ替え">≡</span><label><input type="checkbox" value="'+k+'"'+(cur.includes(k)?' checked':'')+'> '+escapeHtml(vColLabel(k))+'</label></div>';
     const modal = document.createElement('div'); modal.className = 'confirmModal';
@@ -6744,12 +6778,13 @@ function vSectionAvg(ride, sec, m){
     modal.querySelector('[data-ok="0"]').addEventListener('click', ()=> document.body.removeChild(modal));
     modal.querySelector('[data-ok="1"]').addEventListener('click', ()=>{
       const rest = [...list.querySelectorAll('.vColRow')].filter(r=>r.querySelector('input').checked).map(r=>r.dataset.k);
-      V.cols = (modal.querySelector('#vColFn').checked ? ['fname'] : []).concat(rest);
-      try{ localStorage.setItem('quaniterVCols2', JSON.stringify(V.cols)); }catch(e){}
+      const chosen = (modal.querySelector('#vColFn').checked ? ['fname'] : []).concat(rest);
+      if (isAll){ V.colsAll = chosen; try{ localStorage.setItem('quaniterVColsAll', JSON.stringify(chosen)); }catch(e){} }
+      else { V.cols = chosen; try{ localStorage.setItem('quaniterVCols2', JSON.stringify(chosen)); }catch(e){} }
       const cz = modal.querySelector('#vCadZero').checked;
       if (cz!==!!V.cadZero){ V.cadZero = cz; V.splitVer++; try{ localStorage.setItem('quaniterCadZero', cz ? '1' : '0'); }catch(e){} }
       document.body.removeChild(modal);
-      V._tipSig = null; vDraw();
+      V._tipSig = null; V._allSig = null; vDraw();
     });
   }
   // text of one table cell (null = not available)
@@ -6759,6 +6794,46 @@ function vSectionAvg(ride, sec, m){
     const stt = st.sec._st || {}, v = c==='avgCad' ? vAvgCad(ride, st.sec) : stt[c];
     return COL_META[c].fmt(v==null || isNaN(v) ? null : v);
   }
+  // ---- the table for whole rides: same look as the section table, one row per visible ride
+  const V_DEFAULT_ALL = ['fname','distance','netTime','avgPower','avgHr','ef','workKj','pwhr'];
+  function vColsAll(){
+    if (!V.colsAll){
+      try{ const a = JSON.parse(localStorage.getItem('quaniterVColsAll')||'null'); if (Array.isArray(a)) V.colsAll = a.filter(c=> c==='fname' || c==='pwhr' || COL_META[c]); }catch(e){}
+      if (!V.colsAll) V.colsAll = V_DEFAULT_ALL.slice();
+    }
+    return V.colsAll;
+  }
+  function vAllText(c, ride){
+    if (c==='fname') return ride.item.name;
+    const rs = ride.recs, st = vWholeStats(ride);
+    if (c==='pwhr') return st.pwhr==null ? '--' : st.pwhr.toFixed(1)+' %';
+    const v = c==='avgCad' ? vAvgCad(ride, { start:rs[0].elapsed, end:rs[rs.length-1].elapsed }) : st[c];
+    return COL_META[c].fmt(v==null || isNaN(v) ? null : v);
+  }
+  window.vRenderAll = function(){
+    const box = $('#vWhole'), vis = vVisible();
+    if (!vis.length){ box.classList.add('hidden'); return; }
+    const all = vColsAll(), cols = all.filter(c=>c!=='fname'), showFn = all.includes('fname');
+    const g = document.createElement('canvas').getContext('2d'); g.font = '700 12px '+getComputedStyle(box).fontFamily;
+    const w = {}; all.forEach(c=>{
+      let mx = g.measureText(c==='fname' ? 'ファイル名' : vColLabel(c)).width;
+      vis.forEach(r=>{ mx = Math.max(mx, g.measureText(vAllText(c, r)).width); });
+      w[c] = Math.ceil(c==='fname' ? Math.min(mx+34, Math.max(120, window.innerWidth*0.42)) : mx+16);
+    });
+    const fnW = showFn ? w.fname : 24, tw = fnW + cols.reduce((a,c)=>a+w[c],0), pin = showFn ? -1 : 0;
+    let html = '<div class="vTipHead"><b>ライド全体の比較</b><button type="button" class="small ghost" id="vAllBtn" title="表示項目">⚙</button></div>'+
+      '<div class="vTipScroll"><table class="vTbl'+(showFn ? '' : ' noFn')+'" style="width:'+tw+'px;"><colgroup><col style="width:'+fnW+'px;">'+cols.map(c=>'<col style="width:'+w[c]+'px;">').join('')+'</colgroup>'+
+      '<thead><tr><th class="vFn">'+(showFn ? 'ファイル名' : '')+'</th>'+cols.map((c,i)=>'<th'+(i===pin ? ' class="vPin"' : '')+'>'+escapeHtml(vColLabel(c))+'</th>').join('')+'</tr></thead><tbody>';
+    vis.forEach(r=>{
+      html += '<tr><td class="vFn"><span style="color:'+r.color+'">●</span>'+(showFn ? ' '+escapeHtml(r.item.name) : '')+'</td>'+cols.map((c,i)=>'<td'+(i===pin ? ' class="vPin"' : '')+'>'+escapeHtml(vAllText(c, r))+'</td>').join('')+'</tr>';
+    });
+    html += '</tbody></table></div>';
+    const oldSc = box.querySelector('.vTipScroll'), keepLeft = oldSc ? oldSc.scrollLeft : 0;
+    box.innerHTML = html;
+    const newSc = box.querySelector('.vTipScroll'); if (newSc) newSc.scrollLeft = keepLeft;
+    box.querySelector('#vAllBtn').addEventListener('click', ()=> vPickCols('all'));
+    box.classList.remove('hidden');
+  };
   // fixed column widths from the longest text each column can ever show, so the columns never shift while the seek bar moves
   function vColWidths(cols, m){
     const key = cols.join(',')+'|'+m.stat+'|'+$('#vXAxis').value+'|'+V.splitVer;
@@ -6816,7 +6891,7 @@ function vSectionAvg(ride, sec, m){
     const oldSc = tip.querySelector('.vTipScroll'), keepLeft = oldSc ? oldSc.scrollLeft : 0;
     tip.innerHTML = html;
     const newSc = tip.querySelector('.vTipScroll'); if (newSc) newSc.scrollLeft = keepLeft;
-    tip.querySelector('#vColBtn').addEventListener('click', vPickCols);
+    tip.querySelector('#vColBtn').addEventListener('click', ()=> vPickCols());
     tip.classList.remove('hidden');
   };
   // ---- 区間を分割 / 分割解除: for the section of the front ride that the seek bar is on
