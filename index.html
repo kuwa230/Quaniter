@@ -361,6 +361,10 @@ td.num{ text-align:right; font-variant-numeric:tabular-nums; }
 .vPcSel{ white-space:nowrap; display:flex; align-items:center; gap:6px; font-size:12px; color:var(--text-dim); }
 .vPcSel select{ font:inherit; font-size:13px; color:var(--text); background:var(--surface-2); border:1px solid var(--border); border-radius:8px; padding:4px 6px; max-width:62vw; }
 #vPcCanvas{ display:block; width:100%; height:300px; margin:4px 0 6px; }
+#vPcCanvas2{ display:block; width:100%; height:230px; margin:2px 0 4px; }
+.vPcWrap{ position:relative; }
+.vPcPop{ position:absolute; z-index:4; pointer-events:none; padding:5px 8px; border:1px solid var(--accent); border-radius:8px; background:var(--surface-2); font-size:12px; line-height:1.5; white-space:nowrap; box-shadow:0 2px 8px rgba(0,0,0,.3); }
+.vPcCap{ font-size:11.5px; color:var(--text-faint); }
 .vTipHead{ display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:4px; }
 .vTipScroll{ overflow-x:auto; }
 .vTbl{ table-layout:fixed; font-size:12px; }
@@ -518,8 +522,10 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
     <div class="vTip hidden" id="vWhole"></div>
     <div class="vTip hidden" id="vPc">
       <div class="vTipHead"><b>パワーカーブ</b><label class="vPcSel">範囲<select id="vPcRange"></select></label></div>
-      <canvas id="vPcCanvas"></canvas>
-      <div class="vTipScroll" id="vPcTbl"></div>
+      <div class="vPcWrap"><canvas id="vPcCanvas"></canvas><div class="vPcPop hidden" id="vPcPop"></div></div>
+      <div class="vTipHead" style="margin-top:12px;"><b>20m・60m最大平均パワーの推移</b></div>
+      <div class="vPcCap">実線:20m　破線:60m(横軸:消費エネルギー)</div>
+      <canvas id="vPcCanvas2"></canvas>
     </div>
     <div class="vRow" id="vExportRow" style="margin-top:10px;"><button id="vSplitBtn" class="small primary" type="button" disabled>区間を分割</button><button id="vExpPng" class="small" type="button">PNGを保存</button><button id="vExpPdf" class="small" type="button">PDFを保存</button></div>
   </div>
@@ -783,7 +789,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
 // (this session's own publish count so far) is reconstructed from the
 // conversation itself rather than mechanically verified — best-effort, not
 // guaranteed exact. Increment by exactly 1 on every future publish.
-const APP_VERSION = 192;
+const APP_VERSION = 193;
 
 /* ============ FIT PARSER ============ */
 const FIT_EPOCH = 631065600; // seconds between 1970-01-01 and 1989-12-31 (FIT epoch)
@@ -6959,8 +6965,7 @@ function vSectionAvg(ride, sec, m){
 /* ---- power curve: best average power for each duration, ridden out in 5 equal slices of the biggest ride's energy ---- */
 const PC_DUR = [5,10,15,30,60,120,300,600,1200,1800,3600];
 const PC_DUR_ALL = PC_DUR.concat([7200,10800,14400,21600]);
-const PC_KEYS = [5,60,300,1200,3600];
-const pcLab = d=> d<60 ? d+'秒' : d<3600 ? d/60+'分' : d/3600+'時間';
+const pcLab = d=> d<60 ? d+'s' : d<3600 ? d/60+'m' : d/3600+'h';
 // per ride: power per second (a recording gap counts as 0 W) and the energy (kcal) reached at each second
 function vPcPrep(r){
   if (r._pcP!==undefined) return r._pcP;
@@ -7030,15 +7035,57 @@ window.vRenderPc = function(){
     c.forEach((p,i)=>{ if (!p || p.d>d1) return; pts.push(p); st ? g.lineTo(X(p.d), Y(p.p)) : g.moveTo(X(p.d), Y(p.p)); st = true; });
     g.stroke(); pts.forEach(p=>{ g.beginPath(); g.arc(X(p.d), Y(p.p), 2.5, 0, 7); g.fill(); });
   });
-  // ---- key durations as a table (same look as the others)
-  const w0 = Math.min(Math.max(120, window.innerWidth*0.42), 220);
-  let html = '<table class="vTbl" style="width:'+(w0+PC_KEYS.length*76)+'px;"><colgroup><col style="width:'+w0+'px;">'+PC_KEYS.map(()=>'<col style="width:76px;">').join('')+'</colgroup><thead><tr><th class="vFn">ファイル名</th>'+PC_KEYS.map(d=>'<th>'+pcLab(d)+'</th>').join('')+'</tr></thead><tbody>';
-  curves.forEach(({r, c})=>{
-    html += '<tr><td class="vFn"><span style="color:'+r.color+'">●</span> '+escapeHtml(r.item.name)+'</td>'+PC_KEYS.map(d=>{ const p = c && c[PC_DUR_ALL.indexOf(d)]; return '<td>'+(p ? Math.round(p.p)+' W' : '--')+'</td>'; }).join('')+'</tr>';
-  });
-  html += '</tbody></table>';
-  const tb = $('#vPcTbl'), left = tb.scrollLeft; tb.innerHTML = html; tb.scrollLeft = left;
+  // ---- the seek bar (set by a tap) and its small window
+  const pop = $('#vPcPop'), idxOf = d=> PC_DUR_ALL.indexOf(d);
+  V.pcGeom = shown.map(d=>({ d, x:X(d) }));
+  if (V.pcD!=null && shown.includes(V.pcD)){
+    const x = Math.round(X(V.pcD))+.5;
+    g.strokeStyle = '#fff'; g.setLineDash([4,3]); g.beginPath(); g.moveTo(x,MT); g.lineTo(x,MT+ph); g.stroke(); g.setLineDash([]);
+    pop.innerHTML = '<b>'+pcLab(V.pcD)+'</b><br>'+curves.map(({r,c})=>{ const p = c && c[idxOf(V.pcD)]; return '<span style="color:'+r.color+'">●</span> '+(p ? Math.round(p.p)+' W' : '--'); }).join('<br>');
+    pop.classList.remove('hidden');
+    const pw2 = pop.offsetWidth; pop.style.left = Math.max(2, Math.min(W-pw2-2, x+8 > W-pw2-2 ? x-pw2-8 : x+8))+'px'; pop.style.top = (MT+6)+'px';
+  } else pop.classList.add('hidden');
+  // ---- 20 m / 60 m best power along the energy of the ride (the 5 slices)
+  const c2 = $('#vPcCanvas2'), W2 = c2.clientWidth, H2 = c2.clientHeight;
+  if (W2 && H2){
+    c2.width = Math.round(W2*dpr); c2.height = Math.round(H2*dpr);
+    const h = c2.getContext('2d'); h.setTransform(dpr,0,0,dpr,0,0); h.clearRect(0,0,W2,H2);
+    const pw3 = W2-ML-MR, ph3 = H2-MT-MB, k20 = idxOf(1200), k60 = idxOf(3600);
+    const series = vis.map(r=>{
+      const tot = vPcPrep(r).kc[vPcPrep(r).T], pts20 = [], pts60 = [];
+      for (let i=0;i<5;i++){
+        const a0 = i*size, b0 = Math.min((i+1)*size, tot); if (a0>=tot) break;
+        const c = vPcCurve(r, a0, (i+1)*size, PC_DUR_ALL), xm = (a0+b0)/2;
+        if (c && c[k20]) pts20.push({ x:xm, y:c[k20].p }); if (c && c[k60]) pts60.push({ x:xm, y:c[k60].p });
+      }
+      return { r, pts20, pts60 };
+    });
+    let top2 = 1; series.forEach(o=>o.pts20.concat(o.pts60).forEach(p=>{ if (p.y>top2) top2 = p.y; }));
+    const raw2 = top2*1.08/4, q = Math.pow(10, Math.floor(Math.log10(raw2))), f2 = raw2/q, st2 = (f2<1.5?1:f2<3.5?2:f2<7.5?5:10)*q, y2 = Math.ceil(top2*1.05/st2)*st2;
+    const X3 = v=> ML + v/(5*size)*pw3, Y3 = v=> MT + ph3 - v/y2*ph3;
+    h.strokeStyle = grid; h.fillStyle = muted; h.lineWidth = 1; h.font = '11px sans-serif'; h.textAlign = 'right'; h.textBaseline = 'middle';
+    for (let v=0; v<=y2+1e-9; v+=st2){ h.beginPath(); h.moveTo(ML,Math.round(Y3(v))+.5); h.lineTo(ML+pw3,Math.round(Y3(v))+.5); h.stroke(); h.fillText(String(+v.toFixed(2)), ML-5, Y3(v)); }
+    h.textBaseline = 'top';
+    for (let i=0;i<=5;i++){ const x = Math.round(X3(i*size))+.5; h.beginPath(); h.moveTo(x,MT); h.lineTo(x,MT+ph3); h.stroke(); h.textAlign = i===5 ? 'right' : i===0 ? 'left' : 'center'; h.fillText(String(rnd(i*size)), i===5 ? x+4 : i===0 ? x-4 : x, MT+ph3+5); }
+    h.textAlign = 'center'; h.textBaseline = 'bottom'; h.fillText('累積の消費エネルギー(kcal)', ML+pw3/2, H2-1);
+    h.save(); h.translate(11, MT+ph3/2); h.rotate(-Math.PI/2); h.textBaseline = 'middle'; h.fillText('最大平均パワー(W)', 0, 0); h.restore();
+    series.slice().reverse().forEach(({r, pts20, pts60})=>{
+      [[pts20,[]],[pts60,[6,4]]].forEach(([pts, dash])=>{
+        if (!pts.length) return;
+        h.strokeStyle = r.color; h.fillStyle = r.color; h.lineWidth = 2; h.setLineDash(dash); h.beginPath();
+        pts.forEach((p,i)=> i ? h.lineTo(X3(p.x), Y3(p.y)) : h.moveTo(X3(p.x), Y3(p.y))); h.stroke(); h.setLineDash([]);
+        pts.forEach(p=>{ h.beginPath(); h.arc(X3(p.x), Y3(p.y), 2.5, 0, 7); h.fill(); });
+      });
+    });
+  }
 };
+// a tap on the curve puts the seek bar on the plot nearest to it (along x)
+$('#vPcCanvas').addEventListener('click', e=>{
+  if (!V.pcGeom || !V.pcGeom.length) return;
+  const x = e.clientX - $('#vPcCanvas').getBoundingClientRect().left;
+  V.pcD = V.pcGeom.reduce((a,b)=> Math.abs(b.x-x) < Math.abs(a.x-x) ? b : a).d;
+  vRenderPc();
+});
 $('#vPcRange').addEventListener('change', ()=>{ V._pcSig = null; vRenderPc(); });
 
 // a one-page landscape A4 PDF holding the graph as a JPEG (no library needed)
