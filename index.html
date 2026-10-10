@@ -70,10 +70,12 @@ h1,h2,h3,.disp{ font-family:"Barlow Condensed",Impact,"Arial Narrow",sans-serif;
 .fileinfo{ font-size:12.5px; color:var(--text-dim); margin-top:10px; }
 
 html,body{ touch-action:manipulation; -webkit-tap-highlight-color:transparent; }
+body{ -webkit-user-select:none; user-select:none; -webkit-touch-callout:none; }
+input:not([type=checkbox]):not([type=radio]):not([type=range]), textarea, [contenteditable=true]{ -webkit-user-select:text; user-select:text; -webkit-touch-callout:default; }
 /* page 2: no browser pinch-zoom of the page itself (pan only). iOS Safari
    ignores user-scalable=no, but it does honour a touch-action without
    pinch-zoom — see also the gesturestart guard in showPage's section. */
-html.noPageZoom, html.noPageZoom body, html.noPageZoom button{ touch-action:pan-x pan-y; }
+html, html body, html button{ touch-action:pan-x pan-y; }
 *{ -webkit-tap-highlight-color:transparent; } /* iOS's default gray tap-flash was very likely the "whole area looks selected" flash reported on #axisBottomBtn, which spans the full width */
 button{
   font-family:inherit; font-size:13px; font-weight:600; color:var(--text); background:var(--surface-2);
@@ -362,6 +364,7 @@ td.num{ text-align:right; font-variant-numeric:tabular-nums; }
 .vTbl th,.vTbl td{ white-space:nowrap; padding:4px 7px; overflow:hidden; text-overflow:ellipsis; }
 .vTbl th.vFn,.vTbl td.vFn{ position:sticky; left:0; z-index:2; background:var(--surface-2); box-shadow:2px 0 4px rgba(0,0,0,.12); }
 .vTbl th.vPin,.vTbl td.vPin{ position:sticky; left:24px; z-index:2; background:var(--surface-2); box-shadow:2px 0 4px rgba(0,0,0,.12); }
+.vTbl.noFn td.vFn{ text-overflow:clip; padding-right:0; }
 .vColRow{ display:flex; align-items:center; gap:6px; }
 .vColRow.dragging{ background:var(--accent-soft,rgba(128,128,128,.25)); border-radius:6px; }
 .vColRow label{ white-space:nowrap; font-size:13px; }
@@ -506,7 +509,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
     <div class="vChartBox" id="vChartBox">
       <canvas id="vCanvas"></canvas>
       <label class="vAxBtn" id="vYBtn" title="縦軸の項目">▲▼<select id="vMetric"></select></label>
-      <label class="vAxBtn" id="vXBtn" title="横軸の項目">▲▼<select id="vXAxis"><option value="elapsed">経過時間</option><option value="dist">距離</option></select></label>
+      <label class="vAxBtn" id="vXBtn" title="横軸の項目">▲▼<select id="vXAxis"><option value="elapsed">経過時間</option><option value="dist">距離</option><option value="kcal">消費エネルギー</option></select></label>
     </div>
     <div class="vTip hidden" id="vTip"></div>
     <div class="vRow" id="vExportRow" style="margin-top:10px;"><button id="vSplitBtn" class="small primary" type="button" disabled>区間を分割</button><button id="vExpPng" class="small" type="button">PNGを保存</button><button id="vExpPdf" class="small" type="button">PDFを保存</button></div>
@@ -771,7 +774,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
 // (this session's own publish count so far) is reconstructed from the
 // conversation itself rather than mechanically verified — best-effort, not
 // guaranteed exact. Increment by exactly 1 on every future publish.
-const APP_VERSION = 189;
+const APP_VERSION = 190;
 
 /* ============ FIT PARSER ============ */
 const FIT_EPOCH = 631065600; // seconds between 1970-01-01 and 1989-12-31 (FIT epoch)
@@ -1409,9 +1412,14 @@ $('#appVersionLabel').textContent = 'v'+APP_VERSION;
 // other browsers. (The chart's and timeline's own two-finger zoom runs on
 // their own listeners and is unaffected.)
 ['gesturestart','gesturechange','gestureend'].forEach(ev=>{
-  document.addEventListener(ev, e=>{ if (currentPageNum===2) e.preventDefault(); }, {passive:false});
+  document.addEventListener(ev, e=>{ e.preventDefault(); }, {passive:false});
 });
-document.addEventListener('touchmove', e=>{ if (currentPageNum===2 && e.touches.length>1) e.preventDefault(); }, {passive:false});
+document.addEventListener('touchmove', e=>{
+  if (e.touches.length>1 && !(e.target.closest && e.target.closest('#vChartBox, #powerChartWrap, #tlRows2, #routeWrap, #timelineWrap, canvas, svg'))) e.preventDefault();
+}, {passive:false});
+document.addEventListener('selectstart', e=>{ const t = e.target && e.target.nodeType===1 ? e.target : (e.target && e.target.parentElement); if (!(t && t.closest && t.closest('input, textarea, [contenteditable=true]'))) e.preventDefault(); });
+let lastTouchEnd = 0;
+document.addEventListener('touchend', e=>{ const n = Date.now(); if (n-lastTouchEnd<300 && !(e.target.closest && e.target.closest('input, textarea'))) e.preventDefault(); lastTouchEnd = n; }, {passive:false});
 $('#toPage2Btn').addEventListener('click', ()=>{ showPage(2); });
 
 async function handleFile(file){
@@ -6256,7 +6264,7 @@ function vBuildLegend(){
 }
 // what depends on which ride is in front
 function vAfterLayerChange(){
-  V.cursor = null; $('#vTip').classList.add('hidden');
+  V.cursor = null;
   vFit(true); vRefresh();
 }
 // per ride: x[] and y[] for the chosen metric / axis, moving-averaged over a time window
@@ -6267,9 +6275,34 @@ function vVisible(){ return V.order.map(id=>V.rides[id]).filter(r=>r && !V.hidde
 function vStepsEnd(r){
   if (!r.sections.length) return 0;
   const a = r.sections[0], b = r.sections[r.sections.length-1];
-  if ($('#vXAxis').value==='dist') return (vDistAt(r, b.end)-vDistAt(r, a.start))/1000;
-  return b.end - a.start;
+  const ax = $('#vXAxis').value;
+  return vPos(r, b.end, ax) - vPos(r, a.start, ax);
 }
+// cumulative energy (kcal, from the power meter: work / 24 % / 4.184) before each record; null without power
+function vKcalCum(r){
+  if (r._kc!==undefined) return r._kc;
+  const rs = r.recs;
+  if (!rs.some(x=>x.power!=null)){ r._kc = null; return null; }
+  const c = new Float64Array(rs.length); let j = 0;
+  for (let i=0;i<rs.length;i++){
+    c[i] = j/1000/0.24/4.184;
+    if (i<rs.length-1 && rs[i].power!=null) j += rs[i].power*Math.min(10, rs[i+1].elapsed-rs[i].elapsed);
+  }
+  r._kc = c; return c;
+}
+function vIdxAt(r, t){ const rs = r.recs; let lo = 0, hi = rs.length-1; while (lo<hi){ const m = (lo+hi)>>1; if (rs[m].elapsed<t) lo = m+1; else hi = m; } return lo; }
+// position on the chosen horizontal axis (seconds / km / kcal) at an elapsed time, and back
+function vPos(r, t, ax){
+  if (ax==='dist') return vDistAt(r, t)/1000;
+  if (ax==='kcal'){ const c = vKcalCum(r); return c ? c[vIdxAt(r, t)] : 0; }
+  return t;
+}
+function vTimeAtPos(r, ax, p){
+  if (ax==='dist') return vTimeAtDist(r, p*1000);
+  if (ax==='kcal'){ const c = vKcalCum(r); if (!c) return 0; let lo = 0, hi = c.length-1; while (lo<hi){ const m = (lo+hi)>>1; if (c[m]<p) lo = m+1; else hi = m; } return r.recs[lo].elapsed; }
+  return p;
+}
+const V_XTITLE = { elapsed:'出発からの経過時間(休憩を含む)', dist:'出発からの距離(km)', kcal:'出発からの消費エネルギー(kcal)' };
 // distance (m) at an elapsed time
 function vDistAt(r, t){
   const rs = r.recs; let lo = 0, hi = rs.length-1;
@@ -6289,7 +6322,7 @@ function vFit(keepX){
 }
 function vLowerBound(a, x){ let lo=0, hi=a.length; while (lo<hi){ const m=(lo+hi)>>1; if (a[m]<x) lo=m+1; else hi=m; } return lo; }
 ['#vMetric','#vXAxis'].forEach(id=> $(id).addEventListener('change', ()=>{
-  V.cursor = null; $('#vTip').classList.add('hidden');
+  V.cursor = null;
   if (id==='#vXAxis') vConvertAxis();   // same place and scale, in the other unit (judged on the front ride)
   vRebuildSeries();
   vRefresh();
@@ -6305,8 +6338,8 @@ function vConvertAxis(){
   const to = $('#vXAxis').value, from = V.xPrev; V.xPrev = to;
   const r = vVisible()[0];
   if (!V.view || !r || !r.sections.length || from===to){ if (to!==from) vFit(false); return; }
-  const origin = r.sections[0].start, d0 = vDistAt(r, origin);
-  const conv = x=> to==='dist' ? (vDistAt(r, origin+Math.max(0,x))-d0)/1000 : vTimeAtDist(r, d0+Math.max(0,x)*1000)-origin;
+  const origin = r.sections[0].start, f0 = vPos(r, origin, from), t0 = vPos(r, origin, to);
+  const conv = x=> vPos(r, vTimeAtPos(r, from, f0+Math.max(0,x)), to) - t0;
   const nv = { x0:conv(V.view.x0), x1:conv(V.view.x1) };
   if (!(nv.x1>nv.x0)){ vFit(false); return; }
   V.view = nv;
@@ -6319,6 +6352,17 @@ function vRefresh(){
   vUpdateSplitBtn();
 }
 // section by section: the average of the chosen value (power by default) for every ride
+// average cadence of a section; zeros (not pedalling) are left out unless asked for
+function vAvgCad(ride, sec){
+  let n = 0, t = 0;
+  for (const rc of ride.recs){
+    if (rc.elapsed<sec.start) continue;
+    if (rc.elapsed>sec.end) break;
+    if (rc.cad==null || (!V.cadZero && !(rc.cad>0))) continue;
+    n++; t += rc.cad;
+  }
+  return n ? t/n : null;
+}
 function vSectionAvg(ride, sec, m){
   if (!sec._st){
     // the analyser's own calculation (so the numbers match its table), run on this ride's data
@@ -6331,7 +6375,7 @@ function vSectionAvg(ride, sec, m){
     }catch(e){ sec._st = {}; }
     finally{ S.records = keep.rec; S.weight = keep.w; S.ftp = keep.f; S.age = keep.a; S.sex = keep.x; S.avgGradientMethod = keep.g; }
   }
-  const v = sec._st[m.stat];
+  const v = m.stat==='avgCad' ? vAvgCad(ride, sec) : sec._st[m.stat];
   return v==null || isNaN(v) ? null : v;
 }
 
@@ -6362,11 +6406,13 @@ function vSectionAvg(ride, sec, m){
     const css = getComputedStyle(document.documentElement);
     const grid = css.getPropertyValue('--border').trim(), muted = css.getPropertyValue('--text-faint').trim() || '#8b9099';
     drawSteps(ctx, grid, muted);
+    const tsig = [V.cursor==null ? '' : V.cursor.toFixed(4), vVisible().map(r=>r.id).join('.'), vCols().join(','), $('#vMetric').value, $('#vXAxis').value, V.splitVer, V.cadZero ? 1 : 0].join('|');
+    if (V._tipSig!==tsig || V._tipRides!==V.rides || $('#vTip').classList.contains('hidden')){ V._tipSig = tsig; V._tipRides = V.rides; vRenderTip(); }
     // the ▲▼ pickers sit next to the axis titles
-    const m = V_METRICS[$('#vMetric').value], sdist = $('#vXAxis').value==='dist';
+    const m = V_METRICS[$('#vMetric').value];
     ctx.font = '11px sans-serif';
     const yl = ctx.measureText('区間の'+(m.sum ? '' : '平均')+m.label+(m.unit ? '('+m.unit+')' : '')).width;
-    const xl = ctx.measureText(sdist ? '出発からの距離(km)' : '出発からの経過時間(休憩を含む)').width;
+    const xl = ctx.measureText(V_XTITLE[$('#vXAxis').value]).width;
     const yb = $('#vYBtn'), xb = $('#vXBtn');
     yb.style.left = '2px'; yb.style.top = Math.min(H-MB-4, (MT+H-MB)/2 + yl/2 + 6)+'px';
     xb.style.left = Math.min(W-40, (ML+W-MR)/2 + xl/2 + 6)+'px'; xb.style.top = (H-22)+'px';
@@ -6414,8 +6460,10 @@ function vSectionAvg(ride, sec, m){
   }
   function ridesStepsCalc(r, m, xmode){
     const secs = r.sections; if (!secs.length) return [];
-    const dist = xmode==='dist';
-    const X = t=> dist ? (vDistAt(r, t)-vDistAt(r, secs[0].start))/1000 : t-secs[0].start;   // km, or seconds since the first section began
+    const dist = xmode!=='elapsed';
+    if (xmode==='kcal' && !vKcalCum(r)) return [];
+    const p0 = vPos(r, secs[0].start, xmode);
+    const X = t=> vPos(r, t, xmode)-p0;   // km, or seconds since the first section began
     const out = [];
     let prevEnd = secs[0].start;
     secs.forEach(sec=>{
@@ -6432,6 +6480,7 @@ function vSectionAvg(ride, sec, m){
   }
   function endName(n){ const p = n.split(/\s*[→\-－‐–—]\s*/); return p.length>1 ? p[p.length-1] : n; }
   function drawSteps(ctx, grid, muted){
+    vCols();
     const m = V_METRICS[$('#vMetric').value], vis = vVisible();
     const all = vis.map(r=>({ r, steps:ridesSteps(r, m) }));
     let top = 0;
@@ -6444,7 +6493,7 @@ function vSectionAvg(ride, sec, m){
     const sy = niceStep(need, 5);
     yr = { y0:0, y1: Math.ceil(need/sy)*sy };
     ctx.font = '11px sans-serif'; ctx.strokeStyle = grid; ctx.lineWidth = 1; ctx.fillStyle = muted;
-    const sdist = $('#vXAxis').value==='dist';
+    const sdist = $('#vXAxis').value!=='elapsed';
     const opts = [10,30,60,120,300,600,1800,3600,7200,14400,28800];
     const xstep = sdist ? niceStep(V.view.x1-V.view.x0, 7) : (opts.find(o=>(V.view.x1-V.view.x0)/o<=8) || 28800);
     ctx.textAlign = 'center'; ctx.textBaseline = 'top';
@@ -6535,7 +6584,7 @@ function vSectionAvg(ride, sec, m){
     ctx.strokeStyle = grid; ctx.strokeRect(ML+.5, MT+.5, W-ML-MR, H-MT-MB);
     ctx.fillStyle = muted; ctx.font = '11px sans-serif';
     ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
-    ctx.fillText(sdist ? '出発からの距離(km)' : '出発からの経過時間(休憩を含む)', (ML+W-MR)/2, H-4);
+    ctx.fillText(V_XTITLE[$('#vXAxis').value], (ML+W-MR)/2, H-4);
     ctx.save(); ctx.translate(13, (MT+H-MB)/2); ctx.rotate(-Math.PI/2); ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillText('区間の'+(m.sum ? '' : '平均')+m.label+(m.unit ? '('+m.unit+')' : ''), 0, 0); ctx.restore();
     if (V.cursor!=null){
@@ -6650,13 +6699,14 @@ function vSectionAvg(ride, sec, m){
   cv.addEventListener('pointerup', up); cv.addEventListener('pointercancel', up);
   cv.addEventListener('wheel', e=>{ e.preventDefault(); stopMom(); zoomAt(local(e).x, e.deltaY<0 ? 1.2 : 1/1.2); vDraw(); }, {passive:false});
   function tap(p){
-    if (!V.view || p.x<ML || p.x>W-MR){ V.cursor = null; $('#vTip').classList.add('hidden'); vDraw(); vUpdateSplitBtn(); return; }
+    if (!V.view || p.x<ML || p.x>W-MR){ V.cursor = null; vDraw(); vUpdateSplitBtn(); return; }
     setCursorAt(p.x);
   }
   const V_DEFAULT_COLS = ['fname','secname','distance','netTime','avgPower','avgSpeedNet','avgHr'];
   const vColOk = c=> c==='fname' || c==='secname' || !!COL_META[c];
   const vColLabel = c=> c==='fname' ? 'ファイル名' : c==='secname' ? '区間名' : COL_META[c].label;
   function vCols(){
+    if (V.cadZero===undefined){ try{ V.cadZero = localStorage.getItem('quaniterCadZero')==='1'; }catch(e){ V.cadZero = false; } }
     if (!V.cols){
       try{ const a = JSON.parse(localStorage.getItem('quaniterVCols2')||'null'); if (Array.isArray(a)) V.cols = a.filter(vColOk); }catch(e){}
       if (!V.cols) V.cols = V_DEFAULT_COLS.slice();
@@ -6670,6 +6720,7 @@ function vSectionAvg(ride, sec, m){
     const rowHtml = k=>'<div class="vColRow" data-k="'+k+'"><span class="vGrip" title="ドラッグで並べ替え">≡</span><label><input type="checkbox" value="'+k+'"'+(cur.includes(k)?' checked':'')+'> '+escapeHtml(vColLabel(k))+'</label></div>';
     const modal = document.createElement('div'); modal.className = 'confirmModal';
     modal.innerHTML = '<div class="confirmBox" style="max-height:80vh;overflow-y:auto;"><p>表に出す項目を選び、≡をドラッグして順番を入れ替えます。</p>'+
+      '<label class="vColFn"><input type="checkbox" id="vCadZero"'+(V.cadZero?' checked':'')+'> 平均ケイデンスに0を含める</label>'+
       '<label class="vColFn"><input type="checkbox" id="vColFn"'+(cur.includes('fname')?' checked':'')+'> ファイル名を先頭列に表示</label>'+
       '<div class="vColList" id="vColList" style="grid-template-rows:repeat('+Math.ceil(order.length/2)+',auto);">'+order.map(rowHtml).join('')+
       '</div><div class="confirmBtns"><button type="button" class="small" data-ok="1">決定</button><button type="button" class="small ghost" data-ok="0">キャンセル</button></div></div>';
@@ -6695,15 +6746,17 @@ function vSectionAvg(ride, sec, m){
       const rest = [...list.querySelectorAll('.vColRow')].filter(r=>r.querySelector('input').checked).map(r=>r.dataset.k);
       V.cols = (modal.querySelector('#vColFn').checked ? ['fname'] : []).concat(rest);
       try{ localStorage.setItem('quaniterVCols2', JSON.stringify(V.cols)); }catch(e){}
+      const cz = modal.querySelector('#vCadZero').checked;
+      if (cz!==!!V.cadZero){ V.cadZero = cz; V.splitVer++; try{ localStorage.setItem('quaniterCadZero', cz ? '1' : '0'); }catch(e){} }
       document.body.removeChild(modal);
-      if (V.cursor!=null && V.view) setCursorAt(toX(V.cursor));
+      V._tipSig = null; vDraw();
     });
   }
   // text of one table cell (null = not available)
   function vCellText(c, ride, st){
     if (c==='fname') return ride.item.name;
     if (c==='secname') return st.name;
-    const stt = st.sec._st || {}, v = stt[c];
+    const stt = st.sec._st || {}, v = c==='avgCad' ? vAvgCad(ride, st.sec) : stt[c];
     return COL_META[c].fmt(v==null || isNaN(v) ? null : v);
   }
   // fixed column widths from the longest text each column can ever show, so the columns never shift while the seek bar moves
@@ -6725,42 +6778,47 @@ function vSectionAvg(ride, sec, m){
     V._cw = { rides:V.rides, key, w };
     return w;
   }
-  // put the seek bar at a screen position and show the values under it
+  // put the seek bar at a screen position (the status table follows in vDraw)
   function setCursorAt(px){
     if (!V.view) return;
     px = Math.max(ML, Math.min(W-MR, px));
-    const x = fromX(px), m = V_METRICS[$('#vMetric').value], xmode = $('#vXAxis').value;
-    V.cursor = x;
+    V.cursor = fromX(px);
+    vDraw(); vUpdateSplitBtn();
+  }
+  // the status table under the graph: one row per visible ride, for the section under the seek bar ('--' before one is placed)
+  window.vRenderTip = function(){
+    const tip = $('#vTip'), vis = vVisible();
+    if (!vis.length){ tip.classList.add('hidden'); return; }
+    const m = V_METRICS[$('#vMetric').value], xmode = $('#vXAxis').value, x = V.cursor;
     const all = vCols(), cols = all.filter(c=>c!=='fname'), showFn = all.includes('fname');
     const cw = vColWidths(all, m), fnW = showFn ? cw.fname : 24;
-    const pin = showFn ? -1 : 0;   // the first item column is pinned next to the ● when the file name is hidden
     const tw = fnW + cols.reduce((a,c)=>a+cw[c],0);
-    let html = '<div class="vTipHead"><b>'+(xmode==='dist' ? '出発から '+(+x.toFixed(2))+' km' : '出発から '+vHms(x, true))+'</b><button type="button" class="small ghost" id="vColBtn" title="表示項目">⚙</button></div>'+
-      '<div class="vTipScroll"><table class="vTbl" style="width:'+tw+'px;"><colgroup><col style="width:'+fnW+'px;">'+cols.map(c=>'<col style="width:'+cw[c]+'px;">').join('')+'</colgroup>'+
+    const pin = showFn ? -1 : 0;   // the first item column is pinned next to the ● when the file name is hidden
+    const head = x==null ? '出発から --' : xmode==='dist' ? '出発から '+(+x.toFixed(2))+' km' : xmode==='kcal' ? '出発から '+Math.round(x)+' kcal' : '出発から '+vHms(x, true);
+    let html = '<div class="vTipHead"><b>'+head+'</b><button type="button" class="small ghost" id="vColBtn" title="表示項目">⚙</button></div>'+
+      '<div class="vTipScroll"><table class="vTbl'+(showFn ? '' : ' noFn')+'" style="width:'+tw+'px;"><colgroup><col style="width:'+fnW+'px;">'+cols.map(c=>'<col style="width:'+cw[c]+'px;">').join('')+'</colgroup>'+
       '<thead><tr><th class="vFn">'+(showFn ? 'ファイル名' : '')+'</th>'+cols.map((c,i)=>'<th'+(i===pin ? ' class="vPin"' : '')+'>'+escapeHtml(vColLabel(c))+'</th>').join('')+'</tr></thead><tbody>';
     let n = 0;
-    vVisible().forEach(r=>{
-      const st = ridesSteps(r, m).find(s=> x>=s.a && x<=s.b);
-      if (!st) return;
+    vis.forEach(r=>{
+      const st = x==null ? null : ridesSteps(r, m).find(s=> x>=s.a && x<=s.b);
+      if (x!=null && !st) return;
       n++;
       let cells = '';
-      if (st.rest) cells = showFn || !cols.length ? '<td colspan="'+Math.max(1,cols.length)+'">休憩</td>' : '<td class="vPin">休憩</td>'+(cols.length>1 ? '<td colspan="'+(cols.length-1)+'"></td>' : '');
+      if (st && st.rest) cells = showFn || !cols.length ? '<td colspan="'+Math.max(1,cols.length)+'">休憩</td>' : '<td class="vPin">休憩</td>'+(cols.length>1 ? '<td colspan="'+(cols.length-1)+'"></td>' : '');
       else {
-        vSectionAvg(r, st.sec, V_METRICS.power);   // makes sure the full stats exist
-        cells = cols.map((c,i)=> '<td'+(i===pin ? ' class="vPin"' : '')+'>'+escapeHtml(vCellText(c, r, st))+'</td>').join('');
+        if (st) vSectionAvg(r, st.sec, V_METRICS.power);   // makes sure the full stats exist
+        cells = cols.map((c,i)=> '<td'+(i===pin ? ' class="vPin"' : '')+'>'+escapeHtml(st ? vCellText(c, r, st) : '--')+'</td>').join('');
       }
       html += '<tr><td class="vFn"><span style="color:'+r.color+'">●</span>'+(showFn ? ' '+escapeHtml(r.item.name) : '')+'</td>'+cells+'</tr>';
     });
     html += '</tbody></table></div>';
     if (!n) html = html.replace(/<div class="vTipScroll">.*$/, '')+'<div>データなし</div>';
-    const tip = $('#vTip');
     const oldSc = tip.querySelector('.vTipScroll'), keepLeft = oldSc ? oldSc.scrollLeft : 0;
     tip.innerHTML = html;
     const newSc = tip.querySelector('.vTipScroll'); if (newSc) newSc.scrollLeft = keepLeft;
     tip.querySelector('#vColBtn').addEventListener('click', vPickCols);
     tip.classList.remove('hidden');
-    vDraw(); vUpdateSplitBtn();
-  }
+  };
   // ---- 区間を分割 / 分割解除: for the section of the front ride that the seek bar is on
   function vCursorSection(){
     const r = vVisible()[0];
