@@ -442,6 +442,9 @@ td.num{ text-align:right; font-variant-numeric:tabular-nums; }
 .ivReorderModal.hidden{ display:none; }
 #resultSettingsModal{ overflow-y:auto; -webkit-overflow-scrolling:touch; overscroll-behavior:contain; }
 #resultSettingsModal .panel{ flex:none; }
+.presetBox{ margin-bottom:14px; padding:10px; border:1px solid var(--border); border-radius:10px; }
+.presetRow{ display:flex; gap:8px; flex-wrap:wrap; margin-top:8px; align-items:center; }
+.presetRow select{ flex:1; min-width:140px; font:inherit; font-size:14px; padding:6px 8px; background:var(--surface-2); color:var(--text); border:1px solid var(--border); border-radius:8px; }
 .sensorBox{ margin-bottom:12px; }
 .sensorRow{ display:flex; gap:12px; flex-wrap:wrap; margin-top:6px; }
 .sensorRow .field{ max-width:160px; }
@@ -719,6 +722,15 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
 <div id="resultSettingsModal" class="ivReorderModal hidden" style="overflow:auto;">
   <div class="ivReorderHead"><h2>結果の表示項目</h2><button id="resultSettingsClose" class="small ghost icon-btn" type="button">✗</button></div>
   <div class="panel" style="margin-bottom:0;">
+      <div class="presetBox">
+        <span class="hint">設定のプリセット(「全区間の解析情報を追加する」以降の設定と、表示項目の選択・並び順)</span>
+        <div class="presetRow">
+          <select id="presetSelect"></select>
+          <button id="presetLoadBtn" class="small" type="button">呼び出し</button>
+          <button id="presetSaveBtn" class="small" type="button">名前をつけて保存</button>
+          <button id="presetDelBtn" class="small ghost" type="button">削除</button>
+        </div>
+      </div>
       <div style="display:flex; gap:16px; flex-wrap:wrap; margin-bottom:12px;">
         <label class="field" style="max-width:180px;">FTP (W) — TSS算出に使用
           <input type="number" id="ftpInput" min="0" placeholder="例: 220">
@@ -743,6 +755,12 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
           <select id="grossStoppedSelect">
             <option value="include" selected>含める</option>
             <option value="exclude">含めない</option>
+          </select>
+        </label>
+        <label class="field" style="max-width:240px;">平均ケイデンスの0の扱い
+          <select id="cadZeroSelect">
+            <option value="0" selected>含めない(停止中・低速の0を除く)</option>
+            <option value="1">含める</option>
           </select>
         </label>
         <label class="field" style="max-width:220px;">平均斜度の算出方法
@@ -789,7 +807,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
 // (this session's own publish count so far) is reconstructed from the
 // conversation itself rather than mechanically verified — best-effort, not
 // guaranteed exact. Increment by exactly 1 on every future publish.
-const APP_VERSION = 193;
+const APP_VERSION = 194;
 
 /* ============ FIT PARSER ============ */
 const FIT_EPOCH = 631065600; // seconds between 1970-01-01 and 1989-12-31 (FIT epoch)
@@ -2054,8 +2072,10 @@ async function processFitData(arrayBuffer, displayName, opts){
     S.resultColumns = COLUMN_DEFS.map(d=>({key:d.k, enabled:DEFAULT_ENABLED_COLUMNS.includes(d.k)}));
     S.sensors = { hr:true, power:true, cad:true };
     S.metrics = ['speed','elevation']; S.xMode = 'clock'; S.ftp = null; S.weight = null; S.numberingStyle = 'circled'; S.summaryRowMode = 'last';
-    S.grossIncludesStoppedTime = true; S.avgGradientMethod = 'diff';
-    applyDisplayPrefs(); // carries FTP/重量/表示列 etc. over from whatever ride was analysed last
+    S.grossIncludesStoppedTime = true; S.avgGradientMethod = 'diff'; S.cadZero = false;
+    applyDisplayPrefs(); // carries 重量/表示列 etc. over from whatever ride was analysed last
+    S.ftp = null;        // the FTP is entered anew for every ride; the columns that need it start switched off
+    S.resultColumns.forEach(c=>{ if (NEEDS_FTP.includes(c.key)) c.enabled = false; });
     S.powerChartMetrics = ['avgPower','elevation']; S.powerChartXMode = 'clock';
     S.powerChartSubdivisions = {}; S.powerChartSubdivideTargetIdx = null; S.powerChartSubdivideN = 2;
     powerChartDetailTarget = null;
@@ -2134,6 +2154,7 @@ function serializeState(){
     age: S.age, sex: S.sex,
     numberingStyle: S.numberingStyle,
     summaryRowMode: S.summaryRowMode,
+    cadZero: !!S.cadZero,
     powerChartMetrics: S.powerChartMetrics,
     powerChartXMode: S.powerChartXMode,
     // photos/videos: metadata only — the pictures themselves are never exported
@@ -2181,7 +2202,7 @@ function saveDisplayPrefs(){
     localStorage.setItem(DISPLAY_PREFS_KEY, JSON.stringify({
       resultColumns: S.resultColumns, ftp: S.ftp, weight: S.weight, age: S.age, sex: S.sex,
       summaryRowMode: S.summaryRowMode, grossIncludesStoppedTime: S.grossIncludesStoppedTime,
-      avgGradientMethod: S.avgGradientMethod,
+      avgGradientMethod: S.avgGradientMethod, cadZero: !!S.cadZero,
     }));
   }catch(e){}
 }
@@ -2201,11 +2222,11 @@ function applyDisplayPrefs(){
   }
   if (p.age!=null) S.age = p.age;
   if (p.sex) S.sex = p.sex;
-  if (p.ftp!=null) S.ftp = p.ftp;
   if (p.weight!=null) S.weight = p.weight;
   if (p.summaryRowMode) S.summaryRowMode = p.summaryRowMode;
   if (p.grossIncludesStoppedTime!=null) S.grossIncludesStoppedTime = p.grossIncludesStoppedTime;
   if (p.avgGradientMethod) S.avgGradientMethod = p.avgGradientMethod;
+  S.cadZero = !!p.cadZero;
 }
 // Finds the record in `records` geographically closest to (lat, lon).
 // Used to carry a saved analysis over to a different recording of the same
@@ -2278,6 +2299,7 @@ function applyState(state, mode){
   if (state.xMode && ['elapsed','clock','dist'].includes(state.xMode)) S.xMode = state.xMode;
   if (['off','arabic','circled','kanji'].includes(state.numberingStyle)) S.numberingStyle = state.numberingStyle;
   if (['off','first','last'].includes(state.summaryRowMode)) S.summaryRowMode = state.summaryRowMode;
+  if (state.cadZero!=null) S.cadZero = !!state.cadZero;
   if (state.sensors && typeof state.sensors==='object') S.sensors = { hr:state.sensors.hr!==false, power:state.sensors.power!==false, cad:state.sensors.cad!==false };
   if (state.ftp!=null && !isNaN(state.ftp) && state.ftp>0) S.ftp = Number(state.ftp);
   if (state.weight!=null && !isNaN(state.weight) && state.weight>0) S.weight = Number(state.weight);
@@ -2315,6 +2337,7 @@ function syncControlsFromState(){
   if (grossEl) grossEl.value = S.grossIncludesStoppedTime ? 'include' : 'exclude';
   const gradEl = $('#avgGradientMethodSelect');
   if (gradEl) gradEl.value = S.avgGradientMethod;
+  if ($('#cadZeroSelect')) $('#cadZeroSelect').value = S.cadZero ? '1' : '0';
   $$('#powerChartXModeSeg button').forEach(b=> b.classList.toggle('on', b.dataset.x===S.powerChartXMode));
   $('#powerChartWidthMinus').disabled = S.powerChartWidthMult<=POWER_CHART_WIDTH_MIN;
   $('#powerChartWidthPlus').disabled = S.powerChartWidthMult>=POWER_CHART_WIDTH_MAX;
@@ -2356,11 +2379,70 @@ $('#grossStoppedSelect').addEventListener('change', e=>{
   saveState();
   if (lastResults) computeAndRenderResults();
 });
+$('#cadZeroSelect').addEventListener('change', e=>{
+  S.cadZero = e.target.value==='1';
+  saveState();
+  if (lastResults) computeAndRenderResults();
+});
 $('#avgGradientMethodSelect').addEventListener('change', e=>{
   S.avgGradientMethod = e.target.value;
   saveState();
   if (lastResults) computeAndRenderResults();
 });
+/* ---- presets of the display settings (from 「全区間の解析情報を追加する」 on, plus the chosen columns and their order) ---- */
+const PRESET_KEY = 'quaniter.presets.v1';
+function presetList(){ try{ const a = JSON.parse(localStorage.getItem(PRESET_KEY)||'[]'); return Array.isArray(a) ? a.filter(x=>x && typeof x.name==='string' && x.data) : []; }catch(e){ return []; } }
+function presetStore(a){ try{ localStorage.setItem(PRESET_KEY, JSON.stringify(a)); return true; }catch(e){ return false; } }
+function presetBuild(sel){
+  const el = $('#presetSelect'), list = presetList();
+  el.innerHTML = list.length ? list.map(x=>'<option value="'+escapeHtml(x.name)+'">'+escapeHtml(x.name)+'</option>').join('') : '<option value="">(保存したプリセットはありません)</option>';
+  if (sel && list.some(x=>x.name===sel)) el.value = sel;
+  $('#presetLoadBtn').disabled = $('#presetDelBtn').disabled = !list.length;
+}
+function presetCurrent(){
+  return { resultColumns:S.resultColumns.map(c=>({key:c.key, enabled:!!c.enabled})), sensors:{...S.sensors}, summaryRowMode:S.summaryRowMode,
+    grossIncludesStoppedTime:S.grossIncludesStoppedTime, avgGradientMethod:S.avgGradientMethod, cadZero:!!S.cadZero };
+}
+function presetApply(d){
+  if (Array.isArray(d.resultColumns)){
+    S.resultColumns = d.resultColumns.filter(c=>COL_META[c.key]).map(c=>({key:c.key, enabled:!!c.enabled}));
+    COLUMN_DEFS.forEach(x=>{ if (!S.resultColumns.some(c=>c.key===x.k)) S.resultColumns.push({key:x.k, enabled:false}); });
+  }
+  if (d.sensors) S.sensors = { hr:d.sensors.hr!==false, power:d.sensors.power!==false, cad:d.sensors.cad!==false };
+  if (['off','first','last'].includes(d.summaryRowMode)) S.summaryRowMode = d.summaryRowMode;
+  if (d.grossIncludesStoppedTime!=null) S.grossIncludesStoppedTime = !!d.grossIncludesStoppedTime;
+  if (d.avgGradientMethod) S.avgGradientMethod = d.avgGradientMethod;
+  S.cadZero = !!d.cadZero;
+  // what this ride cannot supply stays off: columns that need FTP / weight / a sensor that is not there
+  S.resultColumns.forEach(c=>{
+    if ((NEEDS_FTP.includes(c.key) && !S.ftp) || (NEEDS_WEIGHT.includes(c.key) && !S.weight) || !sensorsOkFor(c.key)) c.enabled = false;
+  });
+  syncControlsFromState(); buildMetricChecks(); saveState();
+  if (lastResults) computeAndRenderResults();
+}
+$('#presetSaveBtn').addEventListener('click', ()=>{
+  const list = presetList(), cur = $('#presetSelect').value || '';
+  const name = (prompt('プリセットの名前', cur)||'').trim();
+  if (!name) return;
+  const i = list.findIndex(x=>x.name===name);
+  if (i>=0 && !confirm('「'+name+'」は保存済みです。上書きしますか?')) return;
+  const ent = { name, data:presetCurrent() };
+  if (i>=0) list[i] = ent; else list.push(ent);
+  if (!presetStore(list)){ showHeaderMsg('プリセットを保存できませんでした。', true); return; }
+  presetBuild(name);
+  showHeaderMsg('プリセット「'+name+'」を保存しました。', false);
+});
+$('#presetLoadBtn').addEventListener('click', ()=>{
+  const x = presetList().find(y=>y.name===$('#presetSelect').value); if (!x) return;
+  presetApply(x.data);
+  showHeaderMsg('プリセット「'+x.name+'」を呼び出しました。', false);
+});
+$('#presetDelBtn').addEventListener('click', ()=>{
+  const name = $('#presetSelect').value; if (!name) return;
+  if (!confirm('プリセット「'+name+'」を削除しますか?')) return;
+  presetStore(presetList().filter(x=>x.name!==name)); presetBuild();
+});
+presetBuild();
 function buildProjectJson(){
   let n = 0;
   const results = lastResults ? {
@@ -4758,6 +4840,13 @@ function validateIntervals(){
 }
 
 /* ============ RESULTS ============ */
+// does a record count toward the average cadence? Zeros are left out unless asked for, but only when they are a stop
+// (speed 10 km/h or less; without speed: no power): not pedalling while rolling downhill still counts
+function cadCounts(rec, includeZero){
+  if (rec.cad==null) return false;
+  if (includeZero || rec.cad>0) return true;
+  return rec.speed!=null ? rec.speed*3.6>10 : rec.power!==0;
+}
 function computeIntervalStats(iv, idx){
   const recs = S.records.filter(r=>r.elapsed>=iv.start && r.elapsed<=iv.end);
   const startTime = S.records[0].t+iv.start, endTime = S.records[0].t+iv.end;
@@ -4772,7 +4861,7 @@ function computeIntervalStats(iv, idx){
   const avg = arr => arr.length? arr.reduce((a,b)=>a+b,0)/arr.length : null;
   const speeds = recs.map(r=>r.speed).filter(v=>v!=null);
   const hrs = recs.map(r=>r.hr).filter(v=>v!=null);
-  const cads = recs.map(r=>r.cad).filter(v=>v!=null);
+  const cads = recs.filter(r=>cadCounts(r, S.cadZero)).map(r=>r.cad);
   const pwrs = recs.map(r=>r.power).filter(v=>v!=null);
   const temps = recs.map(r=>r.temp).filter(v=>v!=null);
   const alts = recs.map(r=>r.alt).filter(v=>v!=null);
@@ -6373,7 +6462,7 @@ function vAvgCad(ride, sec){
   for (const rc of ride.recs){
     if (rc.elapsed<sec.start) continue;
     if (rc.elapsed>sec.end) break;
-    if (rc.cad==null || (!V.cadZero && !(rc.cad>0))) continue;
+    if (!cadCounts(rc, V.cadZero)) continue;
     n++; t += rc.cad;
   }
   return n ? t/n : null;
