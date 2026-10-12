@@ -327,6 +327,8 @@ td.num{ text-align:right; font-variant-numeric:tabular-nums; }
 .vRow{ display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
 .vBtn{ font-size:13px; padding:9px 14px; border-radius:9px; border:1px solid var(--border); background:var(--surface-2); color:var(--text); cursor:pointer; }
 .vBtn.primary{ background:var(--accent); border-color:var(--accent); color:#08211d; font-weight:700; }
+.vAlignBar{ display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin:0 0 8px; padding:8px 10px; border:1px solid var(--accent); border-radius:8px; background:var(--surface-2); font-size:13px; }
+.vAlignBar span{ flex:1 1 100%; }
 .vMapBox{ margin:0 0 10px; border:1px solid var(--border); border-radius:10px; overflow:hidden; }
 #vMap{ width:100%; height:280px; background:#15181d; }
 .vMapDot{ width:14px; height:14px; border-radius:50%; border:2.5px solid #fff; box-sizing:border-box; pointer-events:none; box-shadow:0 0 0 1px rgba(0,0,0,.4); }
@@ -554,6 +556,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
     </div>
     <div id="vLegend" class="vLegend"></div>
     <div class="vMapBox hidden" id="vMapBox"><div id="vMap"></div></div>
+    <div class="vAlignBar hidden" id="vAlignBar"><span id="vAlignMsg"></span><button id="vAlignOk" class="small primary" type="button" disabled>決定</button><button id="vAlignCancel" class="small ghost" type="button">やめる</button></div>
     <div class="vChartBox" id="vChartBox">
       <canvas id="vCanvas"></canvas>
       <label class="vAxBtn" id="vYBtn" title="縦軸の項目">▲▼<select id="vMetric"></select></label>
@@ -568,7 +571,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
       <div class="vPcCap">実線:20m　破線:60m(横軸:消費エネルギー)</div>
       <canvas id="vPcCanvas2"></canvas>
     </div>
-    <div class="vRow" id="vExportRow" style="margin-top:10px;"><button id="vSplitBtn" class="small primary" type="button" disabled>区間を分割</button><button id="vExpPng" class="small" type="button">PNGを保存</button><button id="vExpPdf" class="small" type="button">PDFを保存</button></div>
+    <div class="vRow" id="vExportRow" style="margin-top:10px;"><button id="vSplitBtn" class="small primary" type="button" disabled>区間を分割</button><button id="vAlignBtn" class="small" type="button">区間の先頭で揃える</button><button id="vAlignReset" class="small ghost hidden" type="button">揃えを解除</button><button id="vExpPng" class="small" type="button">PNGを保存</button><button id="vExpPdf" class="small" type="button">PDFを保存</button></div>
   </div>
 </div>
 
@@ -863,7 +866,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
 // (this session's own publish count so far) is reconstructed from the
 // conversation itself rather than mechanically verified — best-effort, not
 // guaranteed exact. Increment by exactly 1 on every future publish.
-const APP_VERSION = 196;
+const APP_VERSION = 197;
 
 /* ============ FIT PARSER ============ */
 const FIT_EPOCH = 631065600; // seconds between 1970-01-01 and 1989-12-31 (FIT epoch)
@@ -6245,6 +6248,7 @@ const V = { items:[], sel:new Set(), rides:[], order:[], hidden:new Set(), view:
 const V_COLORS = ['#17b8a4','#f2994a','#6c8cff','#f0506a','#c9a227','#b57cf0','#4fc3f7','#9ccc65','#ff8a80','#a1887f'];
 // 1h30m00s style (hours and minutes dropped while they are zero)
 function vHms(sec, withSec){
+  if (sec<0 && Math.round(sec)!==0) return '-'+vHms(-sec, withSec);
   sec = Math.max(0, Math.round(sec));
   const h = Math.floor(sec/3600), m = Math.floor((sec%3600)/60), sc = sec%60, p2 = n=>String(n).padStart(2,'0');
   if (h>0) return h+'h'+p2(m)+'m'+(withSec ? p2(sc)+'s' : '');
@@ -6305,6 +6309,7 @@ function vReset(){
   $('#vStatus').textContent = '解析済みのZIP(Quaniterのアナライザーで「保存」したもの)を、フォルダの下から全部探します。';
   $('#vTip').classList.add('hidden');
   if (typeof vMapDestroy==='function') vMapDestroy();
+  V.align = null; V.aligned = false; V.alignVer = (V.alignVer||0)+1; $('#vAlignBar').classList.add('hidden'); $('#vAlignReset').classList.add('hidden');
   $('#vDirInput').value = ''; $('#vFileInput').value = '';
   vUpdateSel();
 }
@@ -6374,7 +6379,7 @@ $('#vNext').addEventListener('click', async ()=>{
   if (!chosen.length) return;
   showPage('V2');
   $('#vLegend').textContent = 'ライドを読み込んでいます…';
-  V.rides = []; V.order = []; V.hidden = new Set(); V.view = null; V.cursor = null; V.splits = new Map(); V.splitVer++;
+  V.rides = []; V.order = []; V.hidden = new Set(); V.view = null; V.cursor = null; V.splits = new Map(); V.splitVer++; V.align = null; V.aligned = false; V.alignVer = (V.alignVer||0)+1;
   for (let i=0;i<chosen.length;i++){
     $('#vLegend').textContent = 'ライドを読み込んでいます… '+(i)+' / '+chosen.length;
     await new Promise(r=>setTimeout(r,0));
@@ -6433,12 +6438,22 @@ function vAfterLayerChange(){
 function vRebuildSeries(){}   // (the raw series are no longer drawn as a whole)
 // top of the list first = frontmost layer
 function vVisible(){ return V.order.map(id=>V.rides[id]).filter(r=>r && !V.hidden.has(r.id)); }
-// seconds from the start of a ride's first section to the end of its last one
+// the time a ride counts from: its first section, or the section picked by 「区間の先頭で揃える」 (that start = 0)
+function vOrigin(r){
+  const j = V.align ? null : r.alignSec;
+  return j!=null && r.sections[j] ? r.sections[j].start : r.sections[0].start;
+}
+// from the origin to the end of the last section (axis units)
 function vStepsEnd(r){
   if (!r.sections.length) return 0;
-  const a = r.sections[0], b = r.sections[r.sections.length-1];
+  const b = r.sections[r.sections.length-1], ax = $('#vXAxis').value;
+  return vPos(r, b.end, ax) - vPos(r, vOrigin(r), ax);
+}
+// (negative) from the origin back to the start of the first section
+function vStepsStart(r){
+  if (!r.sections.length) return 0;
   const ax = $('#vXAxis').value;
-  return vPos(r, b.end, ax) - vPos(r, a.start, ax);
+  return vPos(r, r.sections[0].start, ax) - vPos(r, vOrigin(r), ax);
 }
 // cumulative energy (kcal, from the power meter: work / 24 % / 4.184) before each record; null without power
 function vKcalCum(r){
@@ -6465,22 +6480,30 @@ function vTimeAtPos(r, ax, p){
   return p;
 }
 const V_XTITLE = { elapsed:'出発からの経過時間(休憩を含む)', dist:'出発からの距離(km)', kcal:'出発からの消費エネルギー(kcal)' };
+const V_XTITLE_AL = { elapsed:'揃えた区間の先頭からの時間', dist:'揃えた区間の先頭からの距離(km)', kcal:'揃えた区間の先頭からの消費(kcal)' };
+function vXTitle(ax){ return (V.aligned && !V.align ? V_XTITLE_AL : V_XTITLE)[ax]; }
 // distance (m) at an elapsed time
 function vDistAt(r, t){
   const rs = r.recs; let lo = 0, hi = rs.length-1;
   while (lo<hi){ const m = (lo+hi)>>1; if (rs[m].elapsed<t) lo = m+1; else hi = m; }
   return rs[lo].dist;
 }
+function vXMin(){
+  let x0 = 0;
+  const vis = V.align ? [V.rides[V.align.queue[V.align.k]]] : vVisible();
+  vis.forEach(r=>{ x0 = Math.min(x0, vStepsStart(r)); });
+  return x0;
+}
 function vXMax(){
   let x1 = 0;
-  vVisible().forEach(r=>{
+  (V.align ? [V.rides[V.align.queue[V.align.k]]] : vVisible()).forEach(r=>{
     x1 = Math.max(x1, vStepsEnd(r));
   });
   return x1;
 }
 function vFit(keepX){
-  const x1 = vXMax();
-  if (!V.view || !keepX) V.view = { x0:0, x1:x1||1 };
+  const x1 = vXMax(), x0 = vXMin();
+  if (!V.view || !keepX) V.view = { x0, x1:x1>x0 ? x1 : x0+1 };
 }
 function vLowerBound(a, x){ let lo=0, hi=a.length; while (lo<hi){ const m=(lo+hi)>>1; if (a[m]<x) lo=m+1; else hi=m; } return lo; }
 ['#vMetric','#vXAxis'].forEach(id=> $(id).addEventListener('change', ()=>{
@@ -6500,8 +6523,8 @@ function vConvertAxis(){
   const to = $('#vXAxis').value, from = V.xPrev; V.xPrev = to;
   const r = vVisible()[0];
   if (!V.view || !r || !r.sections.length || from===to){ if (to!==from) vFit(false); return; }
-  const origin = r.sections[0].start, f0 = vPos(r, origin, from), t0 = vPos(r, origin, to);
-  const conv = x=> vPos(r, vTimeAtPos(r, from, f0+Math.max(0,x)), to) - t0;
+  const origin = vOrigin(r), f0 = vPos(r, origin, from), t0 = vPos(r, origin, to);
+  const conv = x=> vPos(r, vTimeAtPos(r, from, f0+x), to) - t0;
   const nv = { x0:conv(V.view.x0), x1:conv(V.view.x1) };
   if (!(nv.x1>nv.x0)){ vFit(false); return; }
   V.view = nv;
@@ -6601,7 +6624,7 @@ function vSectionAvg(ride, sec, m){
     const css = getComputedStyle(document.documentElement);
     const grid = css.getPropertyValue('--border').trim(), muted = css.getPropertyValue('--text-faint').trim() || '#8b9099';
     drawSteps(ctx, grid, muted);
-    const tsig = [V.cursor==null ? '' : V.cursor.toFixed(4), vVisible().map(r=>r.id).join('.'), vCols().join(','), $('#vMetric').value, $('#vXAxis').value, V.splitVer, V.cadZero ? 1 : 0].join('|');
+    const tsig = [V.cursor==null ? '' : V.cursor.toFixed(4), vVisible().map(r=>r.id).join('.'), vCols().join(','), $('#vMetric').value, $('#vXAxis').value, V.splitVer, V.cadZero ? 1 : 0, V.aligned ? 1 : 0].join('|');
     if (V._tipSig!==tsig || V._tipRides!==V.rides || $('#vTip').classList.contains('hidden')){ V._tipSig = tsig; V._tipRides = V.rides; vRenderTip(); }
     vMapSync();
     const asig = [vVisible().map(r=>r.id).join('.'), vColsAll().join(','), V.cadZero ? 1 : 0].join('|');
@@ -6612,7 +6635,7 @@ function vSectionAvg(ride, sec, m){
     const m = V_METRICS[$('#vMetric').value];
     ctx.font = '11px sans-serif';
     const yl = ctx.measureText('区間の'+(m.sum ? '' : '平均')+m.label+(m.unit ? '('+m.unit+')' : '')).width;
-    const xl = ctx.measureText(V_XTITLE[$('#vXAxis').value]).width;
+    const xl = ctx.measureText(vXTitle($('#vXAxis').value)).width;
     const yb = $('#vYBtn'), xb = $('#vXBtn');
     yb.style.left = '2px'; yb.style.top = Math.min(H-MB-4, (MT+H-MB)/2 + yl/2 + 6)+'px';
     xb.style.left = Math.min(W-40, (ML+W-MR)/2 + xl/2 + 6)+'px'; xb.style.top = (H-22)+'px';
@@ -6654,7 +6677,7 @@ function vSectionAvg(ride, sec, m){
     return { bars };
   }
   function ridesSteps(r, m){
-    const mk = $('#vMetric').value+'|'+$('#vXAxis').value+'|'+V.splitVer;
+    const mk = $('#vMetric').value+'|'+$('#vXAxis').value+'|'+V.splitVer+'|'+(V.alignVer||0)+(V.align ? 'a' : '');
     if (r._steps && r._steps.key===mk) return r._steps.data;   // averages are computed once per metric / axis
     const data = ridesStepsCalc(r, m, $('#vXAxis').value); r._steps = { key:mk, data }; return data;
   }
@@ -6662,7 +6685,7 @@ function vSectionAvg(ride, sec, m){
     const secs = r.sections; if (!secs.length) return [];
     const dist = xmode!=='elapsed';
     if (xmode==='kcal' && !vKcalCum(r)) return [];
-    const p0 = vPos(r, secs[0].start, xmode);
+    const p0 = vPos(r, vOrigin(r), xmode);
     const X = t=> vPos(r, t, xmode)-p0;   // km, or seconds since the first section began
     const out = [];
     let prevEnd = secs[0].start;
@@ -6681,7 +6704,7 @@ function vSectionAvg(ride, sec, m){
   function endName(n){ const p = n.split(/\s*[→\-－‐–—]\s*/); return p.length>1 ? p[p.length-1] : n; }
   function drawSteps(ctx, grid, muted){
     vCols();
-    const m = V_METRICS[$('#vMetric').value], vis = vVisible();
+    const m = V_METRICS[$('#vMetric').value], vis = V.align ? [V.rides[V.align.queue[V.align.k]]] : vVisible();
     const all = vis.map(r=>({ r, steps:ridesSteps(r, m) }));
     let top = 0;
     all.forEach(o=> o.steps.forEach(s=>{
@@ -6780,11 +6803,19 @@ function vSectionAvg(ride, sec, m){
         });
       });
     }
+    if (V.align && V.align.sel && all[0]){
+      const st = all[0].steps.find(x=>x.sec===V.align.sel);
+      if (st){
+        ctx.globalAlpha = .25; ctx.fillStyle = all[0].r.color; ctx.fillRect(toX(st.a), MT, toX(st.b)-toX(st.a), H-MT-MB); ctx.globalAlpha = 1;
+        ctx.strokeStyle = '#fff'; ctx.lineWidth = 2.5; const ax0 = Math.round(toX(st.a))+.5; ctx.beginPath(); ctx.moveTo(ax0, MT); ctx.lineTo(ax0, H-MB); ctx.stroke();
+        ctx.fillStyle = '#fff'; ctx.font = 'bold 11px sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'top'; ctx.fillText('ここを0にそろえる', ax0+4, MT+3);
+      }
+    }
     ctx.restore();
     ctx.strokeStyle = grid; ctx.strokeRect(ML+.5, MT+.5, W-ML-MR, H-MT-MB);
     ctx.fillStyle = muted; ctx.font = '11px sans-serif';
     ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
-    ctx.fillText(V_XTITLE[$('#vXAxis').value], (ML+W-MR)/2, H-4);
+    ctx.fillText(vXTitle($('#vXAxis').value), (ML+W-MR)/2, H-4);
     ctx.save(); ctx.translate(13, (MT+H-MB)/2); ctx.rotate(-Math.PI/2); ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillText('区間の'+(m.sum ? '' : '平均')+m.label+(m.unit ? '('+m.unit+')' : ''), 0, 0); ctx.restore();
     if (V.cursor!=null){
@@ -6799,7 +6830,7 @@ function vSectionAvg(ride, sec, m){
     const EW = 1100, EH = 520, K = 2, HEAD = 74;
     const plot = document.createElement('canvas'); plot.width = EW*K; plot.height = EH*K;
     const pctx = plot.getContext('2d'); pctx.setTransform(K,0,0,K,0,0); pctx.fillStyle = '#fff'; pctx.fillRect(0,0,EW,EH);
-    W = EW; H = EH; V.view = { x0:0, x1:vXMax()||1 }; V.cursor = null;
+    W = EW; H = EH; V.view = { x0:vXMin(), x1:vXMax() > vXMin() ? vXMax() : vXMin()+1 }; V.cursor = null;
     try{ drawSteps(pctx, '#d5d9de', '#4a5059'); }
     finally{ W = keep.W; H = keep.H; V.view = keep.view; V.cursor = keep.cursor; yr = keep.yr; }
     const out = document.createElement('canvas'); out.width = EW*K; out.height = (EH+HEAD)*K;
@@ -6846,10 +6877,10 @@ function vSectionAvg(ride, sec, m){
     clampView();
   }
   function clampView(){
-    const max = vXMax() || 1;
-    let w = Math.min(V.view.x1-V.view.x0, max), x0 = V.view.x0;
-    if (w < max*0.002) w = max*0.002;
-    x0 = Math.max(0, Math.min(max-w, x0));   // from 0 to the end of the longest ride: no blank before or after
+    const min = vXMin(), max = vXMax() > min ? vXMax() : min+1, span = max-min;
+    let w = Math.min(V.view.x1-V.view.x0, span), x0 = V.view.x0;
+    if (w < span*0.002) w = span*0.002;
+    x0 = Math.max(min, Math.min(max-w, x0));   // from 0 to the end of the longest ride: no blank before or after
     V.view = { x0, x1:x0+w };
   }
   cv.addEventListener('pointerdown', e=>{
@@ -6899,6 +6930,12 @@ function vSectionAvg(ride, sec, m){
   cv.addEventListener('pointerup', up); cv.addEventListener('pointercancel', up);
   cv.addEventListener('wheel', e=>{ e.preventDefault(); stopMom(); zoomAt(local(e).x, e.deltaY<0 ? 1.2 : 1/1.2); vDraw(); }, {passive:false});
   function tap(p){
+    if (V.align && V.view && p.x>=ML && p.x<=W-MR){
+      const r = V.rides[V.align.queue[V.align.k]], x = fromX(p.x);
+      const st = ridesSteps(r, V_METRICS[$('#vMetric').value]).find(s=> !s.rest && x>=s.a && x<=s.b);
+      if (st){ V.align.sel = st.sec; vAlignMsg(); vDraw(); }
+      return;
+    }
     if (!V.view || p.x<ML || p.x>W-MR){ V.cursor = null; vDraw(); vUpdateSplitBtn(); return; }
     setCursorAt(p.x);
   }
@@ -7032,7 +7069,7 @@ function vSectionAvg(ride, sec, m){
   // the map (or anything else) puts the seek bar at x on the current axis, and the chart follows if x is out of sight
   window.vSetCursorX = function(x){
     if (!V.view) return;
-    V.cursor = Math.max(0, x);
+    V.cursor = x;
     const w = V.view.x1-V.view.x0;
     if (V.cursor<V.view.x0 || V.cursor>V.view.x1){ V.view = { x0:V.cursor-w/2, x1:V.cursor+w/2 }; clampView(); }
     vDraw(); vUpdateSplitBtn();
@@ -7046,7 +7083,8 @@ function vSectionAvg(ride, sec, m){
     const cw = vColWidths(all, m), fnW = showFn ? cw.fname : 24;
     const tw = fnW + cols.reduce((a,c)=>a+cw[c],0);
     const pin = showFn ? -1 : 0;   // the first item column is pinned next to the ● when the file name is hidden
-    const head = x==null ? '出発から --' : xmode==='dist' ? '出発から '+(+x.toFixed(2))+' km' : xmode==='kcal' ? '出発から '+Math.round(x)+' kcal' : '出発から '+vHms(x, true);
+    const base = V.aligned ? '基準から' : '出発から';
+    const head = x==null ? base+' --' : xmode==='dist' ? base+' '+(+x.toFixed(2))+' km' : xmode==='kcal' ? base+' '+Math.round(x)+' kcal' : base+' '+vHms(x, true);
     let html = '<div class="vTipHead"><b>'+head+'</b><button type="button" class="small ghost" id="vColBtn" title="表示項目">⚙</button></div>'+
       '<div class="vTipScroll"><table class="vTbl'+(showFn ? '' : ' noFn')+'" style="width:'+tw+'px;"><colgroup><col style="width:'+fnW+'px;">'+cols.map(c=>'<col style="width:'+cw[c]+'px;">').join('')+'</colgroup>'+
       '<thead><tr><th class="vFn">'+(showFn ? 'ファイル名' : '')+'</th>'+cols.map((c,i)=>'<th'+(i===pin ? ' class="vPin"' : '')+'>'+escapeHtml(vColLabel(c))+'</th>').join('')+'</tr></thead><tbody>';
@@ -7448,6 +7486,44 @@ $('#edReverse').addEventListener('click', ()=>{
 });
 window.addEventListener('resize', ()=>{ if (E.det) edDraw(); });
 
+/* ---- 「区間の先頭で揃える」: pick, ride by ride on the graph, the section whose start becomes 0 ---- */
+function vAlignMsg(){
+  const A = V.align; if (!A) return;
+  const r = V.rides[A.queue[A.k]];
+  $('#vAlignMsg').textContent = '('+(A.k+1)+'/'+A.queue.length+') 「'+r.item.name+'」で揃える区間を、グラフ上でタップしてください。'+(A.sel ? '　選択中: '+A.sel.name+'(先頭が0になります)' : '');
+  $('#vAlignOk').disabled = !A.sel;
+  $('#vAlignOk').textContent = A.k===A.queue.length-1 ? '決定して揃える' : '決定して次へ';
+}
+function vAlignShow(){
+  const r = V.rides[V.align.queue[V.align.k]];
+  V.cursor = null; V.view = null; vFit(false);
+  vAlignMsg(); vDraw();
+}
+function vAlignEnd(){
+  V.align = null; $('#vAlignBar').classList.add('hidden');
+  V.alignVer = (V.alignVer||0)+1; V.cursor = null; V.view = null; vFit(false); vDraw(); vUpdateSplitBtn();
+  $('#vAlignReset').classList.toggle('hidden', !V.aligned);
+}
+$('#vAlignBtn').addEventListener('click', ()=>{
+  const vis = vVisible().filter(r=>r.sections.length); if (!vis.length) return;
+  V.align = { queue:vis.map(r=>r.id), k:0, sel:null, picks:{} };
+  $('#vAlignBar').classList.remove('hidden');
+  vAlignShow();
+});
+$('#vAlignOk').addEventListener('click', ()=>{
+  const A = V.align; if (!A || !A.sel) return;
+  A.picks[A.queue[A.k]] = A.sel; A.sel = null; A.k++;
+  if (A.k<A.queue.length){ vAlignShow(); return; }
+  Object.keys(A.picks).forEach(id=>{ const r = V.rides[+id]; r.alignSec = r.sections.indexOf(A.picks[id]); });
+  V.aligned = true;
+  vAlignEnd();
+});
+$('#vAlignCancel').addEventListener('click', vAlignEnd);
+$('#vAlignReset').addEventListener('click', ()=>{
+  V.rides.forEach(r=>{ r.alignSec = null; }); V.aligned = false;
+  vAlignEnd();
+});
+
 /* ---- the map of the viewer: every ride's track, the front ride thick; the seek bar and one moving dot per visible ride are linked ---- */
 function vRidePath(r){
   if (r._path) return r._path;
@@ -7465,7 +7541,7 @@ function vMapDestroy(){
 function vRideAt(r, x){
   if (!r.sections.length) return null;
   const ax = $('#vXAxis').value, a = r.sections[0].start, b = r.sections[r.sections.length-1].end;
-  let t = vTimeAtPos(r, ax, vPos(r, a, ax)+Math.max(0,x));
+  let t = vTimeAtPos(r, ax, vPos(r, vOrigin(r), ax)+x);
   t = Math.max(a, Math.min(b, t));
   const rc = r.recs[vIdxAt(r, t)];
   return rc && rc.lat!=null && rc.lon!=null ? rc : null;
@@ -7492,7 +7568,7 @@ function vMapSync(){
       const k = Math.cos(ev.lngLat.lat*Math.PI/180); let best = null, bd = Infinity;
       vRidePath(top).coords.forEach(c=>{ const dx = (c[0]-ev.lngLat.lng)*k, dy = c[1]-ev.lngLat.lat, d = dx*dx+dy*dy; if (d<bd){ bd = d; best = c; } });
       if (!best) return;
-      const ax = $('#vXAxis').value, a = top.sections[0].start;
+      const ax = $('#vXAxis').value, a = vOrigin(top);
       window.vSetCursorX(vPos(top, best[2], ax)-vPos(top, a, ax));
     });
     return;
@@ -7523,6 +7599,8 @@ function vMapSync(){
   if (M.lastX!==x){
     M.lastX = x;
     vis.forEach(r=>{ const rc = vRideAt(r, x); const o = M.mk[r.id]; if (rc && o) o.m.setLngLat([rc.lon, rc.lat]); });
+    const fr = vis[0], frc = fr && V.cursor!=null ? vRideAt(fr, x) : null;
+    if (frc) M.map.jumpTo({ center:[frc.lon, frc.lat] });   // the map follows the front ride's dot
   }
 }
 
