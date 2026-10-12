@@ -327,6 +327,9 @@ td.num{ text-align:right; font-variant-numeric:tabular-nums; }
 .vRow{ display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
 .vBtn{ font-size:13px; padding:9px 14px; border-radius:9px; border:1px solid var(--border); background:var(--surface-2); color:var(--text); cursor:pointer; }
 .vBtn.primary{ background:var(--accent); border-color:var(--accent); color:#08211d; font-weight:700; }
+.vMapBox{ margin:0 0 10px; border:1px solid var(--border); border-radius:10px; overflow:hidden; }
+#vMap{ width:100%; height:280px; background:#15181d; }
+.vMapDot{ width:14px; height:14px; border-radius:50%; border:2.5px solid #fff; box-sizing:border-box; pointer-events:none; box-shadow:0 0 0 1px rgba(0,0,0,.4); }
 .vAxBtn{ position:absolute; z-index:3; display:block; font-size:10px; line-height:1; letter-spacing:-1px; padding:4px 5px; border:1px solid var(--border); border-radius:6px; background:var(--surface-2); color:var(--text-dim); cursor:pointer; white-space:nowrap; }
 .vAxBtn select{ position:absolute; inset:0; width:100%; height:100%; opacity:0; font-size:16px; }
 .vSel{ display:flex; flex-direction:column; gap:3px; font-size:11px; color:var(--text-faint); }
@@ -550,6 +553,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
       <h2>ビュワー:ライドの比較</h2>
     </div>
     <div id="vLegend" class="vLegend"></div>
+    <div class="vMapBox hidden" id="vMapBox"><div id="vMap"></div></div>
     <div class="vChartBox" id="vChartBox">
       <canvas id="vCanvas"></canvas>
       <label class="vAxBtn" id="vYBtn" title="縦軸の項目">▲▼<select id="vMetric"></select></label>
@@ -859,7 +863,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
 // (this session's own publish count so far) is reconstructed from the
 // conversation itself rather than mechanically verified — best-effort, not
 // guaranteed exact. Increment by exactly 1 on every future publish.
-const APP_VERSION = 195;
+const APP_VERSION = 196;
 
 /* ============ FIT PARSER ============ */
 const FIT_EPOCH = 631065600; // seconds between 1970-01-01 and 1989-12-31 (FIT epoch)
@@ -6300,6 +6304,7 @@ function vReset(){
   $('#vListPanel').classList.add('hidden'); $('#vNextBar').classList.add('hidden');
   $('#vStatus').textContent = '解析済みのZIP(Quaniterのアナライザーで「保存」したもの)を、フォルダの下から全部探します。';
   $('#vTip').classList.add('hidden');
+  if (typeof vMapDestroy==='function') vMapDestroy();
   $('#vDirInput').value = ''; $('#vFileInput').value = '';
   vUpdateSel();
 }
@@ -6598,6 +6603,7 @@ function vSectionAvg(ride, sec, m){
     drawSteps(ctx, grid, muted);
     const tsig = [V.cursor==null ? '' : V.cursor.toFixed(4), vVisible().map(r=>r.id).join('.'), vCols().join(','), $('#vMetric').value, $('#vXAxis').value, V.splitVer, V.cadZero ? 1 : 0].join('|');
     if (V._tipSig!==tsig || V._tipRides!==V.rides || $('#vTip').classList.contains('hidden')){ V._tipSig = tsig; V._tipRides = V.rides; vRenderTip(); }
+    vMapSync();
     const asig = [vVisible().map(r=>r.id).join('.'), vColsAll().join(','), V.cadZero ? 1 : 0].join('|');
     if (V._allSig!==asig || V._allRides!==V.rides){ V._allSig = asig; V._allRides = V.rides; vRenderAll(); }
     const psig = [vVisible().map(r=>r.id).join('.'), $('#vPcRange').value, W].join('|');
@@ -6841,9 +6847,9 @@ function vSectionAvg(ride, sec, m){
   }
   function clampView(){
     const max = vXMax() || 1;
-    let w = Math.min(V.view.x1-V.view.x0, max*1.02), x0 = V.view.x0;
+    let w = Math.min(V.view.x1-V.view.x0, max), x0 = V.view.x0;
     if (w < max*0.002) w = max*0.002;
-    x0 = Math.max(-max*0.01, Math.min(max*1.01-w, x0));
+    x0 = Math.max(0, Math.min(max-w, x0));   // from 0 to the end of the longest ride: no blank before or after
     V.view = { x0, x1:x0+w };
   }
   cv.addEventListener('pointerdown', e=>{
@@ -7023,6 +7029,14 @@ function vSectionAvg(ride, sec, m){
     V.cursor = fromX(px);
     vDraw(); vUpdateSplitBtn();
   }
+  // the map (or anything else) puts the seek bar at x on the current axis, and the chart follows if x is out of sight
+  window.vSetCursorX = function(x){
+    if (!V.view) return;
+    V.cursor = Math.max(0, x);
+    const w = V.view.x1-V.view.x0;
+    if (V.cursor<V.view.x0 || V.cursor>V.view.x1){ V.view = { x0:V.cursor-w/2, x1:V.cursor+w/2 }; clampView(); }
+    vDraw(); vUpdateSplitBtn();
+  };
   // the status table under the graph: one row per visible ride, for the section under the seek bar ('--' before one is placed)
   window.vRenderTip = function(){
     const tip = $('#vTip'), vis = vVisible();
@@ -7433,6 +7447,84 @@ $('#edReverse').addEventListener('click', ()=>{
   showHeaderMsg('スタートとゴールを逆転しました。', false);
 });
 window.addEventListener('resize', ()=>{ if (E.det) edDraw(); });
+
+/* ---- the map of the viewer: every ride's track, the front ride thick; the seek bar and one moving dot per visible ride are linked ---- */
+function vRidePath(r){
+  if (r._path) return r._path;
+  const secs = r.sections, a = secs.length ? secs[0].start : r.recs[0].elapsed, b = secs.length ? secs[secs.length-1].end : r.recs[r.recs.length-1].elapsed;
+  const pts = r.recs.filter(rc=> rc.lat!=null && rc.lon!=null && rc.elapsed>=a && rc.elapsed<=b);
+  const stride = Math.max(1, Math.floor(pts.length/1500)), coords = [];
+  pts.forEach((rc,i)=>{ if (i%stride===0 || i===pts.length-1) coords.push([rc.lon, rc.lat, rc.elapsed]); });
+  return (r._path = { coords, has:pts.length>1 });
+}
+function vMapDestroy(){
+  if (V.map){ try{ V.map.map.remove(); }catch(e){} V.map = null; }
+  const box = $('#vMapBox'); if (box) box.classList.add('hidden');
+}
+// where a ride is when the seek bar is at x on the current axis
+function vRideAt(r, x){
+  if (!r.sections.length) return null;
+  const ax = $('#vXAxis').value, a = r.sections[0].start, b = r.sections[r.sections.length-1].end;
+  let t = vTimeAtPos(r, ax, vPos(r, a, ax)+Math.max(0,x));
+  t = Math.max(a, Math.min(b, t));
+  const rc = r.recs[vIdxAt(r, t)];
+  return rc && rc.lat!=null && rc.lon!=null ? rc : null;
+}
+function vMapSync(){
+  const box = $('#vMapBox'); if (!box) return;
+  const withGps = V.rides.filter(r=>vRidePath(r).has);
+  if (!withGps.length){ box.classList.add('hidden'); return; }
+  box.classList.remove('hidden');
+  if (!window.maplibregl){ if (!box.dataset.warn){ box.dataset.warn = 1; $('#vMap').innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-faint);font-size:13px;">地図ライブラリ(MapLibre)を読み込めませんでした</div>'; } return; }
+  if (V.map && V.map.rides!==V.rides) vMapDestroy();
+  box.classList.remove('hidden');
+  if (!V.map){
+    const all = []; withGps.forEach(r=> vRidePath(r).coords.forEach(c=> all.push(c)));
+    const lo = all.map(c=>c[0]), la = all.map(c=>c[1]);
+    const b = [[Math.min(...lo), Math.min(...la)],[Math.max(...lo), Math.max(...la)]];
+    const map = new maplibregl.Map({ container:'vMap', style:mapStyleFor(chooseMapBase((b[0][1]+b[1][1])/2, (b[0][0]+b[1][0])/2)), bounds:b, fitBoundsOptions:{ padding:28, animate:false }, fadeDuration:0, attributionControl:false });
+    map.addControl(new maplibregl.AttributionControl({ compact:true }), 'top-right');
+    map.addControl(new maplibregl.ScaleControl({ maxWidth:110, unit:'metric' }), 'bottom-left');
+    V.map = { map, rides:V.rides, ready:false, ids:[], mk:{}, sig:null, lastX:null };
+    map.on('style.load', ()=>{ if (V.map && V.map.map===map){ V.map.ready = true; vMapSync(); } });
+    map.on('click', ev=>{
+      const top = vVisible().filter(r=>vRidePath(r).has)[0]; if (!top) return;
+      const k = Math.cos(ev.lngLat.lat*Math.PI/180); let best = null, bd = Infinity;
+      vRidePath(top).coords.forEach(c=>{ const dx = (c[0]-ev.lngLat.lng)*k, dy = c[1]-ev.lngLat.lat, d = dx*dx+dy*dy; if (d<bd){ bd = d; best = c; } });
+      if (!best) return;
+      const ax = $('#vXAxis').value, a = top.sections[0].start;
+      window.vSetCursorX(vPos(top, best[2], ax)-vPos(top, a, ax));
+    });
+    return;
+  }
+  const M = V.map; if (!M.ready) return;
+  const vis = vVisible().filter(r=>vRidePath(r).has);
+  const sig = vis.map(r=>r.id).join('.');
+  if (M.sig!==sig){
+    M.sig = sig;
+    M.ids.forEach(id=>{ try{ if (M.map.getLayer('l'+id)) M.map.removeLayer('l'+id); if (M.map.getLayer('c'+id)) M.map.removeLayer('c'+id); if (M.map.getSource(id)) M.map.removeSource(id); }catch(e){} });
+    M.ids = [];
+    vis.slice().reverse().forEach((r, n, arr)=>{       // the front ride last = on top, and thick
+      const id = 'vr'+r.id, front = r===vis[0];
+      M.map.addSource(id, { type:'geojson', data:{ type:'Feature', geometry:{ type:'LineString', coordinates:vRidePath(r).coords.map(c=>[c[0],c[1]]) } } });
+      M.map.addLayer({ id:'c'+id, type:'line', source:id, layout:{ 'line-cap':'round', 'line-join':'round' }, paint:{ 'line-color':'#000', 'line-opacity':front ? .55 : .35, 'line-width':front ? 8 : 4 } });
+      M.map.addLayer({ id:'l'+id, type:'line', source:id, layout:{ 'line-cap':'round', 'line-join':'round' }, paint:{ 'line-color':r.color, 'line-opacity':.95, 'line-width':front ? 5 : 2.5 } });
+      M.ids.push(id);
+    });
+    V.rides.forEach(r=>{
+      const on = vis.includes(r);
+      if (!M.mk[r.id]){ const el = document.createElement('div'); el.className = 'vMapDot'; el.style.background = r.color; M.mk[r.id] = { m:new maplibregl.Marker({ element:el, anchor:'center' }), on:false }; }
+      const o = M.mk[r.id];
+      if (on && !o.on){ o.m.setLngLat([0,0]).addTo(M.map); o.on = true; } else if (!on && o.on){ o.m.remove(); o.on = false; }
+    });
+    M.lastX = null;
+  }
+  const x = V.cursor==null ? 0 : V.cursor;
+  if (M.lastX!==x){
+    M.lastX = x;
+    vis.forEach(r=>{ const rc = vRideAt(r, x); const o = M.mk[r.id]; if (rc && o) o.m.setLngLat([rc.lon, rc.lat]); });
+  }
+}
 
 /* ---- power curve: best average power for each duration, ridden out in 5 equal slices of the biggest ride's energy ---- */
 const PC_DUR = [5,10,15,30,60,120,300,600,1200,1800,3600];
