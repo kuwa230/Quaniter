@@ -670,10 +670,6 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
     </div>
     <button id="menuPhotoAuto" type="button">📷 写真を自動追加する</button>
     <button id="menuPhotoSeek" type="button">📍 シークバーに写真を追加する</button>
-    <button id="menuClipAdd" type="button">🎞 動画クリップを追加する(静止画の抜き出し用)</button>
-    <button id="menuClipSeek" type="button">🎞 シークバーの位置で静止画を抜き出す</button>
-    <button id="menuClipBatch" type="button">🎞 動画から静止画をまとめて抜き出す</button>
-    <button id="menuClipManage" type="button">🎞 動画クリップの管理(ずらす・削除)</button>
     <button id="menuComment" type="button">💬 コメントを追加する</button>
     <button id="menuLibAdd" type="button">⭐ お気に入り区間に登録する</button>
     <button id="menuLibList" type="button">⭐ お気に入り区間の一覧</button>
@@ -716,7 +712,6 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
 </div>
 <input type="file" id="photoInputAuto" accept="image/*,video/*" multiple hidden>
 <input type="file" id="photoInputSeek" accept="image/*,video/*" multiple hidden>
-<input type="file" id="clipInput" accept="video/mp4,video/quicktime,video/*,.mp4,.mov" multiple hidden>
 
 <div id="page3" class="page hidden">
   <div class="panel">
@@ -871,7 +866,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
 // (this session's own publish count so far) is reconstructed from the
 // conversation itself rather than mechanically verified — best-effort, not
 // guaranteed exact. Increment by exactly 1 on every future publish.
-const APP_VERSION = 198;
+const APP_VERSION = 197;
 
 /* ============ FIT PARSER ============ */
 const FIT_EPOCH = 631065600; // seconds between 1970-01-01 and 1989-12-31 (FIT epoch)
@@ -2163,7 +2158,7 @@ async function processFitData(arrayBuffer, displayName, opts){
     renderRoutePreview();
     $('#resultsWrap').innerHTML = '';
     lastResults = null; // results belong to the previous ride; an exported JSON must not carry them over
-    S.photos = []; S.photoSelectedId = null; S.photoRects = []; S.clips = []; S.comments = []; S.commentSelectedId = null; S.commentRects = [];
+    S.photos = []; S.photoSelectedId = null; S.photoRects = []; S.comments = []; S.commentSelectedId = null; S.commentRects = [];
     ivSelectMode = false; ivSelected.clear();
     setExportEnabled(false);
     // renderTimeline() (and some of the above) call saveState(), which marks
@@ -2849,7 +2844,6 @@ function renderMapFrame(){
   } else if (m.cursor){ m.cursor.remove(); m.cursor = null; }
   updatePhotoMarkers(mv);
   updateCommentMarkers(mv);
-  updateClipLayer(mv);
 }
 function mapCenterOn(lon, lat){
   const mv = S.mapView;
@@ -3715,7 +3709,7 @@ function updateCommentMarkers(mv){
 //   ② date without seconds, but a position -> by position (nearest recorded point)
 //   ③ date to the minute, no position      -> at second :00 of that minute, to be fine-tuned
 //   ④ neither                              -> at the seek bar
-S.photos = []; S.photoSelectedId = null; S.photoRects = []; S.clips = [];
+S.photos = []; S.photoSelectedId = null; S.photoRects = [];
 S.comments = []; S.commentSelectedId = null; S.commentRects = []; let commentSeq = 1;
 let photoSeq = 1;
 const THUMB_H = 200;            // thumbnails are kept small (resolution reduced on purpose)
@@ -4567,18 +4561,6 @@ function drawTimelineCanvases(view, W, H, rowH, row2H, xTicks){
     {
       const ph = row2H-4;
       S.tlGeom = {W, ph};
-      // video clips: a band over their span, behind the photos
-      (S.clips||[]).forEach(c=>{
-        const a = xPx(ivX(c.start)), b = xPx(ivX(c.start+c.dur));
-        if (b<0 || a>W) return;
-        ctx.save();
-        ctx.fillStyle = 'rgba(255,170,60,.16)'; ctx.fillRect(a, 2, Math.max(2,b-a), ph);
-        ctx.strokeStyle = 'rgba(255,170,60,.9)'; ctx.lineWidth = 1.5; ctx.setLineDash([5,3]); ctx.strokeRect(a+.75, 2.75, Math.max(2,b-a)-1.5, ph-1.5);
-        ctx.setLineDash([]); ctx.fillStyle = 'rgba(255,200,120,.95)'; ctx.font = '700 11px sans-serif'; ctx.textBaseline = 'top';
-        ctx.beginPath(); ctx.rect(a, 2, Math.max(2,b-a), ph); ctx.clip();
-        ctx.fillText('🎞 '+c.name, Math.max(a,0)+6, 6);
-        ctx.restore();
-      });
       // later capture times lie on top; the photo whose capture time the seek bar
       // most recently passed is brought to the very front (highlight is separate)
       const order = S.photos.slice().sort((a,b)=>a.elapsed-b.elapsed);
@@ -4785,178 +4767,6 @@ $('#tlSplit').addEventListener('click', ()=>{
 });
 // ⋮ menu
 const tlMenu = $('#tlMenu');
-/* ============ VIDEO CLIPS: take still pictures out of dashcam videos (mp4) ============ */
-const CLIP_MAX_PHOTOS = 100;       // extracted pictures kept in the app
-const CLIP_JPEG_Q = 0.95;          // full resolution of the video, JPEG
-let clipSeq = 1;
-function clipPhotoCount(){ return S.photos.filter(p=>p.fromVideo).length; }
-function clipRide(){ return { t0:S.records[0].t, total:S.records[S.records.length-1].elapsed }; }
-function updateClipLayer(mv){
-  const map = mv.map; if (!map || !map.getSource) return;
-  const feats = (S.clips||[]).map(c=>{
-    const coords = [];
-    S.records.forEach(r=>{ if (r.lat!=null && r.lon!=null && r.elapsed>=c.start && r.elapsed<=c.start+c.dur) coords.push([r.lon, r.lat]); });
-    return coords.length>1 ? { type:'Feature', geometry:{ type:'LineString', coordinates:coords }, properties:{} } : null;
-  }).filter(Boolean);
-  const data = { type:'FeatureCollection', features:feats };
-  try{
-    if (map.getSource('clips')) map.getSource('clips').setData(data);
-    else if (feats.length){
-      map.addSource('clips', { type:'geojson', data });
-      map.addLayer({ id:'clips-casing', type:'line', source:'clips', layout:{ 'line-cap':'round', 'line-join':'round' }, paint:{ 'line-color':'#000', 'line-opacity':.5, 'line-width':9 } });
-      map.addLayer({ id:'clips-line', type:'line', source:'clips', layout:{ 'line-cap':'round', 'line-join':'round' }, paint:{ 'line-color':'#ffaa3c', 'line-width':5.5, 'line-opacity':.95 } });
-    }
-  }catch(e){}
-}
-function clipMeta(file){
-  return new Promise(res=>{
-    const url = URL.createObjectURL(file), v = document.createElement('video');
-    v.muted = true; v.playsInline = true; v.preload = 'metadata'; v.src = url;
-    const done = o=>{ URL.revokeObjectURL(url); v.removeAttribute('src'); v.load(); res(o); };
-    const to = setTimeout(()=>done(null), 15000);
-    v.onloadedmetadata = ()=>{ clearTimeout(to); done({ dur:v.duration, w:v.videoWidth, h:v.videoHeight }); };
-    v.onerror = ()=>{ clearTimeout(to); done(null); };
-  });
-}
-async function handleClipFiles(files){
-  if (!files.length || !S.records.length) return;
-  const { t0, total } = clipRide();
-  const seekT = S.selection ? S.records[S.selection.idx].elapsed : 0;
-  let added = 0, moved = 0; const bad = [];
-  const list = files.slice().sort((a,b)=> a.name<b.name ? -1 : 1);
-  for (let i=0;i<list.length;i++){
-    const f = list[i];
-    showHeaderMsg('動画を読み込み中… '+(i+1)+' / '+list.length, false);
-    await new Promise(r=>setTimeout(r,0));
-    let vm = {}; try{ vm = await parseVideoMeta(f); }catch(e){}
-    const md = await clipMeta(f);
-    if (!md || !(md.dur>0)){ bad.push(f.name); continue; }
-    let start = vm.t ? vm.t-t0 : null;
-    if (start==null || start+md.dur<0 || start>total){ start = seekT; moved++; }   // no usable time, or outside the ride: starts at the seek bar
-    S.clips.push({ id:clipSeq++, name:f.name, file:f, start, dur:md.dur, w:md.w, h:md.h });
-  }
-  added = list.length-bad.length;
-  hideHeaderMsg();
-  renderTimeline(); renderMapFrame();
-  showHeaderMsg(added+'本の動画クリップを追加しました。'+(moved ? moved+'本は時刻がライドと合わないため、シークバーの位置に置きました(「動画クリップの管理」でずらせます)。' : '')+(bad.length ? ' 読めなかった動画: '+bad.join('、') : ''), bad.length>0 && !added);
-}
-// pictures out of one clip at the given times (seconds inside the video), one after the other
-async function clipExtract(clip, times, onProgress, cancel){
-  const url = URL.createObjectURL(clip.file), v = document.createElement('video');
-  v.muted = true; v.playsInline = true; v.preload = 'auto'; v.src = url;
-  v.style.cssText = 'position:fixed;left:0;top:0;width:2px;height:2px;opacity:0;pointer-events:none;';
-  document.body.appendChild(v);
-  const cv = document.createElement('canvas'), made = [];
-  try{
-    await new Promise((ok, ng)=>{ const to = setTimeout(()=>ng(new Error('動画を開けませんでした')), 20000); v.onloadeddata = ()=>{ clearTimeout(to); ok(); }; v.onerror = ()=>{ clearTimeout(to); ng(new Error('この動画は読み込めません')); }; });
-    cv.width = v.videoWidth; cv.height = v.videoHeight;
-    const g = cv.getContext('2d'), { t0 } = clipRide();
-    for (let i=0;i<times.length;i++){
-      if (cancel && cancel.stop) break;
-      const tv = Math.max(0, Math.min(v.duration-0.05, times[i]));
-      await new Promise((ok, ng)=>{ const to = setTimeout(()=>ng(new Error('コマの移動がタイムアウトしました')), 20000); v.onseeked = ()=>{ clearTimeout(to); ok(); }; v.currentTime = tv; });
-      g.drawImage(v, 0, 0, cv.width, cv.height);
-      const blob = await new Promise(r=> cv.toBlob(r, 'image/jpeg', CLIP_JPEG_Q));
-      const th = document.createElement('canvas'); th.height = THUMB_H; th.width = Math.max(1, Math.round(cv.width*THUMB_H/cv.height));
-      th.getContext('2d').drawImage(cv, 0, 0, th.width, th.height);
-      const el = clip.start+tv, base = clip.name.replace(/\.[^.]+$/,''), mm = Math.floor(tv/60), ss = Math.floor(tv%60);
-      made.push({ id:photoSeq++, name:base+'_'+String(mm).padStart(2,'0')+'m'+String(ss).padStart(2,'0')+'s.jpg', kind:'image', takenAt:t0+el, hasSeconds:true, hasGps:false, lat:null, lon:null,
-        mode:1, elapsed:el, adjusted:false, thumb:th, orig:blob, fromVideo:true });
-      if (onProgress) onProgress(i+1, times.length);
-    }
-  } finally {
-    v.removeAttribute('src'); v.load(); v.remove(); URL.revokeObjectURL(url); cv.width = cv.height = 1;
-  }
-  return made;
-}
-function clipAddPhotos(list){
-  if (!list.length) return;
-  pushIvHistory();
-  S.photos.push(...list); S.photos.sort((a,b)=>a.elapsed-b.elapsed);
-  renderTimeline(); renderMapFrame(); saveState();
-}
-$('#menuClipAdd').addEventListener('click', ()=>{ closeTlMenu(); $('#clipInput').value = ''; $('#clipInput').click(); });
-$('#clipInput').addEventListener('change', e=> handleClipFiles([...e.target.files]));
-// one picture at the seek bar
-$('#menuClipSeek').addEventListener('click', async ()=>{
-  closeTlMenu();
-  if (clipPhotoCount()>=CLIP_MAX_PHOTOS){ showHeaderMsg('抜き出した静止画は最大'+CLIP_MAX_PHOTOS+'枚までです。', true); return; }
-  const e = S.selection ? S.records[S.selection.idx].elapsed : 0;
-  const clip = S.clips.find(c=> e>=c.start && e<=c.start+c.dur);
-  if (!clip){ showHeaderMsg('シークバーの位置に重なる動画クリップがありません。', true); return; }
-  showHeaderMsg('静止画を抜き出し中…', false);
-  try{ const r = await clipExtract(clip, [e-clip.start]); clipAddPhotos(r); showHeaderMsg('1枚を抜き出しました('+r[0].name+')。', false); }
-  catch(err){ showHeaderMsg('抜き出せませんでした: '+err.message, true); }
-});
-// many pictures: every N seconds, or a fixed number spread evenly
-$('#menuClipBatch').addEventListener('click', ()=>{
-  closeTlMenu();
-  const remain = CLIP_MAX_PHOTOS-clipPhotoCount();
-  if (remain<=0){ showHeaderMsg('抜き出した静止画は最大'+CLIP_MAX_PHOTOS+'枚までです。', true); return; }
-  const { total } = clipRide();
-  const modal = document.createElement('div'); modal.className = 'confirmModal';
-  modal.innerHTML = '<div class="confirmBox"><p>動画から静止画をまとめて抜き出します(あと'+remain+'枚まで)。</p>'+
-    '<label class="field">動画クリップ<select id="cbClip">'+S.clips.map(c=>'<option value="'+c.id+'">'+escapeHtml(c.name)+'('+fmtHMS(c.dur)+')</option>').join('')+'</select></label>'+
-    '<label class="field">方法<select id="cbMode"><option value="int">一定の間隔(秒)ごと</option><option value="cnt">枚数を決めて、等間隔に</option></select></label>'+
-    '<label class="field"><span id="cbLab">間隔(秒)</span><input type="number" id="cbVal" min="1" step="1" value="60"></label>'+
-    '<div id="cbInfo" class="hint" style="margin:6px 0 10px;"></div>'+
-    '<div class="confirmBtns"><button type="button" class="small" id="cbRun">抜き出す</button><button type="button" class="small ghost" id="cbCancel">やめる</button></div></div>';
-  document.body.appendChild(modal);
-  const cancel = { stop:false }; let running = false;
-  const clipSel = ()=> S.clips.find(c=>c.id===+modal.querySelector('#cbClip').value);
-  const plan = ()=>{
-    const c = clipSel(); if (!c) return [];
-    const a = Math.max(0, -c.start), b = Math.min(c.dur, total-c.start);   // only the part of the clip inside the ride
-    if (!(b>a)) return [];
-    const v = Math.max(1, Math.floor(+modal.querySelector('#cbVal').value)||1), mode = modal.querySelector('#cbMode').value, out = [];
-    if (mode==='int'){ for (let t=a; t<=b+1e-9 && out.length<remain; t+=v) out.push(t); }
-    else { const n = Math.min(v, remain); if (n===1) out.push((a+b)/2); else for (let k=0;k<n;k++) out.push(a+(b-a)*k/(n-1)); }
-    return out;
-  };
-  const info = ()=>{
-    const n = plan().length, c = clipSel();
-    modal.querySelector('#cbInfo').textContent = !c ? '' : n ? n+'枚を抜き出します'+(n>=remain ? '(上限の'+remain+'枚まで)' : '')+'。' : 'このクリップはライドの時間に重なっていません。';
-    modal.querySelector('#cbRun').disabled = !n || running;
-  };
-  modal.querySelector('#cbMode').addEventListener('change', e=>{ modal.querySelector('#cbLab').textContent = e.target.value==='int' ? '間隔(秒)' : '枚数'; modal.querySelector('#cbVal').value = e.target.value==='int' ? 60 : Math.min(20, remain); info(); });
-  ['cbClip','cbVal'].forEach(id=> modal.querySelector('#'+id).addEventListener('input', info));
-  modal.querySelector('#cbCancel').addEventListener('click', ()=>{ cancel.stop = true; if (!running) modal.remove(); });
-  modal.querySelector('#cbRun').addEventListener('click', async ()=>{
-    const c = clipSel(), times = plan(); if (!c || !times.length) return;
-    running = true; modal.querySelector('#cbRun').disabled = true; modal.querySelector('#cbCancel').textContent = '中止';
-    try{
-      const made = await clipExtract(c, times, (i,n)=>{ modal.querySelector('#cbInfo').textContent = '抜き出し中… '+i+' / '+n+'(画面を閉じたり、他のアプリに切り替えたりしないでください)'; }, cancel);
-      clipAddPhotos(made);
-      showHeaderMsg(made.length+'枚の静止画を抜き出しました'+(cancel.stop ? '(途中で中止)' : '')+'。保存するときは「ZIPで保存」に入ります。', false);
-    }catch(err){ showHeaderMsg('抜き出せませんでした: '+err.message, true); }
-    modal.remove();
-  });
-  info();
-});
-// shift or delete the clips
-$('#menuClipManage').addEventListener('click', ()=>{
-  closeTlMenu();
-  const modal = document.createElement('div'); modal.className = 'confirmModal';
-  const draw = ()=>{
-    const { t0 } = clipRide(), seekT = S.selection ? S.records[S.selection.idx].elapsed : 0;
-    modal.innerHTML = '<div class="confirmBox" style="max-height:80vh;overflow-y:auto;"><p>動画クリップ</p>'+
-      (S.clips.length ? S.clips.map(c=>'<div style="margin-bottom:12px;padding:8px;border:1px solid var(--border);border-radius:8px;"><div style="font-weight:700;font-size:13px;word-break:break-all;">'+escapeHtml(c.name)+'</div>'+
-        '<div class="hint">'+fmtClock(t0+c.start)+' 〜 '+fmtClock(t0+c.start+c.dur)+'(長さ '+fmtHMS(c.dur)+(c.w ? ' ・ '+c.w+'×'+c.h : '')+')</div>'+
-        '<div class="confirmBtns" style="margin-top:6px;"><button type="button" class="small" data-a="seek" data-id="'+c.id+'">先頭をシークバーに合わせる</button><button type="button" class="small" data-a="shift" data-id="'+c.id+'">秒数でずらす</button><button type="button" class="small ghost" data-a="del" data-id="'+c.id+'">削除</button></div></div>').join('') : '<div class="hint">動画クリップはありません。</div>')+
-      '<div class="confirmBtns"><button type="button" class="small ghost" data-a="close">閉じる</button></div></div>';
-    modal.querySelectorAll('button').forEach(b=> b.addEventListener('click', ()=>{
-      const a = b.dataset.a, c = S.clips.find(x=>x.id===+b.dataset.id);
-      if (a==='close'){ modal.remove(); return; }
-      if (!c) return;
-      if (a==='seek') c.start = seekT;
-      else if (a==='shift'){ const v = parseFloat(prompt('何秒ずらしますか?(+で後ろへ、-で前へ)', '0')); if (!isFinite(v)) return; c.start += v; }
-      else if (a==='del') S.clips = S.clips.filter(x=>x!==c);
-      renderTimeline(); renderMapFrame(); draw();
-    }));
-  };
-  document.body.appendChild(modal); draw();
-});
-
 function closeTlMenu(){ tlMenu.classList.add('hidden'); }
 $('#tlMore').addEventListener('click', ()=>{
   const tgt = deleteTarget();
@@ -4965,8 +4775,7 @@ $('#tlMore').addEventListener('click', ()=>{
   $('#menuComment').disabled = !S.records.length;
   $('#menuLibAdd').disabled = !S.records.length || !getActiveInterval();
   $('#menuLibExport').disabled = !libEntries.length;
-  $('#menuPhotoAuto').disabled = $('#menuPhotoSeek').disabled = $('#menuClipAdd').disabled = !S.records.length;
-  $('#menuClipSeek').disabled = $('#menuClipBatch').disabled = $('#menuClipManage').disabled = !S.records.length || !S.clips.length;
+  $('#menuPhotoAuto').disabled = $('#menuPhotoSeek').disabled = !S.records.length;
   tlMenu.classList.remove('hidden');
 });
 tlMenu.addEventListener('click', e=>{ if (e.target===tlMenu) closeTlMenu(); });
