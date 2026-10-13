@@ -1,0 +1,609 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Quaniter Photolog — 動画から静止画を抜き出す</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/maplibre-gl@5.24.0/dist/maplibre-gl.css">
+<script src="https://cdn.jsdelivr.net/npm/maplibre-gl@5.24.0/dist/maplibre-gl.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<style>
+:root{ color-scheme:dark; --bg:#000; --surface:#0e0f11; --surface-2:#17181b; --border:#2b2d32; --text:#ececee; --text-dim:#9ca0a8; --text-faint:#686c74; --accent:#17b8a4; --danger:#f0506a; }
+@media (prefers-color-scheme: light){ :root{ color-scheme:light; --bg:#f4f6f8; --surface:#fff; --surface-2:#eef1f4; --border:#d7dde3; --text:#161a1f; --text-dim:#5b6570; --text-faint:#8a94a0; --accent:#0e9e8c; --danger:#e0435a; } }
+*{ box-sizing:border-box; }
+body{ margin:0; background:var(--bg); color:var(--text); font:14px/1.55 -apple-system,BlinkMacSystemFont,"Hiragino Sans","Yu Gothic",sans-serif; }
+.wrap{ max-width:880px; margin:0 auto; padding:18px 16px 60px; }
+h1{ font-size:20px; margin:0 0 4px; } .sub{ color:var(--text-dim); font-size:13px; margin-bottom:16px; }
+.panel{ background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:14px; margin-bottom:14px; }
+.panel h2{ font-size:15px; margin:0 0 10px; }
+button,.btn{ font:inherit; font-weight:600; font-size:13px; color:var(--text); background:var(--surface-2); border:1px solid var(--border); border-radius:8px; padding:7px 13px; cursor:pointer; }
+button.primary,.btn.primary{ background:var(--accent); border-color:var(--accent); color:#06201c; }
+button.ghost{ background:transparent; } button:disabled{ opacity:.4; cursor:not-allowed; }
+input,select{ font:inherit; color:var(--text); background:var(--surface-2); border:1px solid var(--border); border-radius:8px; padding:6px 8px; }
+input[type=number]{ width:110px; } input[type=file]{ display:none; }
+.row{ display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:8px; }
+.hint{ color:var(--text-dim); font-size:12.5px; }
+.vItem{ border:1px solid var(--border); border-radius:10px; padding:8px 10px; margin-bottom:8px; }
+.vItem.sel{ border-color:var(--accent); }
+.vItem .nm{ font-weight:700; word-break:break-all; }
+#pv{ width:100%; max-height:46vh; background:#000; border-radius:10px; }
+#map{ width:100%; height:300px; border-radius:10px; overflow:hidden; background:#15181d; margin-top:8px; }
+.posLine{ font-weight:700; margin:8px 0; }
+.bar{ height:8px; background:var(--surface-2); border-radius:4px; overflow:hidden; } .bar i{ display:block; height:100%; width:0; background:var(--accent); }
+.dot{ width:14px; height:14px; border-radius:50%; background:#ffaa3c; border:2.5px solid #fff; box-sizing:border-box; }
+.log{ font-size:12.5px; color:var(--text-dim); white-space:pre-wrap; max-height:180px; overflow:auto; }
+label.inl{ display:inline-flex; align-items:center; gap:6px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Quaniter Photolog</h1>
+  <div class="sub">動画から静止画を抜き出し、撮影日時と位置情報を書き込んだJPEGにして保存します。</div>
+
+  <div class="panel">
+    <h2>1. 動画(MP4)</h2>
+    <div class="row"><label class="btn primary" for="vidIn">動画を選ぶ(複数可・追加できます)</label><input type="file" id="vidIn" accept="video/mp4,video/quicktime,.mp4,.mov,video/*" multiple></div>
+    <div id="vidList"></div>
+  </div>
+
+  <div class="panel">
+    <h2>2. 位置情報(FITまたはGPX)</h2>
+    <div class="row"><label class="btn primary" for="trkIn">FIT / GPXを選ぶ</label><input type="file" id="trkIn" accept=".fit,.gpx,application/gpx+xml,text/xml"><span id="trkInfo" class="hint">未選択(位置情報なしでも、日時だけ書き込めます)</span></div>
+  </div>
+
+  <div class="panel">
+    <h2>3. 時刻合わせ</h2>
+    <div class="hint">動画の撮影時刻と、走行記録の時刻がずれているときは、「ずれ(秒)」で合わせます。地図の線をクリックすると、動画の今の位置が、その地点になるように、自動で合わせます。</div>
+    <div class="row" style="margin-top:8px;">
+      <label class="inl">時刻のずれ(秒) <input type="number" id="off" value="0" step="1"></label>
+      <button data-d="-3600">−1時間</button><button data-d="-10">−10秒</button><button data-d="-1">−1秒</button><button data-d="1">+1秒</button><button data-d="10">+10秒</button><button data-d="3600">+1時間</button>
+      <label class="inl">日時を書き込む時差 <select id="tz"></select></label>
+    </div>
+    <video id="pv" controls playsinline muted></video>
+    <div class="posLine" id="posLine">動画を選ぶと、ここに位置が出ます。</div>
+    <div id="map"></div>
+  </div>
+
+  <div class="panel">
+    <h2>4. 抜き出して保存</h2>
+    <div class="row">
+      <label class="inl">対象 <select id="target"><option value="all">すべての動画</option><option value="sel">選択中の動画だけ</option></select></label>
+      <label class="inl">方法 <select id="mode"><option value="int">一定の間隔(秒)ごと</option><option value="cnt">枚数を決めて、等間隔に</option></select></label>
+      <label class="inl"><span id="valLab">間隔(秒)</span> <input type="number" id="val" value="10" min="1" step="1"></label>
+    </div>
+    <div class="row"><label class="inl"><input type="checkbox" id="outside"> 走行記録の範囲の外も抜き出す(位置は付きません)</label></div>
+    <div class="row">
+      <label class="inl">zipの分割: <input type="number" id="splitN" value="50" min="1"> 枚 または <input type="number" id="splitMB" value="200" min="10"> MB ごと</label>
+    </div>
+    <div class="row" id="folderRow" style="display:none;"><label class="inl"><input type="checkbox" id="useDir"> zipではなく、フォルダに直接保存する(Chrome)</label> <button id="pickDir" class="ghost">保存先フォルダを選ぶ</button> <span id="dirName" class="hint"></span></div>
+    <div class="hint" id="plan" style="margin:6px 0;"></div>
+    <div class="row"><button class="primary" id="run">まとめて抜き出して保存</button><button id="one">いまの位置の1枚を保存</button><button class="ghost" id="stop" disabled>中止</button></div>
+    <div class="bar"><i id="barI"></i></div>
+    <div class="log" id="log"></div>
+  </div>
+</div>
+<script>
+(function(){
+const $ = s=>document.querySelector(s);
+const FIT_EPOCH = 631065600; // seconds between 1970-01-01 and 1989-12-31 (FIT epoch)
+
+const BASE_TYPES = {
+  0x00:{size:1,name:'enum',invalid:0xFF,read:(v,o)=>v.getUint8(o)},
+  0x01:{size:1,name:'sint8',invalid:0x7F,read:(v,o)=>v.getInt8(o)},
+  0x02:{size:1,name:'uint8',invalid:0xFF,read:(v,o)=>v.getUint8(o)},
+  0x83:{size:2,name:'sint16',invalid:0x7FFF,read:(v,o,le)=>v.getInt16(o,le)},
+  0x84:{size:2,name:'uint16',invalid:0xFFFF,read:(v,o,le)=>v.getUint16(o,le)},
+  0x85:{size:4,name:'sint32',invalid:0x7FFFFFFF,read:(v,o,le)=>v.getInt32(o,le)},
+  0x86:{size:4,name:'uint32',invalid:0xFFFFFFFF,read:(v,o,le)=>v.getUint32(o,le)},
+  0x07:{size:1,name:'string',invalid:0x00,read:(v,o)=>v.getUint8(o)},
+  0x88:{size:4,name:'float32',invalid:0xFFFFFFFF,read:(v,o,le)=>v.getFloat32(o,le)},
+  0x89:{size:8,name:'float64',invalid:null,read:(v,o,le)=>v.getFloat64(o,le)},
+  0x0A:{size:1,name:'uint8z',invalid:0x00,read:(v,o)=>v.getUint8(o)},
+  0x8B:{size:2,name:'uint16z',invalid:0x0000,read:(v,o,le)=>v.getUint16(o,le)},
+  0x8C:{size:4,name:'uint32z',invalid:0x00000000,read:(v,o,le)=>v.getUint32(o,le)},
+  0x0D:{size:1,name:'byte',invalid:0xFF,read:(v,o)=>v.getUint8(o)},
+  0x8E:{size:8,name:'sint64',invalid:null,read:(v,o,le)=>Number(v.getBigInt64(o,le))},
+  0x8F:{size:8,name:'uint64',invalid:null,read:(v,o,le)=>Number(v.getBigUint64(o,le))},
+  0x90:{size:8,name:'uint64z',invalid:0,read:(v,o,le)=>Number(v.getBigUint64(o,le))},
+};
+
+function parseFit(buffer){
+  const view = new DataView(buffer);
+  if (buffer.byteLength < 14) throw new Error('ファイルが小さすぎます');
+  const headerSize = view.getUint8(0);
+  const sig = String.fromCharCode(view.getUint8(8),view.getUint8(9),view.getUint8(10),view.getUint8(11));
+  if (sig !== '.FIT') throw new Error('FIT形式のファイルではないようです');
+  const dataSize = view.getUint32(4, true);
+  let offset = headerSize;
+  const dataEnd = headerSize + dataSize;
+  const localDefs = {};
+  const records = [];
+  const laps = [];
+  let lastTimestamp = null;
+
+  function readMsg(def){
+    let bytesRead = 0;
+    const msg = {};
+    for (const f of def.fields){
+      const info = BASE_TYPES[f.baseType];
+      let val = null;
+      if (info && info.name === 'string'){
+        let chars = [];
+        for (let i=0;i<f.size;i++){
+          const c = view.getUint8(offset+bytesRead+i);
+          if (c===0) break;
+          chars.push(String.fromCharCode(c));
+        }
+        val = chars.join('');
+      } else if (info){
+        try{ val = info.read(view, offset+bytesRead, def.le); }catch(e){ val = null; }
+        if (info.invalid !== null && info.invalid !== undefined && val === info.invalid) val = null;
+      }
+      bytesRead += f.size;
+      msg[f.fieldNum] = val;
+    }
+    if (def.devFields && def.devFields.length){
+      for (const df of def.devFields) bytesRead += df.size;
+    }
+    return {msg, bytesRead};
+  }
+
+  while (offset < dataEnd && offset < buffer.byteLength){
+    const headerByte = view.getUint8(offset); offset += 1;
+    const isCompressed = (headerByte & 0x80) !== 0;
+    if (isCompressed){
+      const localType = (headerByte >> 5) & 0x03;
+      const timeOffset = headerByte & 0x1F;
+      const def = localDefs[localType];
+      if (!def){ break; }
+      if (lastTimestamp === null) lastTimestamp = 0;
+      const baseOffset = lastTimestamp & 0x1F;
+      let newTs = (timeOffset >= baseOffset) ? (lastTimestamp - baseOffset + timeOffset) : (lastTimestamp - baseOffset + timeOffset + 32);
+      lastTimestamp = newTs;
+      const {msg, bytesRead} = readMsg(def);
+      offset += bytesRead;
+      if (def.globalNum === 20) pushRecord(msg, newTs);
+      continue;
+    }
+    const isDefinition = (headerByte & 0x40) !== 0;
+    const localType = headerByte & 0x0F;
+    if (isDefinition){
+      offset += 1; // reserved
+      const arch = view.getUint8(offset); offset += 1;
+      const le = arch === 0;
+      const globalNum = view.getUint16(offset, le); offset += 2;
+      const numFields = view.getUint8(offset); offset += 1;
+      const fields = [];
+      for (let i=0;i<numFields;i++){
+        const fieldNum = view.getUint8(offset); offset+=1;
+        const size = view.getUint8(offset); offset+=1;
+        const baseType = view.getUint8(offset); offset+=1;
+        fields.push({fieldNum,size,baseType});
+      }
+      let devFields = [];
+      if (headerByte & 0x20){
+        const numDev = view.getUint8(offset); offset+=1;
+        for (let i=0;i<numDev;i++){
+          const dFieldNum = view.getUint8(offset); offset+=1;
+          const dSize = view.getUint8(offset); offset+=1;
+          offset+=1; // developer data index, not needed
+          devFields.push({fieldNum:dFieldNum, size:dSize});
+        }
+      }
+      localDefs[localType] = {globalNum, le, fields, devFields};
+    } else {
+      const def = localDefs[localType];
+      if (!def){ break; }
+      const {msg, bytesRead} = readMsg(def);
+      offset += bytesRead;
+      if (def.globalNum === 20){
+        const ts = msg[253];
+        if (ts !== null && ts !== undefined) lastTimestamp = ts;
+        pushRecord(msg, ts !== null && ts !== undefined ? ts : lastTimestamp);
+      } else if (def.globalNum === 19){
+        // lap message: field 2 is start_time (a manual lap press on the
+        // head unit, or an auto-lap trigger) — same FIT-epoch offset as
+        // record timestamps
+        if (msg[2] != null) laps.push(msg[2]);
+      }
+    }
+  }
+
+  function pushRecord(msg, ts){
+    if (ts === null || ts === undefined) return;
+    records.push({
+      t: ts + FIT_EPOCH,
+      lat: msg[0]!=null ? msg[0]*(180/2147483648) : null,
+      lon: msg[1]!=null ? msg[1]*(180/2147483648) : null,
+      alt: msg[2]!=null ? msg[2]/5-500 : (msg[78]!=null ? msg[78]/5-500 : null),
+      hr: msg[3]!=null ? msg[3] : null,
+      cad: msg[4]!=null ? msg[4] : null,
+      dist: msg[5]!=null ? msg[5]/100 : null,
+      speed: msg[6]!=null ? msg[6]/1000 : (msg[73]!=null ? msg[73]/1000 : null),
+      power: msg[7]!=null ? msg[7] : null,
+      temp: msg[13]!=null ? msg[13] : null,
+    });
+  }
+
+  if (!records.length) throw new Error('走行記録(record)が見つかりませんでした');
+  records.sort((a,b)=>a.t-b.t);
+  const t0 = records[0].t;
+  records.forEach(r=> r.elapsed = r.t - t0);
+
+  // distance fallback via haversine if missing entirely
+  const hasDist = records.some(r=>r.dist!=null);
+  if (!hasDist){
+    let cum = 0, prev = null;
+    for (const r of records){
+      if (r.lat!=null && r.lon!=null && prev){
+        cum += haversine(prev.lat, prev.lon, r.lat, r.lon);
+      }
+      r.dist = cum;
+      if (r.lat!=null && r.lon!=null) prev = r;
+    }
+  } else {
+    // forward-fill small gaps
+    let last = 0;
+    for (const r of records){ if (r.dist==null) r.dist = last; else last = r.dist; }
+  }
+  // manual/auto laps from the head unit, if any — attached as a property on
+  // the returned array so every existing call site (expecting a plain
+  // records array) keeps working unchanged
+  const uniqueLapStarts = [...new Set(laps)].sort((a,b)=>a-b);
+  records.laps = uniqueLapStarts.map(ts=>({ t: ts+FIT_EPOCH, elapsed: (ts+FIT_EPOCH)-t0 })).filter(l=>l.elapsed>=0 && l.elapsed<=records[records.length-1].elapsed);
+  return records;
+}
+
+function haversine(lat1,lon1,lat2,lon2){
+  const R=6371000, toRad=d=>d*Math.PI/180;
+  const dLat=toRad(lat2-lat1), dLon=toRad(lon2-lon1);
+  const a=Math.sin(dLat/2)**2+Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLon/2)**2;
+  return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
+}
+
+async function parseVideoMeta(file){
+  const out = {};
+  let off = 0; const size = file.size; let moov = null;
+  for (let guard=0; guard<64 && off+8<=size; guard++){
+    const hd = new DataView(await file.slice(off, off+16).arrayBuffer());
+    let bs = hd.getUint32(0);
+    const type = String.fromCharCode(hd.getUint8(4),hd.getUint8(5),hd.getUint8(6),hd.getUint8(7));
+    if (bs===1) bs = Number(hd.getBigUint64(8)); else if (bs===0) bs = size-off;
+    if (bs<8) break;
+    if (type==='moov'){ if (bs<=8*1024*1024) moov = await file.slice(off, off+bs).arrayBuffer(); break; }
+    off += bs;
+  }
+  if (!moov) return out;
+  const u8 = new Uint8Array(moov), dv = new DataView(moov);
+  const find = (a)=>{ outer: for (let i=0;i<u8.length-a.length;i++){ for (let j=0;j<a.length;j++) if (u8[i+j]!==a[j]) continue outer; return i; } return -1; };
+  const mv = find([0x6d,0x76,0x68,0x64]); // 'mvhd'
+  if (mv>=0){
+    const ver = u8[mv+4];
+    const ct = ver===1 ? Number(dv.getBigUint64(mv+8)) : dv.getUint32(mv+8);
+    if (ct>0) out.t = ct - 2082844800; // QuickTime epoch (1904) -> unix
+  }
+  const txt = new TextDecoder('latin1').decode(moov);
+  const k = Math.max(txt.indexOf('©xyz'), txt.indexOf('location.ISO6709'));
+  if (k>=0){
+    const m = /([+-]\d{1,2}\.\d+)([+-]\d{1,3}\.\d+)/.exec(txt.slice(k, k+160));
+    if (m && Math.abs(+m[1])<=90 && Math.abs(+m[2])<=180){ out.lat = +m[1]; out.lon = +m[2]; }
+  }
+  return out;
+}
+
+const P = { videos:[], sel:-1, track:[], offset:0, tz:-new Date().getTimezoneOffset(), map:null, mapReady:false, marker:null, busy:false, stop:false, dir:null, vid:0 };
+const log = t=>{ const l = $('#log'); l.textContent += t+'\n'; l.scrollTop = l.scrollHeight; };
+const p2 = n=>String(n).padStart(2,'0');
+// local wall clock of a unix time in the chosen UTC offset
+function wall(unix, tzMin){ const d = new Date((unix+tzMin*60)*1000); return { Y:d.getUTCFullYear(), M:d.getUTCMonth()+1, D:d.getUTCDate(), h:d.getUTCHours(), m:d.getUTCMinutes(), s:d.getUTCSeconds() }; }
+const fmtWall = (unix, tzMin)=>{ const w = wall(unix, tzMin); return w.Y+'/'+p2(w.M)+'/'+p2(w.D)+' '+p2(w.h)+':'+p2(w.m)+':'+p2(w.s); };
+const tzStr = m=> (m<0 ? '-' : '+')+p2(Math.floor(Math.abs(m)/60))+':'+p2(Math.abs(m)%60);
+// time zone choices
+(function(){ const s = $('#tz'); for (let m=-720; m<=840; m+=30){ const o = document.createElement('option'); o.value = m; o.textContent = 'UTC'+tzStr(m); s.appendChild(o); } s.value = P.tz; if (s.value!=String(P.tz)) s.value = 540; P.tz = +s.value; })();
+$('#tz').addEventListener('change', e=>{ P.tz = +e.target.value; renderVideos(); updatePos(); });
+
+/* ---------- track (FIT / GPX) ---------- */
+async function loadTrack(file){
+  let pts = [];
+  if (/\.fit$/i.test(file.name)){
+    const recs = parseFit(await file.arrayBuffer());
+    recs.forEach(r=>{ if (r.lat!=null && r.lon!=null) pts.push({ t:r.t, lat:r.lat, lon:r.lon, alt:r.alt }); });
+  } else {
+    const doc = new DOMParser().parseFromString(await file.text(), 'application/xml');
+    [...doc.getElementsByTagName('trkpt')].forEach(el=>{
+      const t = el.getElementsByTagName('time')[0], e = el.getElementsByTagName('ele')[0];
+      const tv = t ? Date.parse(t.textContent)/1000 : NaN;
+      if (!isFinite(tv)) return;
+      pts.push({ t:tv, lat:+el.getAttribute('lat'), lon:+el.getAttribute('lon'), alt:e ? +e.textContent : null });
+    });
+  }
+  pts = pts.filter(p=>isFinite(p.lat) && isFinite(p.lon)).sort((a,b)=>a.t-b.t);
+  if (pts.length<2) throw new Error('時刻つきの位置が見つかりません(GPXには、各点に時刻が必要です)');
+  P.track = pts;
+  $('#trkInfo').textContent = file.name+' ・ '+pts.length.toLocaleString()+'点 ・ '+fmtWall(pts[0].t, P.tz)+' 〜 '+fmtWall(pts[pts.length-1].t, P.tz);
+  buildMap(); updatePos(); updatePlan();
+}
+$('#trkIn').addEventListener('change', async e=>{
+  const f = e.target.files[0]; e.target.value = ''; if (!f) return;
+  try{ await loadTrack(f); log('位置情報を読み込みました: '+f.name); }catch(err){ log('位置情報を読めませんでした: '+err.message); }
+});
+function trackAt(t){
+  const a = P.track; if (!a.length) return null;
+  if (t<a[0].t-5 || t>a[a.length-1].t+5) return null;
+  let lo = 0, hi = a.length-1;
+  while (lo<hi){ const m = (lo+hi)>>1; if (a[m].t<t) lo = m+1; else hi = m; }
+  const b = a[lo], c = a[Math.max(0, lo-1)];
+  if (b.t===c.t || b.t-c.t>60){ const n = Math.abs(b.t-t) < Math.abs(c.t-t) ? b : c; return Math.abs(n.t-t)<=30 ? n : null; }
+  const f = (t-c.t)/(b.t-c.t);
+  return { t, lat:c.lat+(b.lat-c.lat)*f, lon:c.lon+(b.lon-c.lon)*f, alt:(c.alt!=null && b.alt!=null) ? c.alt+(b.alt-c.alt)*f : (b.alt!=null ? b.alt : c.alt) };
+}
+
+/* ---------- videos ---------- */
+function effStart(v){ return v.manual!=null ? v.manual : v.start; }
+function renderVideos(){
+  const box = $('#vidList'); box.innerHTML = '';
+  P.videos.forEach((v,i)=>{
+    const d = document.createElement('div'); d.className = 'vItem'+(i===P.sel ? ' sel' : '');
+    const st = effStart(v);
+    d.innerHTML = '<div class="nm">'+(i+1)+'. '+v.name.replace(/[<>&]/g,'')+'</div><div class="hint">長さ '+Math.round(v.dur)+' 秒 ・ '+v.w+'×'+v.h+' ・ 開始時刻: '+(st!=null ? fmtWall(st, P.tz) : '不明(下に入力してください)')+(v.manual!=null ? '(手入力)' : '')+'</div>'+
+      '<div class="row" style="margin:6px 0 0;"><button data-a="sel">この動画を見る</button><label class="inl">開始時刻を直接指定 <input type="datetime-local" step="1" data-a="start"></label><button class="ghost" data-a="auto">自動に戻す</button><button class="ghost" data-a="del">削除</button></div>';
+    if (st!=null){ const w = wall(st, P.tz); d.querySelector('[data-a=start]').value = w.Y+'-'+p2(w.M)+'-'+p2(w.D)+'T'+p2(w.h)+':'+p2(w.m)+':'+p2(w.s); }
+    d.querySelector('[data-a=sel]').onclick = ()=> selectVideo(i);
+    d.querySelector('[data-a=auto]').onclick = ()=>{ v.manual = null; renderVideos(); updatePos(); updatePlan(); };
+    d.querySelector('[data-a=del]').onclick = ()=>{ URL.revokeObjectURL(v.url); P.videos.splice(i,1); if (P.sel>=P.videos.length) P.sel = P.videos.length-1; renderVideos(); if (P.sel>=0) selectVideo(P.sel); else $('#pv').removeAttribute('src'); updatePlan(); };
+    d.querySelector('[data-a=start]').onchange = e=>{
+      const m = /^(\d+)-(\d+)-(\d+)T(\d+):(\d+)(?::(\d+))?/.exec(e.target.value); if (!m) return;
+      v.manual = Date.UTC(+m[1], +m[2]-1, +m[3], +m[4], +m[5], +(m[6]||0))/1000 - P.tz*60;
+      renderVideos(); updatePos(); updatePlan();
+    };
+    box.appendChild(d);
+  });
+}
+function videoMeta(file){
+  return new Promise(res=>{
+    const url = URL.createObjectURL(file), v = document.createElement('video');
+    v.muted = true; v.playsInline = true; v.preload = 'metadata'; v.src = url;
+    const to = setTimeout(()=>{ URL.revokeObjectURL(url); res(null); }, 20000);
+    v.onloadedmetadata = ()=>{ clearTimeout(to); const o = { dur:v.duration, w:v.videoWidth, h:v.videoHeight }; v.removeAttribute('src'); v.load(); URL.revokeObjectURL(url); res(o); };
+    v.onerror = ()=>{ clearTimeout(to); URL.revokeObjectURL(url); res(null); };
+  });
+}
+$('#vidIn').addEventListener('change', async e=>{
+  const files = [...e.target.files].sort((a,b)=> a.name<b.name ? -1 : 1); e.target.value = '';
+  for (const f of files){
+    if (P.videos.some(v=>v.file.name===f.name && v.file.size===f.size)) continue;
+    let vm = {}; try{ vm = await parseVideoMeta(f); }catch(err){}
+    const md = await videoMeta(f);
+    if (!md || !(md.dur>0)){ log('読めない動画: '+f.name+'(このブラウザで再生できない形式かもしれません)'); continue; }
+    P.videos.push({ id:P.vid++, file:f, name:f.name, start:vm.t||null, manual:null, dur:md.dur, w:md.w, h:md.h, url:URL.createObjectURL(f) });
+  }
+  renderVideos(); if (P.sel<0 && P.videos.length) selectVideo(0); updatePlan();
+});
+function selectVideo(i){
+  P.sel = i; const v = P.videos[i]; renderVideos();
+  const pv = $('#pv'); pv.src = v.url; updatePos();
+}
+$('#pv').addEventListener('timeupdate', ()=> updatePos());
+$('#pv').addEventListener('seeked', ()=> updatePos());
+
+/* ---------- time alignment ---------- */
+function rideTime(v, vt){ return effStart(v)+P.offset+vt; }
+$('#off').addEventListener('input', e=>{ P.offset = +e.target.value||0; updatePos(); updatePlan(); });
+document.querySelectorAll('[data-d]').forEach(b=> b.addEventListener('click', ()=>{ P.offset += +b.dataset.d; $('#off').value = P.offset; updatePos(); updatePlan(); }));
+function updatePos(){
+  const v = P.videos[P.sel], el = $('#posLine');
+  if (!v){ el.textContent = '動画を選ぶと、ここに位置が出ます。'; return; }
+  const st = effStart(v);
+  if (st==null){ el.textContent = 'この動画には撮影時刻がありません。「開始時刻を直接指定」に入力してください。'; return; }
+  const t = rideTime(v, $('#pv').currentTime||0), pt = trackAt(t);
+  el.textContent = '動画のこの位置 = '+fmtWall(t, P.tz)+(pt ? ' ・ 緯度 '+pt.lat.toFixed(5)+' 経度 '+pt.lon.toFixed(5)+(pt.alt!=null ? ' ・ 標高 '+Math.round(pt.alt)+' m' : '') : (P.track.length ? ' ・ 走行記録の範囲の外です' : ''));
+  if (pt && P.marker){ P.marker.setLngLat([pt.lon, pt.lat]); }
+}
+function buildMap(){
+  if (!window.maplibregl){ $('#map').textContent = '地図ライブラリを読み込めませんでした。'; return; }
+  if (P.map){ P.map.remove(); P.map = null; P.mapReady = false; P.marker = null; }
+  const lo = P.track.map(p=>p.lon), la = P.track.map(p=>p.lat);
+  const b = [[Math.min(...lo), Math.min(...la)],[Math.max(...lo), Math.max(...la)]];
+  const map = new maplibregl.Map({ container:'map', style:'https://tiles.openfreemap.org/styles/liberty', bounds:b, fitBoundsOptions:{ padding:30, animate:false }, attributionControl:false });
+  map.addControl(new maplibregl.AttributionControl({ compact:true }), 'bottom-right');
+  map.addControl(new maplibregl.NavigationControl({ showCompass:false }), 'top-right');
+  P.map = map;
+  map.on('load', ()=>{
+    const step = Math.max(1, Math.floor(P.track.length/3000));
+    const coords = P.track.filter((p,i)=>i%step===0 || i===P.track.length-1).map(p=>[p.lon,p.lat]);
+    map.addSource('trk', { type:'geojson', data:{ type:'Feature', geometry:{ type:'LineString', coordinates:coords } } });
+    map.addLayer({ id:'trkc', type:'line', source:'trk', layout:{ 'line-cap':'round', 'line-join':'round' }, paint:{ 'line-color':'#000', 'line-opacity':.5, 'line-width':8 } });
+    map.addLayer({ id:'trkl', type:'line', source:'trk', layout:{ 'line-cap':'round', 'line-join':'round' }, paint:{ 'line-color':'#17b8a4', 'line-width':4.5 } });
+    const el = document.createElement('div'); el.className = 'dot';
+    P.marker = new maplibregl.Marker({ element:el }).setLngLat([P.track[0].lon, P.track[0].lat]).addTo(map);
+    P.mapReady = true; updatePos();
+  });
+  // a click on the track: the video's present position becomes that point's time
+  map.on('click', ev=>{
+    const v = P.videos[P.sel]; if (!v || effStart(v)==null) return;
+    const k = Math.cos(ev.lngLat.lat*Math.PI/180); let best = null, bd = Infinity;
+    P.track.forEach(p=>{ const dx = (p.lon-ev.lngLat.lng)*k, dy = p.lat-ev.lngLat.lat, d = dx*dx+dy*dy; if (d<bd){ bd = d; best = p; } });
+    if (!best) return;
+    P.offset = Math.round(best.t-(effStart(v)+($('#pv').currentTime||0))); $('#off').value = P.offset; updatePos(); updatePlan();
+  });
+}
+
+/* ---------- EXIF (date / time zone / GPS) written into the JPEG ---------- */
+function exifBytes(o){
+  const enc = new TextEncoder();
+  const asc = s=>{ const b = enc.encode(s); const r = new Uint8Array(b.length+1); r.set(b); return r; };
+  const be32 = n=>[(n>>>24)&255,(n>>>16)&255,(n>>>8)&255,n&255];
+  const rat = (n,d)=> be32(n).concat(be32(d));
+  const dms = deg=>{ deg = Math.abs(deg); const d = Math.floor(deg), mf = (deg-d)*60, m = Math.floor(mf), s = Math.round((mf-m)*60*10000); return rat(d,1).concat(rat(m,1), rat(s,10000)); };
+  const E = (tag,type,count,bytes)=>({ tag, type, count, bytes:Uint8Array.from(bytes) });
+  const A = (tag,s)=>{ const b = asc(s); return E(tag, 2, b.length, b); };
+  const dt = o.dt;
+  const ifd0 = [ A(0x0131, 'Quaniter Photolog'), A(0x0132, dt) ];
+  const exif = [ A(0x9003, dt), A(0x9004, dt), A(0x9010, o.off), A(0x9011, o.off), A(0x9012, o.off) ];
+  const gps = [];
+  if (o.lat!=null){
+    gps.push(E(0x0000, 1, 4, [2,3,0,0]), A(0x0001, o.lat>=0 ? 'N' : 'S'), E(0x0002, 5, 3, dms(o.lat)), A(0x0003, o.lon>=0 ? 'E' : 'W'), E(0x0004, 5, 3, dms(o.lon)));
+    if (o.alt!=null){ gps.push(E(0x0005, 1, 1, [o.alt<0 ? 1 : 0]), E(0x0006, 5, 1, rat(Math.round(Math.abs(o.alt)*100), 100))); }
+    gps.push(E(0x0007, 5, 3, rat(o.ut[0],1).concat(rat(o.ut[1],1), rat(o.ut[2],1))), A(0x001D, o.ud));
+  }
+  const sizeOf = ents=> 2+12*ents.length+4+ents.reduce((a,e)=> a+(e.bytes.length>4 ? e.bytes.length+(e.bytes.length&1) : 0), 0);
+  // layout: header(8) IFD0 [exif ptr, gps ptr] ExifIFD GPS
+  ifd0.push(E(0x8769, 4, 1, [0,0,0,0]));
+  if (gps.length) ifd0.push(E(0x8825, 4, 1, [0,0,0,0]));
+  ifd0.sort((a,b)=>a.tag-b.tag);
+  const off0 = 8, offE = off0+sizeOf(ifd0), offG = offE+sizeOf(exif);
+  ifd0.find(e=>e.tag===0x8769).bytes = Uint8Array.from(be32(offE));
+  if (gps.length) ifd0.find(e=>e.tag===0x8825).bytes = Uint8Array.from(be32(offG));
+  const out = [];
+  const u16 = n=>[(n>>8)&255, n&255];
+  out.push(0x4D,0x4D,0x00,0x2A, ...be32(8));
+  const ifdBytes = (ents, base)=>{
+    ents.sort((a,b)=>a.tag-b.tag);
+    const head = [...u16(ents.length)], data = [];
+    let dataOff = base+2+12*ents.length+4;
+    ents.forEach(e=>{
+      head.push(...u16(e.tag), ...u16(e.type), ...be32(e.count));
+      if (e.bytes.length<=4){ const v = [...e.bytes]; while (v.length<4) v.push(0); head.push(...v); }
+      else { head.push(...be32(dataOff)); data.push(...e.bytes); if (e.bytes.length&1) data.push(0); dataOff += e.bytes.length+(e.bytes.length&1); }
+    });
+    head.push(0,0,0,0);
+    return head.concat(data);
+  };
+  out.push(...ifdBytes(ifd0, off0), ...ifdBytes(exif, offE));
+  if (gps.length) out.push(...ifdBytes(gps, offG));
+  const tiff = Uint8Array.from(out);
+  const hdr = [0x45,0x78,0x69,0x66,0,0];
+  const len = 2+hdr.length+tiff.length;
+  return Uint8Array.from([0xFF,0xE1,(len>>8)&255,len&255, ...hdr, ...tiff]);
+}
+async function jpegWithExif(blob, info){
+  const buf = new Uint8Array(await blob.arrayBuffer());
+  const app1 = exifBytes(info);
+  const out = new Uint8Array(buf.length+app1.length);
+  out.set(buf.subarray(0,2), 0); out.set(app1, 2); out.set(buf.subarray(2), 2+app1.length);
+  return new Blob([out], { type:'image/jpeg' });
+}
+function exifInfo(unix, pt){
+  const w = wall(unix, P.tz), u = wall(unix, 0);
+  const o = { dt:w.Y+':'+p2(w.M)+':'+p2(w.D)+' '+p2(w.h)+':'+p2(w.m)+':'+p2(w.s), off:tzStr(P.tz), lat:null, lon:null, alt:null };
+  if (pt){ o.lat = pt.lat; o.lon = pt.lon; o.alt = pt.alt; o.ut = [u.h, u.m, u.s]; o.ud = u.Y+':'+p2(u.M)+':'+p2(u.D); }
+  return o;
+}
+
+/* ---------- planning and extracting ---------- */
+function segments(){
+  const vids = $('#target').value==='sel' ? [P.videos[P.sel]].filter(Boolean) : P.videos;
+  const segs = [], outside = $('#outside').checked || !P.track.length;
+  vids.forEach(v=>{
+    const st = effStart(v); if (st==null) return;
+    let a = 0, b = v.dur;
+    if (!outside){ a = Math.max(0, P.track[0].t-(st+P.offset)); b = Math.min(v.dur, P.track[P.track.length-1].t-(st+P.offset)); }
+    if (b>a || (outside && v.dur>0)) segs.push({ v, a, b });
+  });
+  return segs;
+}
+function plan(){
+  const segs = segments(), L = segs.reduce((s,x)=>s+(x.b-x.a), 0), val = Math.max(1, Math.floor(+$('#val').value)||1);
+  const us = [];
+  if (!segs.length) return { segs, items:[] };
+  if ($('#mode').value==='int'){ for (let u=0; u<=L+1e-9; u+=val) us.push(u); }
+  else if (val===1) us.push(L/2); else for (let k=0;k<val;k++) us.push(L*k/(val-1));
+  const items = us.map(u=>{
+    let acc = 0;
+    for (const s of segs){ const len = s.b-s.a; if (u<=acc+len+1e-9) return { v:s.v, vt:Math.min(s.v.dur-0.05, s.a+Math.max(0, u-acc)) }; acc += len; }
+    const s = segs[segs.length-1]; return { v:s.v, vt:Math.min(s.v.dur-0.05, s.b) };
+  });
+  return { segs, items };
+}
+function updatePlan(){
+  const el = $('#plan'), pl = plan();
+  const miss = P.videos.filter(v=>effStart(v)==null).length;
+  el.textContent = !P.videos.length ? '' : miss ? '開始時刻が不明な動画があります(「開始時刻を直接指定」に入力してください)。' : !pl.items.length ? '抜き出せる範囲がありません(動画と走行記録の時刻が重なっていません。時刻のずれを確認してください)。' : pl.items.length+'枚を抜き出します。';
+}
+['mode','val','target','outside'].forEach(id=> $('#'+id).addEventListener('input', ()=>{ if (id==='mode') { $('#valLab').textContent = $('#mode').value==='int' ? '間隔(秒)' : '枚数'; $('#val').value = $('#mode').value==='int' ? 10 : 20; } updatePlan(); }));
+const seekTo = (v, t)=> new Promise((ok, ng)=>{ const to = setTimeout(()=>ng(new Error('コマの移動がタイムアウトしました')), 30000); v.onseeked = ()=>{ clearTimeout(to); ok(); }; v.currentTime = t; });
+async function grabber(video){
+  const url = video.url, el = document.createElement('video');
+  el.muted = true; el.playsInline = true; el.preload = 'auto'; el.src = url;
+  await new Promise((ok, ng)=>{ const to = setTimeout(()=>ng(new Error('動画を開けませんでした')), 30000); el.onloadeddata = ()=>{ clearTimeout(to); ok(); }; el.onerror = ()=>{ clearTimeout(to); ng(new Error('この動画は読み込めません')); }; });
+  const cv = document.createElement('canvas'); cv.width = el.videoWidth; cv.height = el.videoHeight;
+  const g = cv.getContext('2d');
+  return {
+    async frame(vt){
+      await seekTo(el, Math.max(0, Math.min(el.duration-0.05, vt)));
+      g.drawImage(el, 0, 0, cv.width, cv.height);
+      return await new Promise(r=> cv.toBlob(r, 'image/jpeg', 0.95));
+    },
+    close(){ el.removeAttribute('src'); el.load(); cv.width = cv.height = 1; }
+  };
+}
+function download(blob, name){
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; a.style.display = 'none';
+  document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(a.href), 60000);
+}
+async function makeOne(g, v, vt){
+  const t = rideTime(v, vt), pt = trackAt(t);
+  const blob = await g.frame(vt);
+  const jp = await jpegWithExif(blob, exifInfo(t, pt));
+  const w = wall(t, P.tz);
+  return { blob:jp, t, gps:!!pt, base:w.Y+p2(w.M)+p2(w.D)+'_'+p2(w.h)+p2(w.m)+p2(w.s) };
+}
+$('#run').addEventListener('click', async ()=>{
+  if (P.busy) return;
+  const pl = plan(); if (!pl.items.length) return;
+  if (pl.items.length>1000 && !confirm(pl.items.length+'枚を抜き出します。時間がかかります。続けますか?')) return;
+  const useDir = $('#useDir').checked && P.dir;
+  if (!useDir && !window.JSZip){ log('zipの作成ライブラリを読み込めませんでした。'); return; }
+  const maxN = Math.max(1, +$('#splitN').value||50), maxB = Math.max(10, +$('#splitMB').value||200)*1048576;
+  P.busy = true; P.stop = false; $('#run').disabled = $('#one').disabled = true; $('#stop').disabled = false; $('#barI').style.width = '0%'; $('#log').textContent = '';
+  let zip = null, partN = 0, partBytes = 0, partCount = 0, total = 0, noGps = 0; const used = new Map();
+  const flush = async ()=>{
+    if (!zip || !partCount) return;
+    partN++;
+    const blob = await zip.generateAsync({ type:'blob', compression:'STORE', streamFiles:true });
+    download(blob, 'photolog_'+p2(partN)+'.zip'); log('zip '+partN+' を保存しました('+partCount+'枚)');
+    zip = null; partBytes = 0; partCount = 0;
+    await new Promise(r=>setTimeout(r, 600));
+  };
+  try{
+    let cur = null, g = null;
+    for (let i=0;i<pl.items.length;i++){
+      if (P.stop) break;
+      const it = pl.items[i];
+      if (cur!==it.v){ if (g) g.close(); g = await grabber(it.v); cur = it.v; }
+      const r = await makeOne(g, it.v, it.vt);
+      if (!r.gps) noGps++;
+      let name = r.base, n = used.get(name)||0; used.set(name, n+1); if (n) name += '_'+(n+1);
+      name += '.jpg';
+      if (useDir){ const fh = await P.dir.getFileHandle(name, { create:true }); const w = await fh.createWritable(); await w.write(r.blob); await w.close(); }
+      else {
+        if (!zip) zip = new JSZip();
+        zip.file(name, r.blob, { compression:'STORE' }); partBytes += r.blob.size; partCount++;
+        if (partCount>=maxN || partBytes>=maxB) await flush();
+      }
+      total++;
+      $('#barI').style.width = ((i+1)/pl.items.length*100)+'%';
+      if ((i+1)%10===0 || i===pl.items.length-1){ log((i+1)+' / '+pl.items.length+' 枚'); await new Promise(r=>setTimeout(r,0)); }
+    }
+    if (g) g.close();
+    await flush();
+    log((P.stop ? '中止しました。' : '完了しました。')+total+'枚を保存'+(useDir ? '(フォルダ)' : '')+'。'+(noGps ? '位置情報が付かなかった画像: '+noGps+'枚' : ''));
+  }catch(err){ log('エラー: '+err.message); try{ await flush(); }catch(e){} }
+  P.busy = false; $('#run').disabled = $('#one').disabled = false; $('#stop').disabled = true;
+});
+$('#stop').addEventListener('click', ()=>{ P.stop = true; });
+$('#one').addEventListener('click', async ()=>{
+  const v = P.videos[P.sel]; if (!v || effStart(v)==null || P.busy) return;
+  P.busy = true; $('#one').disabled = $('#run').disabled = true;
+  try{ const g = await grabber(v); const r = await makeOne(g, v, $('#pv').currentTime||0); g.close(); download(r.blob, r.base+'.jpg'); log('1枚を保存しました: '+r.base+'.jpg'+(r.gps ? '' : '(位置情報なし)')); }
+  catch(err){ log('エラー: '+err.message); }
+  P.busy = false; $('#one').disabled = $('#run').disabled = false;
+});
+if (window.showDirectoryPicker){
+  $('#folderRow').style.display = '';
+  $('#pickDir').addEventListener('click', async ()=>{ try{ P.dir = await showDirectoryPicker({ mode:'readwrite' }); $('#dirName').textContent = P.dir.name; $('#useDir').checked = true; }catch(e){} });
+}
+})();
+</script>
+</body>
+</html>
