@@ -26,8 +26,10 @@ input[type=number]{ width:110px; } input[type=file]{ display:none; }
 .vItem{ border:1px solid var(--border); border-radius:10px; padding:8px 10px; margin-bottom:8px; }
 .vItem.sel{ border-color:var(--accent); }
 .vItem .nm{ font-weight:700; word-break:break-all; }
-#pv{ width:100%; max-height:46vh; background:#000; border-radius:10px; }
-#map{ width:100%; height:300px; border-radius:10px; overflow:hidden; background:#15181d; margin-top:8px; }
+#pv{ width:100%; height:300px; background:#000; border-radius:10px; object-fit:contain; }
+#map{ width:100%; height:300px; border-radius:10px; overflow:hidden; background:#15181d; }
+.two{ display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:8px; } @media (max-width:720px){ .two{ grid-template-columns:1fr; } }
+#tl{ display:block; width:100%; height:230px; background:var(--surface-2); border:1px solid var(--border); border-radius:10px; touch-action:none; cursor:crosshair; }
 .posLine{ font-weight:700; margin:8px 0; }
 .bar{ height:8px; background:var(--surface-2); border-radius:4px; overflow:hidden; } .bar i{ display:block; height:100%; width:0; background:var(--accent); }
 .dot{ width:14px; height:14px; border-radius:50%; background:#ffaa3c; border:2.5px solid #fff; box-sizing:border-box; }
@@ -52,16 +54,18 @@ label.inl{ display:inline-flex; align-items:center; gap:6px; }
   </div>
 
   <div class="panel">
-    <h2>3. 時刻合わせ</h2>
-    <div class="hint">動画の撮影時刻と、走行記録の時刻がずれているときは、「ずれ(秒)」で合わせます。地図の線をクリックすると、動画の今の位置が、その地点になるように、自動で合わせます。</div>
+    <h2>3. タイムラインと時刻合わせ</h2>
+    <div class="hint">動画は、タイムライン上の帯(クリップ)で表します。帯をドラッグすると、動画の時刻をずらせます。地図の位置にシークバーを置き、動画のコマが一致するまで、帯を動かしてください。</div>
+    <div class="two"><div id="map"></div><video id="pv" controls playsinline muted></video></div>
+    <div class="posLine" id="posLine">動画と位置情報を選ぶと、ここに表示されます。</div>
+    <canvas id="tl"></canvas>
     <div class="row" style="margin-top:8px;">
-      <label class="inl">時刻のずれ(秒) <input type="number" id="off" value="0" step="1"></label>
+      <button id="zin">拡大</button><button id="zout">縮小</button><button id="zall" class="ghost">全体</button>
+      <span class="hint">クリップを動かす:</span>
       <button data-d="-3600">−1時間</button><button data-d="-10">−10秒</button><button data-d="-1">−1秒</button><button data-d="1">+1秒</button><button data-d="10">+10秒</button><button data-d="3600">+1時間</button>
+      <label class="inl"><input type="checkbox" id="grp" checked> すべてのクリップをいっしょに動かす</label>
       <label class="inl">日時を書き込む時差 <select id="tz"></select></label>
     </div>
-    <video id="pv" controls playsinline muted></video>
-    <div class="posLine" id="posLine">動画を選ぶと、ここに位置が出ます。</div>
-    <div id="map"></div>
   </div>
 
   <div class="panel">
@@ -77,7 +81,7 @@ label.inl{ display:inline-flex; align-items:center; gap:6px; }
     </div>
     <div class="row" id="folderRow" style="display:none;"><label class="inl"><input type="checkbox" id="useDir"> zipではなく、フォルダに直接保存する(Chrome)</label> <button id="pickDir" class="ghost">保存先フォルダを選ぶ</button> <span id="dirName" class="hint"></span></div>
     <div class="hint" id="plan" style="margin:6px 0;"></div>
-    <div class="row"><button class="primary" id="run">まとめて抜き出して保存</button><button id="one">いまの位置の1枚を保存</button><button class="ghost" id="stop" disabled>中止</button></div>
+    <div class="row"><button class="primary" id="run">まとめて抜き出して保存</button><button id="one">シークバーの位置の1枚を保存</button><button class="ghost" id="stop" disabled>中止</button></div>
     <div class="bar"><i id="barI"></i></div>
     <div class="log" id="log"></div>
   </div>
@@ -291,7 +295,7 @@ async function parseVideoMeta(file){
   return out;
 }
 
-const P = { videos:[], sel:-1, track:[], offset:0, tz:-new Date().getTimezoneOffset(), map:null, mapReady:false, marker:null, busy:false, stop:false, dir:null, vid:0 };
+const P = { videos:[], sel:-1, track:[], T:null, view:null, tz:-new Date().getTimezoneOffset(), map:null, mapReady:false, marker:null, busy:false, stop:false, dir:null, vid:0 };
 const log = t=>{ const l = $('#log'); l.textContent += t+'\n'; l.scrollTop = l.scrollHeight; };
 const p2 = n=>String(n).padStart(2,'0');
 // local wall clock of a unix time in the chosen UTC offset
@@ -300,14 +304,14 @@ const fmtWall = (unix, tzMin)=>{ const w = wall(unix, tzMin); return w.Y+'/'+p2(
 const tzStr = m=> (m<0 ? '-' : '+')+p2(Math.floor(Math.abs(m)/60))+':'+p2(Math.abs(m)%60);
 // time zone choices
 (function(){ const s = $('#tz'); for (let m=-720; m<=840; m+=30){ const o = document.createElement('option'); o.value = m; o.textContent = 'UTC'+tzStr(m); s.appendChild(o); } s.value = P.tz; if (s.value!=String(P.tz)) s.value = 540; P.tz = +s.value; })();
-$('#tz').addEventListener('change', e=>{ P.tz = +e.target.value; renderVideos(); updatePos(); });
+$('#tz').addEventListener('change', e=>{ P.tz = +e.target.value; renderVideos(); updatePos(); drawTL(); });
 
 /* ---------- track (FIT / GPX) ---------- */
 async function loadTrack(file){
   let pts = [];
   if (/\.fit$/i.test(file.name)){
     const recs = parseFit(await file.arrayBuffer());
-    recs.forEach(r=>{ if (r.lat!=null && r.lon!=null) pts.push({ t:r.t, lat:r.lat, lon:r.lon, alt:r.alt }); });
+    recs.forEach(r=>{ if (r.lat!=null && r.lon!=null) pts.push({ t:r.t, lat:r.lat, lon:r.lon, alt:r.alt, spd:r.speed }); });
   } else {
     const doc = new DOMParser().parseFromString(await file.text(), 'application/xml');
     [...doc.getElementsByTagName('trkpt')].forEach(el=>{
@@ -319,9 +323,10 @@ async function loadTrack(file){
   }
   pts = pts.filter(p=>isFinite(p.lat) && isFinite(p.lon)).sort((a,b)=>a.t-b.t);
   if (pts.length<2) throw new Error('時刻つきの位置が見つかりません(GPXには、各点に時刻が必要です)');
-  P.track = pts;
+  if (pts.some(p=>p.spd==null)){ for (let i=0;i<pts.length;i++){ const a = pts[Math.max(0,i-3)], b = pts[Math.min(pts.length-1,i+3)]; const dt = b.t-a.t; pts[i].spd = dt>0 ? haversine(a.lat,a.lon,b.lat,b.lon)/dt : 0; } }
+  P.track = pts; P.view = null;
   $('#trkInfo').textContent = file.name+' ・ '+pts.length.toLocaleString()+'点 ・ '+fmtWall(pts[0].t, P.tz)+' 〜 '+fmtWall(pts[pts.length-1].t, P.tz);
-  buildMap(); updatePos(); updatePlan();
+  buildMap(); fitView(); updatePos(); updatePlan(); drawTL();
 }
 $('#trkIn').addEventListener('change', async e=>{
   const f = e.target.files[0]; e.target.value = ''; if (!f) return;
@@ -339,7 +344,7 @@ function trackAt(t){
 }
 
 /* ---------- videos ---------- */
-function effStart(v){ return v.manual!=null ? v.manual : v.start; }
+function effStart(v){ const b = v.manual!=null ? v.manual : v.start; return b==null ? null : b+(v.shift||0); }
 function renderVideos(){
   const box = $('#vidList'); box.innerHTML = '';
   P.videos.forEach((v,i)=>{
@@ -348,13 +353,13 @@ function renderVideos(){
     d.innerHTML = '<div class="nm">'+(i+1)+'. '+v.name.replace(/[<>&]/g,'')+'</div><div class="hint">長さ '+Math.round(v.dur)+' 秒 ・ '+v.w+'×'+v.h+' ・ 開始時刻: '+(st!=null ? fmtWall(st, P.tz) : '不明(下に入力してください)')+(v.manual!=null ? '(手入力)' : '')+'</div>'+
       '<div class="row" style="margin:6px 0 0;"><button data-a="sel">この動画を見る</button><label class="inl">開始時刻を直接指定 <input type="datetime-local" step="1" data-a="start"></label><button class="ghost" data-a="auto">自動に戻す</button><button class="ghost" data-a="del">削除</button></div>';
     if (st!=null){ const w = wall(st, P.tz); d.querySelector('[data-a=start]').value = w.Y+'-'+p2(w.M)+'-'+p2(w.D)+'T'+p2(w.h)+':'+p2(w.m)+':'+p2(w.s); }
-    d.querySelector('[data-a=sel]').onclick = ()=> selectVideo(i);
-    d.querySelector('[data-a=auto]').onclick = ()=>{ v.manual = null; renderVideos(); updatePos(); updatePlan(); };
-    d.querySelector('[data-a=del]').onclick = ()=>{ URL.revokeObjectURL(v.url); P.videos.splice(i,1); if (P.sel>=P.videos.length) P.sel = P.videos.length-1; renderVideos(); if (P.sel>=0) selectVideo(P.sel); else $('#pv').removeAttribute('src'); updatePlan(); };
+    d.querySelector('[data-a=sel]').onclick = ()=>{ const s = effStart(v); if (s!=null) setT(s+v.dur/2); selectVideo(i); };
+    d.querySelector('[data-a=auto]').onclick = ()=>{ v.manual = null; v.shift = 0; renderVideos(); updatePos(); updatePlan(); drawTL(); };
+    d.querySelector('[data-a=del]').onclick = ()=>{ URL.revokeObjectURL(v.url); P.videos.splice(i,1); if (P.sel>=P.videos.length) P.sel = P.videos.length-1; renderVideos(); if (P.sel>=0) selectVideo(P.sel); else $('#pv').removeAttribute('src'); updatePlan(); fitView(); drawTL(); };
     d.querySelector('[data-a=start]').onchange = e=>{
       const m = /^(\d+)-(\d+)-(\d+)T(\d+):(\d+)(?::(\d+))?/.exec(e.target.value); if (!m) return;
-      v.manual = Date.UTC(+m[1], +m[2]-1, +m[3], +m[4], +m[5], +(m[6]||0))/1000 - P.tz*60;
-      renderVideos(); updatePos(); updatePlan();
+      v.manual = Date.UTC(+m[1], +m[2]-1, +m[3], +m[4], +m[5], +(m[6]||0))/1000 - P.tz*60; v.shift = 0;
+      renderVideos(); updatePos(); updatePlan(); fitView(); drawTL();
     };
     box.appendChild(d);
   });
@@ -375,29 +380,47 @@ $('#vidIn').addEventListener('change', async e=>{
     let vm = {}; try{ vm = await parseVideoMeta(f); }catch(err){}
     const md = await videoMeta(f);
     if (!md || !(md.dur>0)){ log('読めない動画: '+f.name+'(このブラウザで再生できない形式かもしれません)'); continue; }
-    P.videos.push({ id:P.vid++, file:f, name:f.name, start:vm.t||null, manual:null, dur:md.dur, w:md.w, h:md.h, url:URL.createObjectURL(f) });
+    const nv = { id:P.vid++, file:f, name:f.name, start:vm.t||null, manual:null, shift:0, dur:md.dur, w:md.w, h:md.h, url:URL.createObjectURL(f), thumb:null };
+    P.videos.push(nv); clipThumb(nv);
   }
-  renderVideos(); if (P.sel<0 && P.videos.length) selectVideo(0); updatePlan();
+  renderVideos(); if (P.sel<0 && P.videos.length) selectVideo(0); updatePlan(); fitView(); drawTL(); if (P.T==null){ const s = P.videos.length ? effStart(P.videos[0]) : null; if (s!=null) setT(s); }
 });
 function selectVideo(i){
+  if (i===P.sel && $('#pv').getAttribute('src')===(P.videos[i]||{}).url) return;
   P.sel = i; const v = P.videos[i]; renderVideos();
-  const pv = $('#pv'); pv.src = v.url; updatePos();
+  if (v) $('#pv').src = v.url;
+  drawTL();
 }
-$('#pv').addEventListener('timeupdate', ()=> updatePos());
-$('#pv').addEventListener('seeked', ()=> updatePos());
+// the video plays on: the seek bar follows it
+$('#pv').addEventListener('timeupdate', ()=>{
+  const v = P.videos[P.sel]; if (!v || $('#pv').paused) return;
+  const s = effStart(v); if (s==null) return;
+  P.T = s+$('#pv').currentTime; updatePos(); drawTL();
+});
+function frameFollow(){
+  if (P.fw) return; P.fw = true;
+  requestAnimationFrame(()=>{
+    P.fw = false;
+    const ci = clipAt(P.T); if (ci<0) return;
+    selectVideo(ci);
+    const v = P.videos[ci], pv = $('#pv'), vt = Math.max(0, Math.min(v.dur-0.05, P.T-effStart(v)));
+    const go = ()=>{ try{ pv.currentTime = vt; }catch(e){} };
+    if (pv.readyState>=1) go(); else pv.addEventListener('loadedmetadata', go, { once:true });
+  });
+}
+function setT(tm){
+  P.T = tm; updatePos(); drawTL(); frameFollow();
+}
 
 /* ---------- time alignment ---------- */
-function rideTime(v, vt){ return effStart(v)+P.offset+vt; }
-$('#off').addEventListener('input', e=>{ P.offset = +e.target.value||0; updatePos(); updatePlan(); });
-document.querySelectorAll('[data-d]').forEach(b=> b.addEventListener('click', ()=>{ P.offset += +b.dataset.d; $('#off').value = P.offset; updatePos(); updatePlan(); }));
+function rideTime(v, vt){ return effStart(v)+vt; }
+function clipAt(tm){ return P.videos.findIndex(v=>{ const s = effStart(v); return s!=null && tm>=s && tm<=s+v.dur; }); }
 function updatePos(){
-  const v = P.videos[P.sel], el = $('#posLine');
-  if (!v){ el.textContent = '動画を選ぶと、ここに位置が出ます。'; return; }
-  const st = effStart(v);
-  if (st==null){ el.textContent = 'この動画には撮影時刻がありません。「開始時刻を直接指定」に入力してください。'; return; }
-  const t = rideTime(v, $('#pv').currentTime||0), pt = trackAt(t);
-  el.textContent = '動画のこの位置 = '+fmtWall(t, P.tz)+(pt ? ' ・ 緯度 '+pt.lat.toFixed(5)+' 経度 '+pt.lon.toFixed(5)+(pt.alt!=null ? ' ・ 標高 '+Math.round(pt.alt)+' m' : '') : (P.track.length ? ' ・ 走行記録の範囲の外です' : ''));
-  if (pt && P.marker){ P.marker.setLngLat([pt.lon, pt.lat]); }
+  const el = $('#posLine'), tm = P.T;
+  if (tm==null){ el.textContent = '動画と位置情報を選ぶと、ここに表示されます。タイムラインをクリックすると、シークバーが動きます。'; return; }
+  const pt = trackAt(tm), ci = clipAt(tm);
+  el.textContent = fmtWall(tm, P.tz)+(pt ? ' ・ 緯度 '+pt.lat.toFixed(5)+' 経度 '+pt.lon.toFixed(5)+(pt.alt!=null ? ' ・ 標高 '+Math.round(pt.alt)+' m' : '') : (P.track.length ? ' ・ 走行記録の範囲の外' : ''))+(ci>=0 ? ' ・ 動画: '+P.videos[ci].name : ' ・ この時刻の動画はありません');
+  if (pt && P.marker) P.marker.setLngLat([pt.lon, pt.lat]);
 }
 function buildMap(){
   if (!window.maplibregl){ $('#map').textContent = '地図ライブラリを読み込めませんでした。'; return; }
@@ -418,13 +441,11 @@ function buildMap(){
     P.marker = new maplibregl.Marker({ element:el }).setLngLat([P.track[0].lon, P.track[0].lat]).addTo(map);
     P.mapReady = true; updatePos();
   });
-  // a click on the track: the video's present position becomes that point's time
+  // a click near the track puts the seek bar on that point's time
   map.on('click', ev=>{
-    const v = P.videos[P.sel]; if (!v || effStart(v)==null) return;
     const k = Math.cos(ev.lngLat.lat*Math.PI/180); let best = null, bd = Infinity;
     P.track.forEach(p=>{ const dx = (p.lon-ev.lngLat.lng)*k, dy = p.lat-ev.lngLat.lat, d = dx*dx+dy*dy; if (d<bd){ bd = d; best = p; } });
-    if (!best) return;
-    P.offset = Math.round(best.t-(effStart(v)+($('#pv').currentTime||0))); $('#off').value = P.offset; updatePos(); updatePlan();
+    if (best) setT(best.t);
   });
 }
 
@@ -497,7 +518,7 @@ function segments(){
   vids.forEach(v=>{
     const st = effStart(v); if (st==null) return;
     let a = 0, b = v.dur;
-    if (!outside){ a = Math.max(0, P.track[0].t-(st+P.offset)); b = Math.min(v.dur, P.track[P.track.length-1].t-(st+P.offset)); }
+    if (!outside){ a = Math.max(0, P.track[0].t-st); b = Math.min(v.dur, P.track[P.track.length-1].t-st); }
     if (b>a || (outside && v.dur>0)) segs.push({ v, a, b });
   });
   return segs;
@@ -593,12 +614,146 @@ $('#run').addEventListener('click', async ()=>{
 });
 $('#stop').addEventListener('click', ()=>{ P.stop = true; });
 $('#one').addEventListener('click', async ()=>{
-  const v = P.videos[P.sel]; if (!v || effStart(v)==null || P.busy) return;
+  const ci = clipAt(P.T), v = P.videos[ci]; if (!v || P.busy){ log('シークバーの位置に重なる動画がありません。'); return; }
   P.busy = true; $('#one').disabled = $('#run').disabled = true;
-  try{ const g = await grabber(v); const r = await makeOne(g, v, $('#pv').currentTime||0); g.close(); download(r.blob, r.base+'.jpg'); log('1枚を保存しました: '+r.base+'.jpg'+(r.gps ? '' : '(位置情報なし)')); }
+  try{ const g = await grabber(v); const r = await makeOne(g, v, Math.max(0, P.T-effStart(v))); g.close(); download(r.blob, r.base+'.jpg'); log('1枚を保存しました: '+r.base+'.jpg'+(r.gps ? '' : '(位置情報なし)')); }
   catch(err){ log('エラー: '+err.message); }
   P.busy = false; $('#one').disabled = $('#run').disabled = false;
 });
+
+/* ---------- timeline: the track as a graph, the videos as clips, a seek bar ---------- */
+function clipThumb(v){
+  const el = document.createElement('video'); el.muted = true; el.playsInline = true; el.preload = 'auto'; el.src = v.url;
+  const done = ()=>{ el.removeAttribute('src'); el.load(); };
+  const to = setTimeout(done, 15000);
+  el.onloadeddata = ()=>{ try{ el.currentTime = Math.min(0.2, el.duration/2); }catch(e){ clearTimeout(to); done(); } };
+  el.onseeked = ()=>{ clearTimeout(to); const c = document.createElement('canvas'); c.height = 80; c.width = Math.max(1, Math.round(el.videoWidth*80/el.videoHeight)); c.getContext('2d').drawImage(el, 0, 0, c.width, c.height); v.thumb = c; done(); drawTL(); };
+  el.onerror = ()=>{ clearTimeout(to); done(); };
+}
+function timeSpan(){
+  let a = Infinity, b = -Infinity;
+  if (P.track.length){ a = P.track[0].t; b = P.track[P.track.length-1].t; }
+  P.videos.forEach(v=>{ const s = effStart(v); if (s!=null){ a = Math.min(a, s); b = Math.max(b, s+v.dur); } });
+  return isFinite(a) ? { a, b: b>a ? b : a+60 } : null;
+}
+function fitView(){
+  const s = timeSpan(); if (!s){ P.view = null; return; }
+  const pad = (s.b-s.a)*0.02; P.view = { t0:s.a-pad, t1:s.b+pad };
+}
+const TLG = { ML:8, MR:8, RH:20, GH:104, LH:42 };
+function clipLanes(){
+  const order = P.videos.map((v,i)=>({ v, i, s:effStart(v) })).filter(o=>o.s!=null).sort((a,b)=>a.s-b.s), ends = [], res = {};
+  order.forEach(o=>{ let l = ends.findIndex(e=> e<=o.s+0.01); if (l<0){ l = ends.length; ends.push(0); } ends[l] = o.s+o.v.dur; res[o.i] = l; });
+  return { lanes:Math.max(1, ends.length), of:res };
+}
+function drawTL(){
+  const cv = $('#tl'); if (!cv) return;
+  const { ML, MR, RH, GH, LH } = TLG, lanes = clipLanes();
+  const H = RH+GH+8+lanes.lanes*(LH+4)+6;
+  cv.style.height = H+'px';
+  const dpr = window.devicePixelRatio||1, W = cv.clientWidth; if (!W) return;
+  cv.width = Math.round(W*dpr); cv.height = Math.round(H*dpr);
+  const g = cv.getContext('2d'); g.setTransform(dpr,0,0,dpr,0,0); g.clearRect(0,0,W,H);
+  const css = getComputedStyle(document.documentElement), grid = css.getPropertyValue('--border').trim(), muted = css.getPropertyValue('--text-faint').trim(), txt = css.getPropertyValue('--text').trim();
+  P.clipRects = [];
+  const v = P.view;
+  if (!v){ g.fillStyle = muted; g.font = '13px sans-serif'; g.textAlign = 'center'; g.fillText('動画か位置情報を選ぶと、ここにタイムラインが出ます', W/2, H/2); return; }
+  const X = t=> ML+(t-v.t0)/(v.t1-v.t0)*(W-ML-MR), tAt = x=> v.t0+(x-ML)/(W-ML-MR)*(v.t1-v.t0);
+  // ruler
+  const steps = [1,2,5,10,15,30,60,120,300,600,900,1800,3600,7200,14400,21600,43200], want = (v.t1-v.t0)/Math.max(2, W/110);
+  const st = steps.find(s=>s>=want) || 86400;
+  g.font = '10.5px sans-serif'; g.textAlign = 'center'; g.textBaseline = 'top';
+  const first = Math.ceil((v.t0+P.tz*60)/st)*st-P.tz*60;
+  for (let t=first; t<=v.t1; t+=st){
+    const x = Math.round(X(t))+.5; g.strokeStyle = grid; g.beginPath(); g.moveTo(x, RH-4); g.lineTo(x, H-4); g.stroke();
+    const w = wall(t, P.tz); g.fillStyle = muted; g.fillText(p2(w.h)+':'+p2(w.m)+(st<60 ? ':'+p2(w.s) : ''), x, 3);
+  }
+  // track graph: elevation (grey area) and speed (line)
+  if (P.track.length){
+    const a = P.track; let amin = Infinity, amax = -Infinity, smax = 1;
+    a.forEach(p=>{ if (p.alt!=null){ if (p.alt<amin) amin = p.alt; if (p.alt>amax) amax = p.alt; } if (p.spd>smax) smax = p.spd; });
+    const gy0 = RH+2, gy1 = RH+GH-2;
+    const stride = Math.max(1, Math.floor(a.length/Math.max(1, W)));
+    const run = (fy, key)=>{ g.beginPath(); let started = false, lx = 0; for (let i=0;i<a.length;i+=stride){ const p = a[i]; if (p[key]==null) continue; const x = X(p.t); if (x<-5 || x>W+5) continue; const y = fy(p[key]); started ? g.lineTo(x,y) : g.moveTo(x,y); started = true; lx = x; } return { started, lx }; };
+    if (isFinite(amin) && amax>amin){
+      const fy = e=> gy1-(e-amin)/(amax-amin)*(gy1-gy0-6);
+      const r = run(fy, 'alt'); if (r.started){ g.strokeStyle = 'rgba(170,176,186,.7)'; g.lineWidth = 1; g.stroke(); g.lineTo(r.lx, gy1); const fx = X(a[0].t); g.lineTo(Math.max(ML, fx), gy1); g.closePath(); g.fillStyle = 'rgba(170,176,186,.16)'; g.fill(); }
+      g.fillStyle = muted; g.textAlign = 'left'; g.fillText('標高 '+Math.round(amin)+'〜'+Math.round(amax)+' m', 6, gy0+1);
+    }
+    const fs = s=> gy1-s/smax*(gy1-gy0-6);
+    const r2 = run(fs, 'spd'); if (r2.started){ g.strokeStyle = '#17b8a4'; g.lineWidth = 1.5; g.stroke(); }
+    g.fillStyle = '#17b8a4'; g.textAlign = 'right'; g.fillText('速度(最高 '+(smax*3.6).toFixed(0)+' km/h)', W-6, gy0+1);
+  }
+  // clips
+  const cy0 = RH+GH+8;
+  P.videos.forEach((vd, i)=>{
+    const s = effStart(vd); if (s==null) return;
+    const x0 = X(s), x1 = X(s+vd.dur), y = cy0+lanes.of[i]*(LH+4), w = Math.max(3, x1-x0), sel = i===P.sel;
+    P.clipRects.push({ i, x:x0, y, w, h:LH });
+    if (x1<0 || x0>W) return;
+    g.save(); g.beginPath(); g.rect(x0, y, w, LH); g.clip();
+    g.fillStyle = 'rgba(255,170,60,.22)'; g.fillRect(x0, y, w, LH);
+    if (vd.thumb){ const tw = vd.thumb.width*(LH-4)/vd.thumb.height; g.globalAlpha = .75; g.drawImage(vd.thumb, x0+2, y+2, tw, LH-4); g.globalAlpha = 1; }
+    g.fillStyle = txt; g.font = '700 11px sans-serif'; g.textAlign = 'left'; g.textBaseline = 'top';
+    const tx = Math.max(x0, 0)+(vd.thumb ? vd.thumb.width*(LH-4)/vd.thumb.height+8 : 6);
+    g.fillText(vd.name, tx, y+5); g.font = '10px sans-serif'; g.fillStyle = muted; g.fillText(fmtWall(s, P.tz).slice(11)+' ・ '+Math.round(vd.dur)+'秒', tx, y+22);
+    g.restore();
+    g.strokeStyle = sel ? '#fff' : 'rgba(255,170,60,.95)'; g.lineWidth = sel ? 2.5 : 1.5; g.strokeRect(x0+.5, y+.5, w-1, LH-1);
+  });
+  // seek bar
+  if (P.T!=null){
+    const x = X(P.T);
+    if (x>=ML-1 && x<=W-MR+1){ g.strokeStyle = '#fff'; g.lineWidth = 1.5; g.setLineDash([4,3]); g.beginPath(); g.moveTo(x, RH-2); g.lineTo(x, H-3); g.stroke(); g.setLineDash([]);
+      g.fillStyle = '#fff'; g.beginPath(); g.moveTo(x-5, RH-2); g.lineTo(x+5, RH-2); g.lineTo(x, RH+5); g.closePath(); g.fill(); }
+  }
+  P.tlGeom = { W, tAt, pps:(W-ML-MR)/(v.t1-v.t0) };
+}
+(function(){
+  const cv = $('#tl'); let D = null;
+  const pos = e=> e.clientX-cv.getBoundingClientRect().left, posY = e=> e.clientY-cv.getBoundingClientRect().top;
+  const hitClip = (x,y)=> (P.clipRects||[]).slice().reverse().find(r=> x>=r.x && x<=r.x+r.w && y>=r.y && y<=r.y+r.h);
+  cv.addEventListener('pointerdown', e=>{
+    if (!P.view || !P.tlGeom) return;
+    cv.setPointerCapture(e.pointerId);
+    const x = pos(e), y = posY(e), hc = hitClip(x, y);
+    D = { x0:x, moved:false, view:{ ...P.view }, clip:hc ? hc.i : null, shifts:P.videos.map(v=>v.shift||0) };
+  });
+  cv.addEventListener('pointermove', e=>{
+    if (!D) return;
+    const x = pos(e), dx = x-D.x0;
+    if (Math.abs(dx)>3) D.moved = true;
+    if (!D.moved) return;
+    const dt = dx/P.tlGeom.pps;
+    if (D.clip!=null){
+      const d = Math.round(dt*10)/10, all = $('#grp').checked;
+      P.videos.forEach((v,i)=>{ if (all || i===D.clip) v.shift = D.shifts[i]+d; });
+      updatePos(); drawTL(); frameFollow();
+    } else {
+      P.view = { t0:D.view.t0-dt, t1:D.view.t1-dt }; drawTL();
+    }
+  });
+  const up = e=>{
+    if (!D) return; const d = D; D = null;
+    if (!d.moved){
+      const x = pos(e); setT(P.tlGeom.tAt(x));
+      if (d.clip!=null) selectVideo(d.clip);
+    } else if (d.clip!=null){ renderVideos(); updatePlan(); }
+  };
+  cv.addEventListener('pointerup', up); cv.addEventListener('pointercancel', up);
+  cv.addEventListener('wheel', e=>{
+    if (!P.view || !P.tlGeom) return; e.preventDefault();
+    const f = e.deltaY<0 ? 1/1.2 : 1.2, ax = P.tlGeom.tAt(pos(e)), v = P.view;
+    P.view = { t0:ax-(ax-v.t0)*f, t1:ax+(v.t1-ax)*f }; drawTL();
+  }, { passive:false });
+  const zoom = f=>{ if (!P.view) return; const c = P.T!=null ? P.T : (P.view.t0+P.view.t1)/2, v = P.view; P.view = { t0:c-(c-v.t0)*f, t1:c+(v.t1-c)*f }; drawTL(); };
+  $('#zin').addEventListener('click', ()=> zoom(1/1.5)); $('#zout').addEventListener('click', ()=> zoom(1.5)); $('#zall').addEventListener('click', ()=>{ fitView(); drawTL(); });
+  new ResizeObserver(()=> drawTL()).observe(cv);
+  document.querySelectorAll('[data-d]').forEach(b=> b.addEventListener('click', ()=>{
+    const d = +b.dataset.d, all = $('#grp').checked;
+    P.videos.forEach((v,i)=>{ if (all || i===P.sel) v.shift = (v.shift||0)+d; });
+    renderVideos(); updatePos(); updatePlan(); drawTL(); frameFollow();
+  }));
+})();
 if (window.showDirectoryPicker){
   $('#folderRow').style.display = '';
   $('#pickDir').addEventListener('click', async ()=>{ try{ P.dir = await showDirectoryPicker({ mode:'readwrite' }); $('#dirName').textContent = P.dir.name; $('#useDir').checked = true; }catch(e){} });
