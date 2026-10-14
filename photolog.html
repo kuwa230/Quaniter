@@ -26,7 +26,9 @@ input[type=number]{ width:110px; } input[type=file]{ display:none; }
 .vItem{ border:1px solid var(--border); border-radius:10px; padding:8px 10px; margin-bottom:8px; }
 .vItem.sel{ border-color:var(--accent); }
 .vItem .nm{ font-weight:700; word-break:break-all; }
-#pv{ width:100%; height:300px; background:#000; border-radius:10px; object-fit:contain; }
+#pvBox{ position:relative; width:100%; height:300px; background:#000; border-radius:10px; overflow:hidden; }
+#pv,#pv2{ position:absolute; inset:0; width:100%; height:100%; background:#000; object-fit:contain; }
+#pv2{ visibility:hidden; }
 #map{ width:100%; height:300px; border-radius:10px; overflow:hidden; background:#15181d; }
 .two{ display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:8px; } @media (max-width:720px){ .two{ grid-template-columns:1fr; } }
 #tl{ display:block; width:100%; height:230px; background:var(--surface-2); border:1px solid var(--border); border-radius:10px; touch-action:none; cursor:crosshair; }
@@ -56,10 +58,13 @@ label.inl{ display:inline-flex; align-items:center; gap:6px; }
   <div class="panel">
     <h2>3. タイムラインと時刻合わせ</h2>
     <div class="hint">動画は、タイムライン上の帯(クリップ)で表します。帯をドラッグすると、動画の時刻をずらせます。地図の位置にシークバーを置き、動画のコマが一致するまで、帯を動かしてください。</div>
-    <div class="two"><div id="map"></div><video id="pv" controls playsinline muted></video></div>
+    <div class="two"><div id="map"></div><div id="pvBox"><video id="pv" controls playsinline muted></video><video id="pv2" playsinline muted></video></div></div>
     <div class="posLine" id="posLine">動画と位置情報を選ぶと、ここに表示されます。</div>
     <canvas id="tl"></canvas>
     <div class="row" style="margin-top:8px;">
+      <button id="play" class="primary">▶ 再生</button>
+      <label class="inl">速度 <select id="spd"><option value="1" selected>等倍</option><option value="2">2倍</option><option value="4">4倍</option><option value="8">8倍</option></select></label>
+      <label class="inl"><input type="checkbox" id="follow" checked> 地図を点に追従</label>
       <button id="zin">拡大</button><button id="zout">縮小</button><button id="zall" class="ghost">全体</button>
       <span class="hint">クリップを動かす:</span>
       <button data-d="-3600">−1時間</button><button data-d="-10">−10秒</button><button data-d="-1">−1秒</button><button data-d="1">+1秒</button><button data-d="10">+10秒</button><button data-d="3600">+1時間</button>
@@ -295,7 +300,7 @@ async function parseVideoMeta(file){
   return out;
 }
 
-const P = { videos:[], sel:-1, track:[], T:null, view:null, tz:-new Date().getTimezoneOffset(), map:null, mapReady:false, marker:null, busy:false, stop:false, dir:null, vid:0 };
+const P = { playing:false, speed:1, last:0, jump:false, pl:null, ap:0, videos:[], sel:-1, track:[], T:null, view:null, tz:-new Date().getTimezoneOffset(), map:null, mapReady:false, marker:null, busy:false, stop:false, dir:null, vid:0 };
 const log = t=>{ const l = $('#log'); l.textContent += t+'\n'; l.scrollTop = l.scrollHeight; };
 const p2 = n=>String(n).padStart(2,'0');
 // local wall clock of a unix time in the chosen UTC offset
@@ -355,7 +360,7 @@ function renderVideos(){
     if (st!=null){ const w = wall(st, P.tz); d.querySelector('[data-a=start]').value = w.Y+'-'+p2(w.M)+'-'+p2(w.D)+'T'+p2(w.h)+':'+p2(w.m)+':'+p2(w.s); }
     d.querySelector('[data-a=sel]').onclick = ()=>{ const s = effStart(v); if (s!=null) setT(s+v.dur/2); selectVideo(i); };
     d.querySelector('[data-a=auto]').onclick = ()=>{ v.manual = null; v.shift = 0; renderVideos(); updatePos(); updatePlan(); drawTL(); };
-    d.querySelector('[data-a=del]').onclick = ()=>{ URL.revokeObjectURL(v.url); P.videos.splice(i,1); if (P.sel>=P.videos.length) P.sel = P.videos.length-1; renderVideos(); if (P.sel>=0) selectVideo(P.sel); else $('#pv').removeAttribute('src'); updatePlan(); fitView(); drawTL(); };
+    d.querySelector('[data-a=del]').onclick = ()=>{ URL.revokeObjectURL(v.url); P.videos.splice(i,1); if (P.sel>=P.videos.length) P.sel = P.videos.length-1; renderVideos(); P.pl.forEach(p=>{ p.pause(); p.removeAttribute('src'); delete p.dataset.clip; }); if (P.sel>=0) selectVideo(P.sel); updatePlan(); fitView(); drawTL(); };
     d.querySelector('[data-a=start]').onchange = e=>{
       const m = /^(\d+)-(\d+)-(\d+)T(\d+):(\d+)(?::(\d+))?/.exec(e.target.value); if (!m) return;
       v.manual = Date.UTC(+m[1], +m[2]-1, +m[3], +m[4], +m[5], +(m[6]||0))/1000 - P.tz*60; v.shift = 0;
@@ -385,32 +390,101 @@ $('#vidIn').addEventListener('change', async e=>{
   }
   renderVideos(); if (P.sel<0 && P.videos.length) selectVideo(0); updatePlan(); fitView(); drawTL(); if (P.T==null){ const s = P.videos.length ? effStart(P.videos[0]) : null; if (s!=null) setT(s); }
 });
+/* two players: the clip being shown and the next one, loaded in advance, so continuous footage runs without a gap */
+P.pl = [$('#pv'), $('#pv2')]; P.pl.forEach(p=>{ p.pause(); }); 
+function showActive(){ P.pl.forEach((p,i)=>{ p.style.visibility = i===P.ap ? 'visible' : 'hidden'; p.controls = i===P.ap; if (i!==P.ap) try{ p.pause(); }catch(e){} }); }
+setTimeout(()=>showActive(), 0);
+function ensurePlayer(ci){
+  const v = P.videos[ci]; if (!v) return null;
+  const a = P.pl[P.ap], b = P.pl[1-P.ap];
+  if (a.dataset.clip===String(v.id)) return a;
+  if (b.dataset.clip===String(v.id)){ P.ap = 1-P.ap; showActive(); return b; }
+  try{ a.pause(); }catch(e){}
+  b.src = v.url; b.dataset.clip = String(v.id); b.preload = 'auto';
+  P.ap = 1-P.ap; showActive();
+  return b;
+}
+function preloadClip(ci){
+  const v = P.videos[ci]; if (!v) return;
+  const a = P.pl[P.ap], b = P.pl[1-P.ap];
+  if (a.dataset.clip===String(v.id) || b.dataset.clip===String(v.id)) return;
+  b.src = v.url; b.dataset.clip = String(v.id); b.preload = 'auto'; try{ b.pause(); }catch(e){}
+}
 function selectVideo(i){
-  if (i===P.sel && $('#pv').getAttribute('src')===(P.videos[i]||{}).url) return;
-  P.sel = i; const v = P.videos[i]; renderVideos();
-  if (v) $('#pv').src = v.url;
+  P.sel = i; renderVideos();
+  if (P.videos[i]) ensurePlayer(i);
   drawTL();
 }
-// the video plays on: the seek bar follows it
-$('#pv').addEventListener('timeupdate', ()=>{
-  const v = P.videos[P.sel]; if (!v || $('#pv').paused) return;
-  const s = effStart(v); if (s==null) return;
-  P.T = s+$('#pv').currentTime; updatePos(); drawTL();
-});
+function seekPlayer(p, vt){
+  const go = ()=>{ try{ p.currentTime = vt; }catch(e){} };
+  if (p.readyState>=1) go(); else p.addEventListener('loadedmetadata', go, { once:true });
+}
 function frameFollow(){
   if (P.fw) return; P.fw = true;
   requestAnimationFrame(()=>{
     P.fw = false;
     const ci = clipAt(P.T); if (ci<0) return;
-    selectVideo(ci);
-    const v = P.videos[ci], pv = $('#pv'), vt = Math.max(0, Math.min(v.dur-0.05, P.T-effStart(v)));
-    const go = ()=>{ try{ pv.currentTime = vt; }catch(e){} };
-    if (pv.readyState>=1) go(); else pv.addEventListener('loadedmetadata', go, { once:true });
+    if (P.sel!==ci){ P.sel = ci; renderVideos(); }
+    const v = P.videos[ci], p = ensurePlayer(ci);
+    seekPlayer(p, Math.max(0, Math.min(v.dur-0.05, P.T-effStart(v))));
   });
 }
 function setT(tm){
-  P.T = tm; updatePos(); drawTL(); frameFollow();
+  P.T = tm; P.jump = true; updatePos(); drawTL(); updateMapPoint(); if (!P.playing) frameFollow();
 }
+function updateMapPoint(){
+  if (P.T==null || !P.map || !P.mapReady) return;
+  const pt = trackAt(P.T); if (!pt) return;
+  if (P.marker) P.marker.setLngLat([pt.lon, pt.lat]);
+  if ($('#follow').checked) P.map.jumpTo({ center:[pt.lon, pt.lat] });   // the map keeps the point in the middle
+}
+/* continuous play: the seek bar runs at the chosen speed; the clip under it plays, and the next one takes over */
+function playEnd(){ const s = timeSpan(); return s ? s.b : null; }
+function setPlaying(on){
+  if (on){
+    const s = timeSpan(); if (!s) return;
+    if (P.T==null || P.T>=s.b-0.5) P.T = s.a;
+    P.playing = true; P.jump = true; P.last = performance.now(); P.ui = 0;
+    $('#play').textContent = '⏸ 停止'; requestAnimationFrame(tick);
+  } else {
+    P.playing = false; $('#play').textContent = '▶ 再生';
+    P.pl.forEach(p=>{ try{ p.pause(); }catch(e){} });
+  }
+}
+function tick(ts){
+  if (!P.playing) return;
+  const dt = Math.min(0.25, Math.max(0, (ts-P.last)/1000)); P.last = ts;
+  const sp = P.speed, ci = clipAt(P.T);
+  if (ci>=0){
+    const v = P.videos[ci], s = effStart(v), p = ensurePlayer(ci);
+    if (P.sel!==ci){ P.sel = ci; renderVideos(); }
+    p.playbackRate = sp;
+    const want = Math.max(0, Math.min(v.dur-0.05, P.T-s));
+    if (P.jump){ seekPlayer(p, want); P.jump = false; }
+    else if (p.readyState>=1 && !p.seeking && Math.abs(p.currentTime-want)>2*sp+0.5){ seekPlayer(p, want); }
+    if (p.paused && p.readyState>=2){ p.play().catch(()=>{}); }
+    if (p.readyState>=2 && !p.seeking && !p.paused){
+      P.T = s+p.currentTime;
+      if (p.ended || p.currentTime>=v.dur-0.05) P.T = s+v.dur+0.02;
+    } else P.T += dt*sp;                      // while the picture is not ready, the clock keeps going
+  } else {
+    P.pl.forEach(p=>{ try{ p.pause(); }catch(e){} });
+    P.T += dt*sp;
+  }
+  // the clip that comes next is loaded a little early
+  let nx = -1, nd = Infinity;
+  P.videos.forEach((v,i)=>{ const s = effStart(v); if (s!=null && s>P.T && s-P.T<nd){ nd = s-P.T; nx = i; } });
+  if (nx>=0 && nd<8*sp+3 && nx!==ci) preloadClip(nx);
+  const end = playEnd();
+  if (end!=null && P.T>=end){ P.T = end; setPlaying(false); updatePos(); drawTL(); updateMapPoint(); return; }
+  updateMapPoint();
+  if (P.view && P.tlGeom && (P.T>P.view.t1-(P.view.t1-P.view.t0)*0.08 || P.T<P.view.t0)){ const w = P.view.t1-P.view.t0; P.view = { t0:P.T-w*0.2, t1:P.T+w*0.8 }; }
+  if (ts-P.ui>70){ P.ui = ts; updatePos(); drawTL(); }
+  requestAnimationFrame(tick);
+}
+$('#play').addEventListener('click', ()=> setPlaying(!P.playing));
+$('#spd').addEventListener('change', e=>{ P.speed = +e.target.value; });
+document.addEventListener('keydown', e=>{ if (e.code==='Space' && !/INPUT|SELECT|TEXTAREA|VIDEO/.test((document.activeElement||{}).tagName||'')){ e.preventDefault(); setPlaying(!P.playing); } });
 
 /* ---------- time alignment ---------- */
 function rideTime(v, vt){ return effStart(v)+vt; }
