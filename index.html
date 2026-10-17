@@ -327,6 +327,10 @@ td.num{ text-align:right; font-variant-numeric:tabular-nums; }
 .vRow{ display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
 .vBtn{ font-size:13px; padding:9px 14px; border-radius:9px; border:1px solid var(--border); background:var(--surface-2); color:var(--text); cursor:pointer; }
 .vBtn.primary{ background:var(--accent); border-color:var(--accent); color:#08211d; font-weight:700; }
+.inl{ display:inline-flex; align-items:center; gap:6px; margin-right:12px; font-size:13px; }
+#vNote{ position:fixed; inset:0; z-index:80; background:rgba(0,0,0,.7); display:flex; align-items:center; justify-content:center; padding:18px; }
+#vNote .box{ max-width:92vw; max-height:88vh; overflow:auto; background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:14px; font-size:14px; white-space:pre-wrap; }
+#vNote canvas{ max-width:100%; height:auto; display:block; border-radius:8px; }
 .vAlignBar{ display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin:0 0 8px; padding:8px 10px; border:1px solid var(--accent); border-radius:8px; background:var(--surface-2); font-size:13px; }
 .vAlignBar span{ flex:1 1 100%; }
 .vMapBox{ margin:0 0 10px; border:1px solid var(--border); border-radius:10px; overflow:hidden; }
@@ -555,6 +559,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
       <h2>ビュワー:ライドの比較</h2>
     </div>
     <div id="vLegend" class="vLegend"></div>
+    <div class="vRow hidden" id="vNoteRow"><label class="inl"><input type="checkbox" id="vShowCm" checked> コメント</label><label class="inl"><input type="checkbox" id="vShowPh" checked> 写真</label></div>
     <div class="vMapBox hidden" id="vMapBox"><div id="vMap"></div></div>
     <div class="vAlignBar hidden" id="vAlignBar"><span id="vAlignMsg"></span><button id="vAlignOk" class="small primary" type="button" disabled>決定</button><button id="vAlignCancel" class="small ghost" type="button">やめる</button></div>
     <div class="vChartBox" id="vChartBox">
@@ -609,6 +614,9 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
         <div><span class="k">平均速度</span><span class="v" id="sumAvgSpeed">--</span></div>
         <div><span class="k">平均パワー</span><span class="v" id="sumAvgPower">--</span></div>
       </div>
+      <label class="field" style="margin-top:14px;">ライド全体のコメント
+        <textarea id="rideCommentInput" rows="3" style="width:100%;font:inherit;font-size:14px;color:var(--text);background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:8px;" placeholder="例: 向かい風が強かった。補給は2回。"></textarea>
+      </label>
     </div>
 
     <div class="panel">
@@ -763,6 +771,17 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
 <div id="resultSettingsModal" class="ivReorderModal hidden" style="overflow:auto;">
   <div class="ivReorderHead"><h2>結果の表示項目</h2><button id="resultSettingsClose" class="small ghost icon-btn" type="button">✗</button></div>
   <div class="panel" style="margin-bottom:0;">
+      <div class="presetBox" id="gearBox">
+        <span class="hint">ギア(この走行で使った機材)</span>
+        <label class="field" style="margin-top:6px;">ギアの名前<input type="text" id="gearName" placeholder="例: ロードバイクA"></label>
+        <label class="field" style="margin-top:6px;">メモ<textarea id="gearMemo" rows="2" style="width:100%;font:inherit;font-size:14px;color:var(--text);background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:8px;" placeholder="例: タイヤ28c 空気圧4.5bar、ホイール…"></textarea></label>
+        <div class="presetRow">
+          <select id="gearSelect"></select>
+          <button id="gearLoadBtn" class="small" type="button">呼び出し</button>
+          <button id="gearSaveBtn" class="small" type="button">お気に入りに登録</button>
+          <button id="gearDelBtn" class="small ghost" type="button">削除</button>
+        </div>
+      </div>
       <div class="presetBox">
         <span class="hint">設定のプリセット(「全区間の解析情報を追加する」以降の設定と、表示項目の選択・並び順)</span>
         <div class="presetRow">
@@ -866,7 +885,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
 // (this session's own publish count so far) is reconstructed from the
 // conversation itself rather than mechanically verified — best-effort, not
 // guaranteed exact. Increment by exactly 1 on every future publish.
-const APP_VERSION = 199;
+const APP_VERSION = 201;
 
 /* ============ FIT PARSER ============ */
 const FIT_EPOCH = 631065600; // seconds between 1970-01-01 and 1989-12-31 (FIT epoch)
@@ -2132,7 +2151,7 @@ async function processFitData(arrayBuffer, displayName, opts){
     S.resultColumns = COLUMN_DEFS.map(d=>({key:d.k, enabled:DEFAULT_ENABLED_COLUMNS.includes(d.k)}));
     S.sensors = { hr:true, power:true, cad:true };
     S.metrics = ['speed','elevation']; S.xMode = 'clock'; S.ftp = null; S.weight = null; S.numberingStyle = 'circled'; S.summaryRowMode = 'last';
-    S.grossIncludesStoppedTime = true; S.avgGradientMethod = 'diff'; S.cadZero = false;
+    S.grossIncludesStoppedTime = true; S.avgGradientMethod = 'diff'; S.cadZero = false; S.rideComment = ''; S.gear = null;
     applyDisplayPrefs(); // carries 重量/表示列 etc. over from whatever ride was analysed last
     S.ftp = null;        // the FTP is entered anew for every ride; the columns that need it start switched off
     S.resultColumns.forEach(c=>{ if (NEEDS_FTP.includes(c.key)) c.enabled = false; });
@@ -2215,6 +2234,8 @@ function serializeState(){
     numberingStyle: S.numberingStyle,
     summaryRowMode: S.summaryRowMode,
     cadZero: !!S.cadZero,
+    rideComment: S.rideComment||'',
+    gear: S.gear && (S.gear.name||S.gear.memo) ? { name:S.gear.name||'', memo:S.gear.memo||'' } : null,
     powerChartMetrics: S.powerChartMetrics,
     powerChartXMode: S.powerChartXMode,
     // photos/videos: metadata only — the pictures themselves are never exported
@@ -2360,6 +2381,8 @@ function applyState(state, mode){
   if (['off','arabic','circled','kanji'].includes(state.numberingStyle)) S.numberingStyle = state.numberingStyle;
   if (['off','first','last'].includes(state.summaryRowMode)) S.summaryRowMode = state.summaryRowMode;
   if (state.cadZero!=null) S.cadZero = !!state.cadZero;
+  if (typeof state.rideComment==='string') S.rideComment = state.rideComment;
+  if (state.gear && typeof state.gear==='object') S.gear = { name:String(state.gear.name||''), memo:String(state.gear.memo||'') };
   if (state.sensors && typeof state.sensors==='object') S.sensors = { hr:state.sensors.hr!==false, power:state.sensors.power!==false, cad:state.sensors.cad!==false };
   if (state.ftp!=null && !isNaN(state.ftp) && state.ftp>0) S.ftp = Number(state.ftp);
   if (state.weight!=null && !isNaN(state.weight) && state.weight>0) S.weight = Number(state.weight);
@@ -2398,6 +2421,8 @@ function syncControlsFromState(){
   const gradEl = $('#avgGradientMethodSelect');
   if (gradEl) gradEl.value = S.avgGradientMethod;
   if ($('#cadZeroSelect')) $('#cadZeroSelect').value = S.cadZero ? '1' : '0';
+  if ($('#rideCommentInput')) $('#rideCommentInput').value = S.rideComment||'';
+  if ($('#gearName')) { $('#gearName').value = S.gear ? S.gear.name : ''; $('#gearMemo').value = S.gear ? S.gear.memo : ''; }
   $$('#powerChartXModeSeg button').forEach(b=> b.classList.toggle('on', b.dataset.x===S.powerChartXMode));
   $('#powerChartWidthMinus').disabled = S.powerChartWidthMult<=POWER_CHART_WIDTH_MIN;
   $('#powerChartWidthPlus').disabled = S.powerChartWidthMult>=POWER_CHART_WIDTH_MAX;
@@ -2439,6 +2464,7 @@ $('#grossStoppedSelect').addEventListener('change', e=>{
   saveState();
   if (lastResults) computeAndRenderResults();
 });
+$('#rideCommentInput').addEventListener('input', e=>{ S.rideComment = e.target.value; saveState(); });
 $('#cadZeroSelect').addEventListener('change', e=>{
   S.cadZero = e.target.value==='1';
   saveState();
@@ -2449,6 +2475,39 @@ $('#avgGradientMethodSelect').addEventListener('change', e=>{
   saveState();
   if (lastResults) computeAndRenderResults();
 });
+/* ---- gear: a name and a note for this ride, and favourites to call up on other rides ---- */
+const GEAR_KEY = 'quaniter.gears.v1';
+function gearList(){ try{ const a = JSON.parse(localStorage.getItem(GEAR_KEY)||'[]'); return Array.isArray(a) ? a.filter(x=>x && typeof x.name==='string') : []; }catch(e){ return []; } }
+function gearStore(a){ try{ localStorage.setItem(GEAR_KEY, JSON.stringify(a)); return true; }catch(e){ return false; } }
+function gearBuild(sel){
+  const el = $('#gearSelect'), list = gearList();
+  el.innerHTML = list.length ? list.map(x=>'<option value="'+escapeHtml(x.name)+'">'+escapeHtml(x.name)+'</option>').join('') : '<option value="">(登録したギアはありません)</option>';
+  if (sel && list.some(x=>x.name===sel)) el.value = sel;
+  $('#gearLoadBtn').disabled = $('#gearDelBtn').disabled = !list.length;
+}
+function gearFromInputs(){ S.gear = { name:$('#gearName').value.trim(), memo:$('#gearMemo').value }; saveState(); }
+$('#gearName').addEventListener('input', gearFromInputs);
+$('#gearMemo').addEventListener('input', gearFromInputs);
+$('#gearSaveBtn').addEventListener('click', ()=>{
+  const name = $('#gearName').value.trim();
+  if (!name){ showHeaderMsg('ギアの名前を入力してください。', true); return; }
+  const list = gearList(), i = list.findIndex(x=>x.name===name), ent = { name, memo:$('#gearMemo').value };
+  if (i>=0 && !confirm('「'+name+'」は登録済みです。メモを上書きしますか?')) return;
+  if (i>=0) list[i] = ent; else list.push(ent);
+  if (!gearStore(list)){ showHeaderMsg('ギアを登録できませんでした。', true); return; }
+  gearBuild(name); showHeaderMsg('ギア「'+name+'」を登録しました。', false);
+});
+$('#gearLoadBtn').addEventListener('click', ()=>{
+  const x = gearList().find(y=>y.name===$('#gearSelect').value); if (!x) return;
+  $('#gearName').value = x.name; $('#gearMemo').value = x.memo||''; gearFromInputs();
+  showHeaderMsg('ギア「'+x.name+'」を呼び出しました。', false);
+});
+$('#gearDelBtn').addEventListener('click', ()=>{
+  const name = $('#gearSelect').value; if (!name || !confirm('お気に入りのギア「'+name+'」を削除しますか?(この走行の入力は消えません)')) return;
+  gearStore(gearList().filter(x=>x.name!==name)); gearBuild();
+});
+gearBuild();
+
 /* ---- presets of the display settings (from 「全区間の解析情報を追加する」 on, plus the chosen columns and their order) ---- */
 const PRESET_KEY = 'quaniter.presets.v1';
 function presetList(){ try{ const a = JSON.parse(localStorage.getItem(PRESET_KEY)||'[]'); return Array.isArray(a) ? a.filter(x=>x && typeof x.name==='string' && x.data) : []; }catch(e){ return []; } }
@@ -6389,7 +6448,7 @@ $('#vNext').addEventListener('click', async ()=>{
       const recs = parseFit(await fit.async('arraybuffer'));
       smoothAltitudes(recs);
       // the sections that were set in the analyser
-      let sections = [], settingsOfRide = {};
+      let sections = [], settingsOfRide = {}, notes = { comments:[], photos:[] };
       try{
         const jf = Object.values(zip.files).find(f=>!f.dir && /\.json$/i.test(f.name));
         const st = JSON.parse(await jf.async('string')); const set = st.settings || st;
@@ -6400,17 +6459,35 @@ $('#vNext').addEventListener('click', async ()=>{
           return { idx:k, name, nameType: eff ? 'b' : 'a', startName:iv.startName||'', endName:iv.endName||'', start:(Number(iv.start)||0)+off, end:(Number(iv.end)||0)+off, distKm: iv.endDistanceKm!=null && iv.startDistanceKm!=null ? iv.endDistanceKm-iv.startDistanceKm : null };
         }).filter(x=>x.end>x.start);
         sections.sort((a,b)=>a.start-b.start);
-        settingsOfRide = { weight:set.weight, ftp:set.ftp, age:set.age, sex:set.sex, grad:set.avgGradientMethod };
+        settingsOfRide = { weight:set.weight, ftp:set.ftp, age:set.age, sex:set.sex, grad:set.avgGradientMethod, memo:set.rideComment||'', gear:set.gear||null };
+        notes.comments = (set.comments||[]).filter(c=>c && typeof c.text==='string').map(c=>({ text:c.text, t:(Number(c.elapsed)||0)+off }));
+        for (const ph of (set.photos||[]).slice(0,150)){
+          if (!ph || !ph.file) continue;
+          try{ const ent = zip.file(ph.file); if (!ent) continue; const bmp = await createImageBitmap(await ent.async('blob')); notes.photos.push({ t:(Number(ph.elapsed)||0)+off, bmp, name:ph.name||'' }); }catch(e){}
+        }
       }catch(e){}
-      if (recs.length) V.rides.push({ id:V.rides.length, item:chosen[i], recs, sections, cfg:settingsOfRide, color:V_COLORS[V.rides.length % V_COLORS.length] });
+      if (recs.length) V.rides.push({ id:V.rides.length, item:chosen[i], recs, sections, cfg:settingsOfRide, comments:notes.comments, photos:notes.photos, color:V_COLORS[V.rides.length % V_COLORS.length] });
     }catch(e){ console.warn('viewer load', chosen[i].name, e); }
   }
   V.order = V.rides.map(r=>r.id);
   vBuildLegend();
   vRebuildSeries(); vFit(); vRefresh();
 });
+function vNoteRowUpdate(){
+  const f = vVisible()[0], has = !!(f && ((f.comments&&f.comments.length) || (f.photos&&f.photos.length)));
+  $('#vNoteRow').classList.toggle('hidden', !has);
+}
+['#vShowCm','#vShowPh'].forEach(id=> $(id).addEventListener('change', ()=>{ V.showCm = $('#vShowCm').checked; V.showPh = $('#vShowPh').checked; vDraw(); }));
+function vShowNote(h){
+  const old = $('#vNote'); if (old) old.remove();
+  const ov = document.createElement('div'); ov.id = 'vNote'; const box = document.createElement('div'); box.className = 'box';
+  if (h.type==='cm') box.textContent = h.ref.text;
+  else { const cv = document.createElement('canvas'); cv.width = h.ref.bmp.width; cv.height = h.ref.bmp.height; cv.getContext('2d').drawImage(h.ref.bmp,0,0); box.appendChild(cv); if (h.ref.name){ const n = document.createElement('div'); n.textContent = h.ref.name; n.style.marginTop = '6px'; box.appendChild(n); } }
+  const t0 = Date.now(); ov.appendChild(box); ov.addEventListener('click', ()=>{ if (Date.now()-t0>450) ov.remove(); }); document.body.appendChild(ov);
+}
 function vBuildLegend(){
   const box = $('#vLegend'); box.innerHTML = '';
+  vNoteRowUpdate();
   if (!V.rides.length){ box.textContent = '読み込めたライドがありません。'; return; }
   V.order.forEach((id, pos)=>{
     const r = V.rides[id];
@@ -6431,8 +6508,7 @@ function vBuildLegend(){
 }
 // what depends on which ride is in front
 function vAfterLayerChange(){
-  V.cursor = null;
-  vFit(true); vRefresh();
+  vNoteRowUpdate(); vFit(true); vRefresh();
 }
 // per ride: x[] and y[] for the chosen metric / axis, moving-averaged over a time window
 function vRebuildSeries(){}   // (the raw series are no longer drawn as a whole)
@@ -6507,7 +6583,6 @@ function vFit(keepX){
 }
 function vLowerBound(a, x){ let lo=0, hi=a.length; while (lo<hi){ const m=(lo+hi)>>1; if (a[m]<x) lo=m+1; else hi=m; } return lo; }
 ['#vMetric','#vXAxis'].forEach(id=> $(id).addEventListener('change', ()=>{
-  V.cursor = null;
   if (id==='#vXAxis') vConvertAxis();   // same place and scale, in the other unit (judged on the front ride)
   vRebuildSeries();
   vRefresh();
@@ -6702,6 +6777,60 @@ function vSectionAvg(ride, sec, m){
     return out;
   }
   function endName(n){ const p = n.split(/\s*[→\-－‐–—]\s*/); return p.length>1 ? p[p.length-1] : n; }
+  function drawElev(ctx, r){
+    const ax = $('#vXAxis').value, key = ax+'|'+(V.alignVer||0)+(V.align ? 'a' : '');
+    if (!r._elev || r._elev.key!==key){
+      const secs = r.sections, a = secs.length ? secs[0].start : r.recs[0].elapsed, b = secs.length ? secs[secs.length-1].end : r.recs[r.recs.length-1].elapsed;
+      const org = secs.length ? vOrigin(r) : a, p0 = vPos(r, org, ax), kc = ax==='kcal' ? vKcalCum(r) : null;
+      const pts = []; let lo = Infinity, hi = -Infinity;
+      const stride = Math.max(1, Math.floor(r.recs.length/1500));
+      for (let i=0;i<r.recs.length;i+=stride){
+        const rc = r.recs[i]; if (rc.elapsed<a || rc.elapsed>b) continue;
+        const al = rc.altSmooth!=null ? rc.altSmooth : rc.alt; if (al==null) continue;
+        const x = ax==='dist' ? rc.dist/1000-p0 : ax==='kcal' ? (kc ? kc[i] : 0)-p0 : rc.elapsed-org;
+        pts.push([x, al]); if (al<lo) lo = al; if (al>hi) hi = al;
+      }
+      r._elev = { key, pts, lo, hi };
+    }
+    const E = r._elev; if (E.pts.length<2 || !(E.hi>E.lo)) return;
+    const bot = H-MB, h = (H-MT-MB)*0.7, Y = al=> bot-(al-E.lo)/(E.hi-E.lo)*h;
+    ctx.beginPath(); let first = true, lx = 0, fx = 0;
+    E.pts.forEach(q=>{ const x = toX(q[0]); if (x<ML-30 || x>W-MR+30) return; first ? (ctx.moveTo(x, Y(q[1])), fx = x) : ctx.lineTo(x, Y(q[1])); first = false; lx = x; });
+    if (first) return;
+    ctx.strokeStyle = 'rgba(165,170,180,.4)'; ctx.lineWidth = 1; ctx.stroke();
+    ctx.lineTo(lx, bot); ctx.lineTo(fx, bot); ctx.closePath(); ctx.fillStyle = 'rgba(165,170,180,.13)'; ctx.fill();
+    ctx.fillStyle = 'rgba(165,170,180,.7)'; ctx.font = '10px sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'bottom';
+    ctx.fillText('標高 '+Math.round(E.lo)+'〜'+Math.round(E.hi)+' m', ML+6, bot-3);
+  }
+  // comments and photos of the front ride: markers along the top of the plot
+  function drawNotes(ctx, r){
+    V.noteRects = [];
+    if (V.align || !r) return;
+    const ax = $('#vXAxis').value, org = vOrigin(r), p0 = vPos(r, org, ax), X = t=> toX(vPos(r, t, ax)-p0);
+    ctx.save(); ctx.font = '10px sans-serif'; ctx.textBaseline = 'middle';
+    if (V.showPh!==false && r.photos){
+      r.photos.forEach(ph=>{
+        const x = X(ph.t); if (x<ML-20 || x>W-MR+20) return;
+        const hh = 34, ww = Math.max(10, ph.bmp.width*hh/ph.bmp.height), y = MT+3;
+        ctx.strokeStyle = r.color; ctx.globalAlpha = .45; ctx.setLineDash([2,3]); ctx.beginPath(); ctx.moveTo(x, y+hh); ctx.lineTo(x, H-MB); ctx.stroke(); ctx.setLineDash([]); ctx.globalAlpha = 1;
+        ctx.drawImage(ph.bmp, x-ww/2, y, ww, hh); ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.strokeRect(x-ww/2, y, ww, hh);
+        V.noteRects.push({ x:x-ww/2, y, w:ww, h:hh, type:'ph', ref:ph });
+      });
+    }
+    if (V.showCm!==false && r.comments){
+      const y0 = MT+(V.showPh!==false && r.photos && r.photos.length ? 42 : 3);
+      r.comments.forEach(c=>{
+        const x = X(c.t); if (x<ML-20 || x>W-MR+20) return;
+        const txt = c.text.length>10 ? c.text.slice(0,10)+'…' : c.text, w = ctx.measureText(txt).width+10, h = 16;
+        ctx.strokeStyle = r.color; ctx.globalAlpha = .45; ctx.setLineDash([2,3]); ctx.beginPath(); ctx.moveTo(x, y0+h); ctx.lineTo(x, H-MB); ctx.stroke(); ctx.setLineDash([]); ctx.globalAlpha = 1;
+        const bx = Math.max(ML+1, Math.min(W-MR-w-1, x-w/2));
+        ctx.fillStyle = 'rgba(255,255,255,.92)'; ctx.fillRect(bx, y0, w, h); ctx.fillStyle = '#111'; ctx.textAlign = 'left'; ctx.fillText(txt, bx+5, y0+h/2);
+        ctx.fillStyle = r.color; ctx.beginPath(); ctx.moveTo(x-4, y0+h); ctx.lineTo(x+4, y0+h); ctx.lineTo(x, y0+h+5); ctx.closePath(); ctx.fill();
+        V.noteRects.push({ x:bx, y:y0, w, h:h+5, type:'cm', ref:c });
+      });
+    }
+    ctx.restore();
+  }
   function drawSteps(ctx, grid, muted){
     vCols();
     const m = V_METRICS[$('#vMetric').value], vis = V.align ? [V.rides[V.align.queue[V.align.k]]] : vVisible();
@@ -6717,8 +6846,10 @@ function vSectionAvg(ride, sec, m){
     yr = { y0:0, y1: Math.ceil(need/sy)*sy };
     ctx.font = '11px sans-serif'; ctx.strokeStyle = grid; ctx.lineWidth = 1; ctx.fillStyle = muted;
     const sdist = $('#vXAxis').value!=='elapsed';
-    const opts = [10,30,60,120,300,600,1800,3600,7200,14400,28800];
-    const xstep = sdist ? niceStep(V.view.x1-V.view.x0, 7) : (opts.find(o=>(V.view.x1-V.view.x0)/o<=8) || 28800);
+    const opts = [1,2,5,10,15,30,60,120,300,600,900,1800,3600,7200,14400,28800];
+    const pwid = W-ML-MR, span0 = V.view.x1-V.view.x0, wSec = ctx.measureText('-00h00m00s').width+34, wMin = ctx.measureText('-00h00m').width+34;
+    // labels keep a clear gap: take the finest step whose labels fit
+    const xstep = sdist ? niceStep(span0, Math.max(2, Math.floor(pwid/(ctx.measureText('0000.0').width+34)))) : (opts.find(o=> span0/o <= Math.max(2, Math.floor(pwid/(o<60 ? wSec : wMin)))) || 28800);
     ctx.textAlign = 'center'; ctx.textBaseline = 'top';
     for (let x=Math.ceil(V.view.x0/xstep)*xstep; x<=V.view.x1+1e-9; x+=xstep){
       const px = Math.round(toX(x))+.5; ctx.beginPath(); ctx.moveTo(px,MT); ctx.lineTo(px,H-MB); ctx.stroke();
@@ -6731,6 +6862,8 @@ function vSectionAvg(ride, sec, m){
       ctx.fillText((+y.toFixed(4)).toString(), ML-5, py);
     }
     ctx.save(); ctx.beginPath(); ctx.rect(ML, MT, W-ML-MR, H-MT-MB); ctx.clip();
+    // the front ride's elevation profile, pale grey, behind everything
+    if (all[0]) drawElev(ctx, all[0].r);
     const y0px = toY(0);
     // the outline of a ride: flat at each section's average, through the pieces / raw line of a split section
     const outline = steps=>{
@@ -6811,6 +6944,7 @@ function vSectionAvg(ride, sec, m){
         ctx.fillStyle = '#fff'; ctx.font = 'bold 11px sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'top'; ctx.fillText('ここを0にそろえる', ax0+4, MT+3);
       }
     }
+    if (all[0] && !V.exporting) drawNotes(ctx, all[0].r);
     ctx.restore();
     ctx.strokeStyle = grid; ctx.strokeRect(ML+.5, MT+.5, W-ML-MR, H-MT-MB);
     ctx.fillStyle = muted; ctx.font = '11px sans-serif';
@@ -6831,8 +6965,9 @@ function vSectionAvg(ride, sec, m){
     const plot = document.createElement('canvas'); plot.width = EW*K; plot.height = EH*K;
     const pctx = plot.getContext('2d'); pctx.setTransform(K,0,0,K,0,0); pctx.fillStyle = '#fff'; pctx.fillRect(0,0,EW,EH);
     W = EW; H = EH; V.view = { x0:vXMin(), x1:vXMax() > vXMin() ? vXMax() : vXMin()+1 }; V.cursor = null;
+    V.exporting = true;
     try{ drawSteps(pctx, '#d5d9de', '#4a5059'); }
-    finally{ W = keep.W; H = keep.H; V.view = keep.view; V.cursor = keep.cursor; yr = keep.yr; }
+    finally{ V.exporting = false; W = keep.W; H = keep.H; V.view = keep.view; V.cursor = keep.cursor; yr = keep.yr; }
     const out = document.createElement('canvas'); out.width = EW*K; out.height = (EH+HEAD)*K;
     const o = out.getContext('2d'); o.setTransform(K,0,0,K,0,0); o.fillStyle = '#fff'; o.fillRect(0,0,EW,EH+HEAD);
     const m = V_METRICS[$('#vMetric').value];
@@ -6930,6 +7065,8 @@ function vSectionAvg(ride, sec, m){
   cv.addEventListener('pointerup', up); cv.addEventListener('pointercancel', up);
   cv.addEventListener('wheel', e=>{ e.preventDefault(); stopMom(); zoomAt(local(e).x, e.deltaY<0 ? 1.2 : 1/1.2); vDraw(); }, {passive:false});
   function tap(p){
+    const nh = (V.noteRects||[]).find(q=> p.x>=q.x && p.x<=q.x+q.w && p.y>=q.y && p.y<=q.y+q.h);
+    if (nh && !V.align){ vShowNote(nh); return; }
     if (V.align && V.view && p.x>=ML && p.x<=W-MR){
       const r = V.rides[V.align.queue[V.align.k]], x = fromX(p.x);
       const st = ridesSteps(r, V_METRICS[$('#vMetric').value]).find(s=> !s.rest && x>=s.a && x<=s.b);
@@ -6941,7 +7078,7 @@ function vSectionAvg(ride, sec, m){
   }
   const V_DEFAULT_COLS = ['fname','secname','distance','netTime','avgPower','avgSpeedNet','avgHr'];
   const vColOk = c=> c==='fname' || c==='secname' || !!COL_META[c];
-  const vColLabel = c=> c==='fname' ? 'ファイル名' : c==='secname' ? '区間名' : c==='pwhr' ? 'Pw:HR(デカップリング)' : c==='pmaint' ? 'パワー維持率' : c==='vi' ? 'VI(変動指数)' : COL_META[c].label;
+  const vColLabel = c=> c==='fname' ? 'ファイル名' : c==='secname' ? '区間名' : c==='pwhr' ? 'Pw:HR(デカップリング)' : c==='pmaint' ? 'パワー維持率' : c==='vi' ? 'VI(変動指数)' : c==='memo' ? 'ライドのコメント' : c==='gear' ? 'ギア' : COL_META[c].label;
   function vCols(){
     if (V.cadZero===undefined){ try{ V.cadZero = localStorage.getItem('quaniterCadZero')==='1'; }catch(e){ V.cadZero = false; } }
     if (!V.cols){
@@ -6953,7 +7090,7 @@ function vSectionAvg(ride, sec, m){
   function vPickCols(which){
     const isAll = which==='all';
     const cur = isAll ? vColsAll() : vCols();
-    const allKeys = isAll ? ['fname'].concat(COLUMN_DEFS.map(d=>d.k), ['pwhr','pmaint','vi']) : ['fname','secname'].concat(COLUMN_DEFS.map(d=>d.k));
+    const allKeys = isAll ? ['fname'].concat(COLUMN_DEFS.map(d=>d.k), ['pwhr','pmaint','vi','memo','gear']) : ['fname','secname'].concat(COLUMN_DEFS.map(d=>d.k));
     const order = cur.filter(k=>k!=='fname').concat(allKeys.filter(k=>k!=='fname' && !cur.includes(k)));
     const rowHtml = k=>'<div class="vColRow" data-k="'+k+'"><span class="vGrip" title="ドラッグで並べ替え">≡</span><label><input type="checkbox" value="'+k+'"'+(cur.includes(k)?' checked':'')+'> '+escapeHtml(vColLabel(k))+'</label></div>';
     const modal = document.createElement('div'); modal.className = 'confirmModal';
@@ -7002,7 +7139,7 @@ function vSectionAvg(ride, sec, m){
   const V_DEFAULT_ALL = ['fname','distance','netTime','avgPower','avgHr','ef','workKj','pwhr','pmaint','vi'];
   function vColsAll(){
     if (!V.colsAll){
-      try{ const a = JSON.parse(localStorage.getItem('quaniterVColsAll')||'null'); if (Array.isArray(a)) V.colsAll = a.filter(c=> c==='fname' || c==='pwhr' || c==='pmaint' || c==='vi' || COL_META[c]); }catch(e){}
+      try{ const a = JSON.parse(localStorage.getItem('quaniterVColsAll')||'null'); if (Array.isArray(a)) V.colsAll = a.filter(c=> c==='fname' || c==='pwhr' || c==='pmaint' || c==='vi' || c==='memo' || c==='gear' || COL_META[c]); }catch(e){}
       if (!V.colsAll) V.colsAll = V_DEFAULT_ALL.slice();
     }
     return V.colsAll;
@@ -7010,6 +7147,8 @@ function vSectionAvg(ride, sec, m){
   function vAllText(c, ride){
     if (c==='fname') return ride.item.name;
     const rs = ride.recs, st = vWholeStats(ride);
+    if (c==='memo') return (ride.cfg.memo||'').replace(/\s+/g,' ') || '--';
+    if (c==='gear') return ride.cfg.gear && ride.cfg.gear.name ? ride.cfg.gear.name+(ride.cfg.gear.memo ? '('+ride.cfg.gear.memo.replace(/\s+/g,' ')+')' : '') : '--';
     if (c==='pwhr') return st.pwhr==null ? '--' : st.pwhr.toFixed(1)+' %';
     if (c==='pmaint') return st.pmaint==null ? '--' : Math.round(st.pmaint)+' %';
     if (c==='vi') return st.vi==null ? '--' : st.vi.toFixed(2);
@@ -7546,6 +7685,23 @@ function vRideAt(r, x){
   const rc = r.recs[vIdxAt(r, t)];
   return rc && rc.lat!=null && rc.lon!=null ? rc : null;
 }
+// the stretch of every ride where its best power for the tapped duration was ridden, on the map
+function vMapPcWin(items){
+  const M = V.map; if (!M || !M.ready) return;
+  const feats = items.map(o=>{
+    const coords = o.r.recs.filter(rc=> rc.lat!=null && rc.lon!=null && rc.elapsed>=o.t0 && rc.elapsed<=o.t0+o.d).map(rc=>[rc.lon, rc.lat]);
+    return coords.length>1 ? { type:'Feature', properties:{ color:o.r.color }, geometry:{ type:'LineString', coordinates:coords } } : null;
+  }).filter(Boolean);
+  const data = { type:'FeatureCollection', features:feats };
+  try{
+    if (M.map.getSource('pcwin')) M.map.getSource('pcwin').setData(data);
+    else {
+      M.map.addSource('pcwin', { type:'geojson', data });
+      M.map.addLayer({ id:'pcwin-c', type:'line', source:'pcwin', layout:{ 'line-cap':'round', 'line-join':'round' }, paint:{ 'line-color':'#fff', 'line-width':11, 'line-opacity':.9 } });
+      M.map.addLayer({ id:'pcwin-l', type:'line', source:'pcwin', layout:{ 'line-cap':'round', 'line-join':'round' }, paint:{ 'line-color':['get','color'], 'line-width':7 } });
+    }
+  }catch(e){}
+}
 function vMapSync(){
   const box = $('#vMapBox'); if (!box) return;
   const withGps = V.rides.filter(r=>vRidePath(r).has);
@@ -7594,6 +7750,7 @@ function vMapSync(){
       if (on && !o.on){ o.m.setLngLat([0,0]).addTo(M.map); o.on = true; } else if (!on && o.on){ o.m.remove(); o.on = false; }
     });
     M.lastX = null;
+    try{ if (M.map.getLayer('pcwin-c')){ M.map.moveLayer('pcwin-c'); M.map.moveLayer('pcwin-l'); } }catch(e){}
   }
   const x = V.cursor==null ? 0 : V.cursor;
   if (M.lastX!==x){
@@ -7634,8 +7791,8 @@ function vPcCurve(r, from, to, durs){
   for (let i=a;i<b;i++) pre[i-a+1] = pre[i-a]+P[i];
   const out = PC_DUR_ALL.map(d=>{
     if (b-a<d) return null;
-    let best = 0; for (let i=0;i+d<=b-a;i++){ const v = pre[i+d]-pre[i]; if (v>best) best = v; }
-    return { d, p:best/d };
+    let best = 0, bi = 0; for (let i=0;i+d<=b-a;i++){ const v = pre[i+d]-pre[i]; if (v>best){ best = v; bi = i; } }
+    return { d, p:best/d, t0:a+bi };
   });
   return (r._pcC[key] = out);
 }
@@ -7683,10 +7840,11 @@ window.vRenderPc = function(){
   if (V.pcD!=null && shown.includes(V.pcD)){
     const x = Math.round(X(V.pcD))+.5;
     g.strokeStyle = '#fff'; g.setLineDash([4,3]); g.beginPath(); g.moveTo(x,MT); g.lineTo(x,MT+ph); g.stroke(); g.setLineDash([]);
-    pop.innerHTML = '<b>'+pcLab(V.pcD)+'</b><br>'+curves.map(({r,c})=>{ const p = c && c[idxOf(V.pcD)]; return '<span style="color:'+r.color+'">●</span> '+(p ? Math.round(p.p)+' W' : '--'); }).join('<br>');
+    pop.innerHTML = '<b>'+pcLab(V.pcD)+'</b><br>'+curves.map(({r,c})=>{ const p = c && c[idxOf(V.pcD)]; return '<span style="color:'+r.color+'">●</span> '+(p ? Math.round(p.p)+' W <small>('+vHms(p.t0, true)+'〜)</small>' : '--'); }).join('<br>');
     pop.classList.remove('hidden');
+    vMapPcWin(curves.map(({r,c})=>{ const q = c && c[idxOf(V.pcD)]; return q ? { r, t0:q.t0, d:q.d } : null; }).filter(Boolean));
     const pw2 = pop.offsetWidth; pop.style.left = Math.max(2, Math.min(W-pw2-2, x+8 > W-pw2-2 ? x-pw2-8 : x+8))+'px'; pop.style.top = (MT+6)+'px';
-  } else pop.classList.add('hidden');
+  } else { pop.classList.add('hidden'); vMapPcWin([]); }
   // ---- 20 m / 60 m best power along the energy of the ride (the 5 slices)
   const c2 = $('#vPcCanvas2'), W2 = c2.clientWidth, H2 = c2.clientHeight;
   if (W2 && H2){
