@@ -613,6 +613,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
         <div><span class="k">獲得標高</span><span class="v" id="sumElevGain">--</span></div>
         <div><span class="k">平均速度</span><span class="v" id="sumAvgSpeed">--</span></div>
         <div><span class="k">平均パワー</span><span class="v" id="sumAvgPower">--</span></div>
+        <div><span class="k">リカバリータイム(Garmin)</span><span class="v" id="sumRecovery">--</span></div>
       </div>
       <label class="field" style="margin-top:14px;">ライド全体のコメント
         <textarea id="rideCommentInput" rows="3" style="width:100%;font:inherit;font-size:14px;color:var(--text);background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:8px;" placeholder="例: 向かい風が強かった。補給は2回。"></textarea>
@@ -885,7 +886,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
 // (this session's own publish count so far) is reconstructed from the
 // conversation itself rather than mechanically verified — best-effort, not
 // guaranteed exact. Increment by exactly 1 on every future publish.
-const APP_VERSION = 200;
+const APP_VERSION = 201;
 
 /* ============ FIT PARSER ============ */
 const FIT_EPOCH = 631065600; // seconds between 1970-01-01 and 1989-12-31 (FIT epoch)
@@ -922,6 +923,7 @@ function parseFit(buffer){
   const localDefs = {};
   const records = [];
   const laps = [];
+  let recoveryRaw = null;   // the device's own recovery time (hours): message 79, field 5
   let lastTimestamp = null;
 
   function readMsg(def){
@@ -1003,6 +1005,8 @@ function parseFit(buffer){
         const ts = msg[253];
         if (ts !== null && ts !== undefined) lastTimestamp = ts;
         pushRecord(msg, ts !== null && ts !== undefined ? ts : lastTimestamp);
+      } else if (def.globalNum === 79){
+        if (msg[5]!=null && msg[5]>0 && msg[5]<=250) recoveryRaw = msg[5];
       } else if (def.globalNum === 19){
         // lap message: field 2 is start_time (a manual lap press on the
         // head unit, or an auto-lap trigger) — same FIT-epoch offset as
@@ -1053,6 +1057,7 @@ function parseFit(buffer){
   // the returned array so every existing call site (expecting a plain
   // records array) keeps working unchanged
   const uniqueLapStarts = [...new Set(laps)].sort((a,b)=>a-b);
+  records.recoveryHours = recoveryRaw;
   records.laps = uniqueLapStarts.map(ts=>({ t: ts+FIT_EPOCH, elapsed: (ts+FIT_EPOCH)-t0 })).filter(l=>l.elapsed>=0 && l.elapsed<=records[records.length-1].elapsed);
   return records;
 }
@@ -1200,6 +1205,7 @@ function renderRideSummary(){
   }
   const netAvgSpeed = netTime>0 ? distance/netTime*3.6 : null;
 
+  $('#sumRecovery').textContent = S.recoveryHours!=null ? S.recoveryHours+' 時間' : '--';
   $('#sumFileName').textContent = S.fileBaseName;
   $('#sumDate').textContent = fmtDate(first.t);
   $('#sumStart').textContent = fmtClock(first.t);
@@ -2124,6 +2130,7 @@ async function processFitData(arrayBuffer, displayName, opts){
     // needing the person to have kept the original file around separately
     S.rawFitBytes = arrayBuffer;
     S.laps = records.laps || [];
+    S.recoveryHours = records.recoveryHours!=null ? records.recoveryHours : null;
     S.hasGps = records.some(r=>r.lat!=null && r.lon!=null);
     S.fileBaseName = displayName.replace(/\.(fit|zip)$/i, '') || '区間分析';
     // a lightweight fingerprint of the untrimmed original file, captured
@@ -6446,6 +6453,7 @@ $('#vNext').addEventListener('click', async ()=>{
       const zip = await JSZip.loadAsync(chosen[i].file);
       const fit = Object.values(zip.files).find(f=>!f.dir && /\.fit$/i.test(f.name));
       const recs = parseFit(await fit.async('arraybuffer'));
+      const recoveryHours = recs.recoveryHours;
       smoothAltitudes(recs);
       // the sections that were set in the analyser
       let sections = [], settingsOfRide = {}, notes = { comments:[], photos:[] };
@@ -6466,7 +6474,7 @@ $('#vNext').addEventListener('click', async ()=>{
           try{ const ent = zip.file(ph.file); if (!ent) continue; const bmp = await createImageBitmap(await ent.async('blob')); notes.photos.push({ t:(Number(ph.elapsed)||0)+off, bmp, name:ph.name||'' }); }catch(e){}
         }
       }catch(e){}
-      if (recs.length) V.rides.push({ id:V.rides.length, item:chosen[i], recs, sections, cfg:settingsOfRide, comments:notes.comments, photos:notes.photos, color:V_COLORS[V.rides.length % V_COLORS.length] });
+      if (recs.length) V.rides.push({ id:V.rides.length, item:chosen[i], recs, sections, cfg:settingsOfRide, comments:notes.comments, photos:notes.photos, recoveryHours, color:V_COLORS[V.rides.length % V_COLORS.length] });
     }catch(e){ console.warn('viewer load', chosen[i].name, e); }
   }
   V.order = V.rides.map(r=>r.id);
@@ -7078,7 +7086,7 @@ function vSectionAvg(ride, sec, m){
   }
   const V_DEFAULT_COLS = ['fname','secname','distance','netTime','avgPower','avgSpeedNet','avgHr'];
   const vColOk = c=> c==='fname' || c==='secname' || !!COL_META[c];
-  const vColLabel = c=> c==='fname' ? 'ファイル名' : c==='secname' ? '区間名' : c==='pwhr' ? 'Pw:HR(デカップリング)' : c==='pmaint' ? 'パワー維持率' : c==='vi' ? 'VI(変動指数)' : c==='memo' ? 'ライドのコメント' : c==='gear' ? 'ギア' : COL_META[c].label;
+  const vColLabel = c=> c==='fname' ? 'ファイル名' : c==='secname' ? '区間名' : c==='pwhr' ? 'Pw:HR(デカップリング)' : c==='pmaint' ? 'パワー維持率' : c==='vi' ? 'VI(変動指数)' : c==='memo' ? 'ライドのコメント' : c==='gear' ? 'ギア' : c==='recovery' ? 'リカバリータイム(Garmin)' : COL_META[c].label;
   function vCols(){
     if (V.cadZero===undefined){ try{ V.cadZero = localStorage.getItem('quaniterCadZero')==='1'; }catch(e){ V.cadZero = false; } }
     if (!V.cols){
@@ -7090,7 +7098,7 @@ function vSectionAvg(ride, sec, m){
   function vPickCols(which){
     const isAll = which==='all';
     const cur = isAll ? vColsAll() : vCols();
-    const allKeys = isAll ? ['fname'].concat(COLUMN_DEFS.map(d=>d.k), ['pwhr','pmaint','vi','memo','gear']) : ['fname','secname'].concat(COLUMN_DEFS.map(d=>d.k));
+    const allKeys = isAll ? ['fname'].concat(COLUMN_DEFS.map(d=>d.k), ['pwhr','pmaint','vi','recovery','memo','gear']) : ['fname','secname'].concat(COLUMN_DEFS.map(d=>d.k));
     const order = cur.filter(k=>k!=='fname').concat(allKeys.filter(k=>k!=='fname' && !cur.includes(k)));
     const rowHtml = k=>'<div class="vColRow" data-k="'+k+'"><span class="vGrip" title="ドラッグで並べ替え">≡</span><label><input type="checkbox" value="'+k+'"'+(cur.includes(k)?' checked':'')+'> '+escapeHtml(vColLabel(k))+'</label></div>';
     const modal = document.createElement('div'); modal.className = 'confirmModal';
@@ -7136,10 +7144,10 @@ function vSectionAvg(ride, sec, m){
     return COL_META[c].fmt(v==null || isNaN(v) ? null : v);
   }
   // ---- the table for whole rides: same look as the section table, one row per visible ride
-  const V_DEFAULT_ALL = ['fname','distance','netTime','avgPower','avgHr','ef','workKj','pwhr','pmaint','vi'];
+  const V_DEFAULT_ALL = ['fname','distance','netTime','avgPower','avgHr','ef','workKj','pwhr','pmaint','vi','recovery'];
   function vColsAll(){
     if (!V.colsAll){
-      try{ const a = JSON.parse(localStorage.getItem('quaniterVColsAll')||'null'); if (Array.isArray(a)) V.colsAll = a.filter(c=> c==='fname' || c==='pwhr' || c==='pmaint' || c==='vi' || c==='memo' || c==='gear' || COL_META[c]); }catch(e){}
+      try{ const a = JSON.parse(localStorage.getItem('quaniterVColsAll')||'null'); if (Array.isArray(a)) V.colsAll = a.filter(c=> c==='fname' || c==='pwhr' || c==='pmaint' || c==='vi' || c==='memo' || c==='gear' || c==='recovery' || COL_META[c]); }catch(e){}
       if (!V.colsAll) V.colsAll = V_DEFAULT_ALL.slice();
     }
     return V.colsAll;
@@ -7147,6 +7155,7 @@ function vSectionAvg(ride, sec, m){
   function vAllText(c, ride){
     if (c==='fname') return ride.item.name;
     const rs = ride.recs, st = vWholeStats(ride);
+    if (c==='recovery') return ride.recoveryHours!=null ? ride.recoveryHours+' 時間' : '--';
     if (c==='memo') return (ride.cfg.memo||'').replace(/\s+/g,' ') || '--';
     if (c==='gear') return ride.cfg.gear && ride.cfg.gear.name ? ride.cfg.gear.name+(ride.cfg.gear.memo ? '('+ride.cfg.gear.memo.replace(/\s+/g,' ')+')' : '') : '--';
     if (c==='pwhr') return st.pwhr==null ? '--' : st.pwhr.toFixed(1)+' %';
