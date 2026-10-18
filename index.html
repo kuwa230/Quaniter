@@ -887,7 +887,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
 // (this session's own publish count so far) is reconstructed from the
 // conversation itself rather than mechanically verified — best-effort, not
 // guaranteed exact. Increment by exactly 1 on every future publish.
-const APP_VERSION = 201;
+const APP_VERSION = 202;
 
 /* ============ FIT PARSER ============ */
 const FIT_EPOCH = 631065600; // seconds between 1970-01-01 and 1989-12-31 (FIT epoch)
@@ -2160,6 +2160,7 @@ async function processFitData(arrayBuffer, displayName, opts){
     S.powerChartMetrics = ['avgPower','elevation']; S.powerChartXMode = 'clock';
     S.powerChartSubdivisions = {}; S.powerChartSubdivideTargetIdx = null; S.powerChartSubdivideN = 2;
     powerChartDetailTarget = null;
+    { const dbox = $('#powerChartDetail'); if (dbox){ dbox.style.display = 'none'; dbox.innerHTML = ''; } const cw = $('#powerChartWrap'); if (cw) cw.innerHTML = ''; }   // the previous ride's chart and its status must not linger
     S.timelineSelectedId = null;
     ivHistory = []; ivRedoStack = [];
     mapChartInitialized = false;
