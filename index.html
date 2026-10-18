@@ -613,7 +613,6 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
         <div><span class="k">獲得標高</span><span class="v" id="sumElevGain">--</span></div>
         <div><span class="k">平均速度</span><span class="v" id="sumAvgSpeed">--</span></div>
         <div><span class="k">平均パワー</span><span class="v" id="sumAvgPower">--</span></div>
-        <div><span class="k">リカバリータイム(Garmin)</span><span class="v" id="sumRecovery">--</span></div>
       </div>
       <label class="field" style="margin-top:14px;">ライド全体のコメント
         <textarea id="rideCommentInput" rows="3" style="width:100%;font:inherit;font-size:14px;color:var(--text);background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:8px;" placeholder="例: 向かい風が強かった。補給は2回。"></textarea>
@@ -782,9 +781,11 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
           <button id="gearSaveBtn" class="small" type="button">お気に入りに登録</button>
           <button id="gearDelBtn" class="small ghost" type="button">削除</button>
         </div>
+        <div class="hint" id="gearStatus" style="margin-top:6px;"></div>
       </div>
       <div class="presetBox">
         <span class="hint">設定のプリセット(「全区間の解析情報を追加する」以降の設定と、表示項目の選択・並び順)</span>
+        <div class="hint" id="presetStatus" style="white-space:pre-wrap;margin-top:6px;color:var(--text);"></div>
         <div class="presetRow">
           <select id="presetSelect"></select>
           <button id="presetLoadBtn" class="small" type="button">呼び出し</button>
@@ -923,7 +924,6 @@ function parseFit(buffer){
   const localDefs = {};
   const records = [];
   const laps = [];
-  let recoveryRaw = null;   // the device's own recovery time (hours): message 79, field 5
   let lastTimestamp = null;
 
   function readMsg(def){
@@ -1005,8 +1005,6 @@ function parseFit(buffer){
         const ts = msg[253];
         if (ts !== null && ts !== undefined) lastTimestamp = ts;
         pushRecord(msg, ts !== null && ts !== undefined ? ts : lastTimestamp);
-      } else if (def.globalNum === 79){
-        if (msg[5]!=null && msg[5]>0 && msg[5]<=250) recoveryRaw = msg[5];
       } else if (def.globalNum === 19){
         // lap message: field 2 is start_time (a manual lap press on the
         // head unit, or an auto-lap trigger) — same FIT-epoch offset as
@@ -1057,7 +1055,6 @@ function parseFit(buffer){
   // the returned array so every existing call site (expecting a plain
   // records array) keeps working unchanged
   const uniqueLapStarts = [...new Set(laps)].sort((a,b)=>a-b);
-  records.recoveryHours = recoveryRaw;
   records.laps = uniqueLapStarts.map(ts=>({ t: ts+FIT_EPOCH, elapsed: (ts+FIT_EPOCH)-t0 })).filter(l=>l.elapsed>=0 && l.elapsed<=records[records.length-1].elapsed);
   return records;
 }
@@ -1205,7 +1202,6 @@ function renderRideSummary(){
   }
   const netAvgSpeed = netTime>0 ? distance/netTime*3.6 : null;
 
-  $('#sumRecovery').textContent = S.recoveryHours!=null ? S.recoveryHours+' 時間' : '--';
   $('#sumFileName').textContent = S.fileBaseName;
   $('#sumDate').textContent = fmtDate(first.t);
   $('#sumStart').textContent = fmtClock(first.t);
@@ -2130,7 +2126,6 @@ async function processFitData(arrayBuffer, displayName, opts){
     // needing the person to have kept the original file around separately
     S.rawFitBytes = arrayBuffer;
     S.laps = records.laps || [];
-    S.recoveryHours = records.recoveryHours!=null ? records.recoveryHours : null;
     S.hasGps = records.some(r=>r.lat!=null && r.lon!=null);
     S.fileBaseName = displayName.replace(/\.(fit|zip)$/i, '') || '区間分析';
     // a lightweight fingerprint of the untrimmed original file, captured
@@ -2158,7 +2153,7 @@ async function processFitData(arrayBuffer, displayName, opts){
     S.resultColumns = COLUMN_DEFS.map(d=>({key:d.k, enabled:DEFAULT_ENABLED_COLUMNS.includes(d.k)}));
     S.sensors = { hr:true, power:true, cad:true };
     S.metrics = ['speed','elevation']; S.xMode = 'clock'; S.ftp = null; S.weight = null; S.numberingStyle = 'circled'; S.summaryRowMode = 'last';
-    S.grossIncludesStoppedTime = true; S.avgGradientMethod = 'diff'; S.cadZero = false; S.rideComment = ''; S.gear = null;
+    S.grossIncludesStoppedTime = true; S.avgGradientMethod = 'diff'; S.cadZero = false; S.rideComment = ''; S.gear = null; S.presetName = null;
     applyDisplayPrefs(); // carries 重量/表示列 etc. over from whatever ride was analysed last
     S.ftp = null;        // the FTP is entered anew for every ride; the columns that need it start switched off
     S.resultColumns.forEach(c=>{ if (NEEDS_FTP.includes(c.key)) c.enabled = false; });
@@ -2241,6 +2236,10 @@ function serializeState(){
     numberingStyle: S.numberingStyle,
     summaryRowMode: S.summaryRowMode,
     cadZero: !!S.cadZero,
+    grossIncludesStoppedTime: !!S.grossIncludesStoppedTime,
+    avgGradientMethod: S.avgGradientMethod,
+    // the display preset in force: its name (only the name the app can still vouch for) and, always, what it contains
+    displayPreset: { name: presetNameShown(), details: presetCurrent() },
     rideComment: S.rideComment||'',
     gear: S.gear && (S.gear.name||S.gear.memo) ? { name:S.gear.name||'', memo:S.gear.memo||'' } : null,
     powerChartMetrics: S.powerChartMetrics,
@@ -2389,6 +2388,9 @@ function applyState(state, mode){
   if (['off','first','last'].includes(state.summaryRowMode)) S.summaryRowMode = state.summaryRowMode;
   if (state.cadZero!=null) S.cadZero = !!state.cadZero;
   if (typeof state.rideComment==='string') S.rideComment = state.rideComment;
+  if (state.grossIncludesStoppedTime!=null) S.grossIncludesStoppedTime = !!state.grossIncludesStoppedTime;
+  if (state.avgGradientMethod==='diff' || state.avgGradientMethod==='gain') S.avgGradientMethod = state.avgGradientMethod;
+  S.presetName = state.displayPreset && typeof state.displayPreset.name==='string' ? state.displayPreset.name : null;
   if (state.gear && typeof state.gear==='object') S.gear = { name:String(state.gear.name||''), memo:String(state.gear.memo||'') };
   if (state.sensors && typeof state.sensors==='object') S.sensors = { hr:state.sensors.hr!==false, power:state.sensors.power!==false, cad:state.sensors.cad!==false };
   if (state.ftp!=null && !isNaN(state.ftp) && state.ftp>0) S.ftp = Number(state.ftp);
@@ -2430,6 +2432,7 @@ function syncControlsFromState(){
   if ($('#cadZeroSelect')) $('#cadZeroSelect').value = S.cadZero ? '1' : '0';
   if ($('#rideCommentInput')) $('#rideCommentInput').value = S.rideComment||'';
   if ($('#gearName')) { $('#gearName').value = S.gear ? S.gear.name : ''; $('#gearMemo').value = S.gear ? S.gear.memo : ''; }
+  if (typeof presetStatus==='function') presetStatus();
   $$('#powerChartXModeSeg button').forEach(b=> b.classList.toggle('on', b.dataset.x===S.powerChartXMode));
   $('#powerChartWidthMinus').disabled = S.powerChartWidthMult<=POWER_CHART_WIDTH_MIN;
   $('#powerChartWidthPlus').disabled = S.powerChartWidthMult>=POWER_CHART_WIDTH_MAX;
@@ -2492,7 +2495,7 @@ function gearBuild(sel){
   if (sel && list.some(x=>x.name===sel)) el.value = sel;
   $('#gearLoadBtn').disabled = $('#gearDelBtn').disabled = !list.length;
 }
-function gearFromInputs(){ S.gear = { name:$('#gearName').value.trim(), memo:$('#gearMemo').value }; saveState(); }
+function gearFromInputs(){ S.gear = { name:$('#gearName').value.trim(), memo:$('#gearMemo').value }; saveState(); presetStatus(); }
 $('#gearName').addEventListener('input', gearFromInputs);
 $('#gearMemo').addEventListener('input', gearFromInputs);
 $('#gearSaveBtn').addEventListener('click', ()=>{
@@ -2529,6 +2532,30 @@ function presetCurrent(){
   return { resultColumns:S.resultColumns.map(c=>({key:c.key, enabled:!!c.enabled})), sensors:{...S.sensors}, summaryRowMode:S.summaryRowMode,
     grossIncludesStoppedTime:S.grossIncludesStoppedTime, avgGradientMethod:S.avgGradientMethod, cadZero:!!S.cadZero };
 }
+function presetNorm(d){
+  return JSON.stringify({ c:(d.resultColumns||[]).map(c=>c.key+':'+(c.enabled?1:0)), s:[d.sensors&&d.sensors.hr!==false, d.sensors&&d.sensors.power!==false, d.sensors&&d.sensors.cad!==false].map(x=>x?1:0),
+    r:d.summaryRowMode, g:d.grossIncludesStoppedTime ? 1 : 0, a:d.avgGradientMethod, z:d.cadZero ? 1 : 0 });
+}
+// the name is shown only while the preset saved in this app under that name holds exactly the settings now in force
+function presetNameShown(){
+  if (!S.presetName) return null;
+  const x = presetList().find(y=>y.name===S.presetName);
+  return x && presetNorm(x.data)===presetNorm(presetCurrent()) ? S.presetName : null;
+}
+function presetDetailText(d){
+  const on = d.resultColumns.filter(c=>c.enabled && COL_META[c.key]).map(c=>COL_META[c.key].label);
+  return '全区間の解析情報: '+({off:'OFF', first:'開始行', last:'最終行'}[d.summaryRowMode]||'--')+' / 停止時間にタイマー停止時間を'+(d.grossIncludesStoppedTime ? '含める' : '含めない')+' / 平均斜度: '+(d.avgGradientMethod==='gain' ? '区間内の獲得標高' : '始点/終点の標高差')+' / 平均ケイデンスの0: '+(d.cadZero ? '含める' : '含めない')+
+    ' / センサー: 心拍'+(d.sensors.hr!==false ? 'あり' : 'なし')+'・パワー'+(d.sensors.power!==false ? 'あり' : 'なし')+'・ケイデンス'+(d.sensors.cad!==false ? 'あり' : 'なし')+' / 表示項目('+on.length+'): '+on.join('、');
+}
+function presetStatus(){
+  const el = $('#presetStatus'); if (!el) return;
+  const nm = presetNameShown(), d = presetCurrent();
+  el.textContent = (nm ? '適用中のプリセット: 「'+nm+'」\n' : S.presetName ? '(この走行に使ったプリセット名の内容が、このアプリに保存されている内容と異なるため、名前は出さず、内容だけを表示します)\n' : '')+presetDetailText(d);
+  const g = $('#gearStatus'); if (g){
+    const f = S.gear && S.gear.name ? gearList().find(x=>x.name===S.gear.name) : null;
+    g.textContent = !f ? '' : (f.memo===(S.gear.memo||'') ? 'お気に入り「'+f.name+'」と同じ内容です。' : 'お気に入り「'+f.name+'」とはメモが異なります(この走行に保存した内容を表示しています)。');
+  }
+}
 function presetApply(d){
   if (Array.isArray(d.resultColumns)){
     S.resultColumns = d.resultColumns.filter(c=>COL_META[c.key]).map(c=>({key:c.key, enabled:!!c.enabled}));
@@ -2543,7 +2570,7 @@ function presetApply(d){
   S.resultColumns.forEach(c=>{
     if ((NEEDS_FTP.includes(c.key) && !S.ftp) || (NEEDS_WEIGHT.includes(c.key) && !S.weight) || !sensorsOkFor(c.key)) c.enabled = false;
   });
-  syncControlsFromState(); buildMetricChecks(); saveState();
+  syncControlsFromState(); buildMetricChecks(); saveState(); presetStatus();
   if (lastResults) computeAndRenderResults();
 }
 $('#presetSaveBtn').addEventListener('click', ()=>{
@@ -2555,20 +2582,23 @@ $('#presetSaveBtn').addEventListener('click', ()=>{
   const ent = { name, data:presetCurrent() };
   if (i>=0) list[i] = ent; else list.push(ent);
   if (!presetStore(list)){ showHeaderMsg('プリセットを保存できませんでした。', true); return; }
-  presetBuild(name);
+  S.presetName = name; presetBuild(name); presetStatus(); saveState();
   showHeaderMsg('プリセット「'+name+'」を保存しました。', false);
 });
 $('#presetLoadBtn').addEventListener('click', ()=>{
   const x = presetList().find(y=>y.name===$('#presetSelect').value); if (!x) return;
-  presetApply(x.data);
+  S.presetName = x.name; presetApply(x.data);
   showHeaderMsg('プリセット「'+x.name+'」を呼び出しました。', false);
 });
 $('#presetDelBtn').addEventListener('click', ()=>{
   const name = $('#presetSelect').value; if (!name) return;
   if (!confirm('プリセット「'+name+'」を削除しますか?')) return;
-  presetStore(presetList().filter(x=>x.name!==name)); presetBuild();
+  presetStore(presetList().filter(x=>x.name!==name)); presetBuild(); presetStatus();
 });
 presetBuild();
+$('#resultSettingsModal').addEventListener('change', ()=> presetStatus());
+$('#resultSettingsModal').addEventListener('input', ()=> presetStatus());
+$('#resultSettingsBtn').addEventListener('click', ()=> presetStatus());
 function buildProjectJson(){
   let n = 0;
   const results = lastResults ? {
@@ -6453,7 +6483,6 @@ $('#vNext').addEventListener('click', async ()=>{
       const zip = await JSZip.loadAsync(chosen[i].file);
       const fit = Object.values(zip.files).find(f=>!f.dir && /\.fit$/i.test(f.name));
       const recs = parseFit(await fit.async('arraybuffer'));
-      const recoveryHours = recs.recoveryHours;
       smoothAltitudes(recs);
       // the sections that were set in the analyser
       let sections = [], settingsOfRide = {}, notes = { comments:[], photos:[] };
@@ -6474,7 +6503,7 @@ $('#vNext').addEventListener('click', async ()=>{
           try{ const ent = zip.file(ph.file); if (!ent) continue; const bmp = await createImageBitmap(await ent.async('blob')); notes.photos.push({ t:(Number(ph.elapsed)||0)+off, bmp, name:ph.name||'' }); }catch(e){}
         }
       }catch(e){}
-      if (recs.length) V.rides.push({ id:V.rides.length, item:chosen[i], recs, sections, cfg:settingsOfRide, comments:notes.comments, photos:notes.photos, recoveryHours, color:V_COLORS[V.rides.length % V_COLORS.length] });
+      if (recs.length) V.rides.push({ id:V.rides.length, item:chosen[i], recs, sections, cfg:settingsOfRide, comments:notes.comments, photos:notes.photos, color:V_COLORS[V.rides.length % V_COLORS.length] });
     }catch(e){ console.warn('viewer load', chosen[i].name, e); }
   }
   V.order = V.rides.map(r=>r.id);
@@ -7086,7 +7115,7 @@ function vSectionAvg(ride, sec, m){
   }
   const V_DEFAULT_COLS = ['fname','secname','distance','netTime','avgPower','avgSpeedNet','avgHr'];
   const vColOk = c=> c==='fname' || c==='secname' || !!COL_META[c];
-  const vColLabel = c=> c==='fname' ? 'ファイル名' : c==='secname' ? '区間名' : c==='pwhr' ? 'Pw:HR(デカップリング)' : c==='pmaint' ? 'パワー維持率' : c==='vi' ? 'VI(変動指数)' : c==='memo' ? 'ライドのコメント' : c==='gear' ? 'ギア' : c==='recovery' ? 'リカバリータイム(Garmin)' : COL_META[c].label;
+  const vColLabel = c=> c==='fname' ? 'ファイル名' : c==='secname' ? '区間名' : c==='pwhr' ? 'Pw:HR(デカップリング)' : c==='pmaint' ? 'パワー維持率' : c==='vi' ? 'VI(変動指数)' : c==='memo' ? 'ライドのコメント' : c==='gear' ? 'ギア' : COL_META[c].label;
   function vCols(){
     if (V.cadZero===undefined){ try{ V.cadZero = localStorage.getItem('quaniterCadZero')==='1'; }catch(e){ V.cadZero = false; } }
     if (!V.cols){
@@ -7098,7 +7127,7 @@ function vSectionAvg(ride, sec, m){
   function vPickCols(which){
     const isAll = which==='all';
     const cur = isAll ? vColsAll() : vCols();
-    const allKeys = isAll ? ['fname'].concat(COLUMN_DEFS.map(d=>d.k), ['pwhr','pmaint','vi','recovery','memo','gear']) : ['fname','secname'].concat(COLUMN_DEFS.map(d=>d.k));
+    const allKeys = isAll ? ['fname'].concat(COLUMN_DEFS.map(d=>d.k), ['pwhr','pmaint','vi','memo','gear']) : ['fname','secname'].concat(COLUMN_DEFS.map(d=>d.k));
     const order = cur.filter(k=>k!=='fname').concat(allKeys.filter(k=>k!=='fname' && !cur.includes(k)));
     const rowHtml = k=>'<div class="vColRow" data-k="'+k+'"><span class="vGrip" title="ドラッグで並べ替え">≡</span><label><input type="checkbox" value="'+k+'"'+(cur.includes(k)?' checked':'')+'> '+escapeHtml(vColLabel(k))+'</label></div>';
     const modal = document.createElement('div'); modal.className = 'confirmModal';
@@ -7144,10 +7173,10 @@ function vSectionAvg(ride, sec, m){
     return COL_META[c].fmt(v==null || isNaN(v) ? null : v);
   }
   // ---- the table for whole rides: same look as the section table, one row per visible ride
-  const V_DEFAULT_ALL = ['fname','distance','netTime','avgPower','avgHr','ef','workKj','pwhr','pmaint','vi','recovery'];
+  const V_DEFAULT_ALL = ['fname','distance','netTime','avgPower','avgHr','ef','workKj','pwhr','pmaint','vi'];
   function vColsAll(){
     if (!V.colsAll){
-      try{ const a = JSON.parse(localStorage.getItem('quaniterVColsAll')||'null'); if (Array.isArray(a)) V.colsAll = a.filter(c=> c==='fname' || c==='pwhr' || c==='pmaint' || c==='vi' || c==='memo' || c==='gear' || c==='recovery' || COL_META[c]); }catch(e){}
+      try{ const a = JSON.parse(localStorage.getItem('quaniterVColsAll')||'null'); if (Array.isArray(a)) V.colsAll = a.filter(c=> c==='fname' || c==='pwhr' || c==='pmaint' || c==='vi' || c==='memo' || c==='gear' || COL_META[c]); }catch(e){}
       if (!V.colsAll) V.colsAll = V_DEFAULT_ALL.slice();
     }
     return V.colsAll;
@@ -7155,7 +7184,6 @@ function vSectionAvg(ride, sec, m){
   function vAllText(c, ride){
     if (c==='fname') return ride.item.name;
     const rs = ride.recs, st = vWholeStats(ride);
-    if (c==='recovery') return ride.recoveryHours!=null ? ride.recoveryHours+' 時間' : '--';
     if (c==='memo') return (ride.cfg.memo||'').replace(/\s+/g,' ') || '--';
     if (c==='gear') return ride.cfg.gear && ride.cfg.gear.name ? ride.cfg.gear.name+(ride.cfg.gear.memo ? '('+ride.cfg.gear.memo.replace(/\s+/g,' ')+')' : '') : '--';
     if (c==='pwhr') return st.pwhr==null ? '--' : st.pwhr.toFixed(1)+' %';
