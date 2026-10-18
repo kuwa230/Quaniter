@@ -101,6 +101,8 @@ label.field{ display:flex; flex-direction:column; gap:3px; font-size:11.5px; col
 .seg button + button{ border-left:1px solid var(--border); }
 .seg button.on{ background:var(--accent); color:#08211d; }
 
+#p3MapWrap{ position:relative; width:100%; aspect-ratio:16/10; background:var(--surface-2); border-radius:8px; overflow:hidden; touch-action:none; }
+#p3MapWrap.empty{ display:flex; align-items:center; justify-content:center; color:var(--text-faint); font-size:13px; }
 #routeWrap{ position:relative; width:100%; aspect-ratio:16/10; background:var(--surface-2); border-radius:8px; overflow:hidden; touch-action:none; cursor:grab; -webkit-touch-callout:none; -webkit-user-select:none; user-select:none; }
 .routePreview{ position:relative; width:100%; aspect-ratio:16/9; background:var(--surface-2); border-radius:8px; overflow:hidden; }
 #routeWrap.empty{ display:flex; align-items:center; justify-content:center; color:var(--text-faint); font-size:13px; }
@@ -743,12 +745,8 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
         <button data-x="clock" class="on">時刻</button>
         <button data-x="elapsed">経過時間</button>
         <button data-x="dist">距離</button>
+        <button data-x="kcal" id="powerChartKcalBtn">消費エネルギー</button>
       </div>
-    </div>
-    <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
-      <span class="hint">グラフの幅</span>
-      <button id="powerChartWidthMinus" class="small ghost icon-btn" type="button" title="幅を縮める">－</button>
-      <button id="powerChartWidthPlus" class="small ghost icon-btn" type="button" title="幅を広げる">＋</button>
     </div>
     <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px; flex-wrap:wrap;">
       <span class="hint">区間をタップして選択→分割数→</span>
@@ -758,8 +756,14 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
       <button id="subdivideApplyBtn" class="small ghost" type="button" disabled>区間を分割</button>
       <button id="subdivideResetBtn" class="small ghost" type="button" disabled>解除</button>
     </div>
+    <div class="hint" style="margin-bottom:4px;">横軸の目盛りは4項目を同時に表示します(選んだ項目が棒グラフの基準)。グラフをタップするとシーク位置が動き、地図と連動します。2本指で拡大・縮小、スクロールで移動できます。</div>
     <div id="powerChartWrap" style="position:relative; overflow-x:auto; touch-action:pan-x pan-y;"></div>
+    <input type="range" id="p3Seek" min="0" max="0" value="0" step="1" style="width:100%; margin:6px 0 2px;" aria-label="シーク">
     <div class="msg" id="powerChartDetail" style="display:none;"></div>
+    <div id="p3MapBox" style="margin-top:8px;">
+      <label class="hint" style="display:flex;align-items:center;gap:6px;margin-bottom:4px;"><input type="checkbox" id="p3MapFollow" checked> シーク位置に地図を追従</label>
+      <div id="p3MapWrap"></div>
+    </div>
     <div class="exportRow">
       <button id="expPowerChartPng" class="small" disabled>PNGを保存</button>
     </div>
@@ -887,7 +891,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
 // (this session's own publish count so far) is reconstructed from the
 // conversation itself rather than mechanically verified — best-effort, not
 // guaranteed exact. Increment by exactly 1 on every future publish.
-const APP_VERSION = 202;
+const APP_VERSION = 203;
 
 /* ============ FIT PARSER ============ */
 const FIT_EPOCH = 631065600; // seconds between 1970-01-01 and 1989-12-31 (FIT epoch)
@@ -1502,6 +1506,7 @@ function showPage(n){
     if (sig!==previewSig) renderRoutePreview();
     else if (S.previewMap) requestAnimationFrame(()=> S.previewMap && S.previewMap.resize());
   }
+  if (n===3 && S.records.length) p3Enter();
   if (n===2 && S.records.length){
     // the map/chart containers are display:none until this page is shown, so
     // building them earlier would measure a zero-size box. Do the full (and
@@ -2159,7 +2164,7 @@ async function processFitData(arrayBuffer, displayName, opts){
     S.resultColumns.forEach(c=>{ if (NEEDS_FTP.includes(c.key)) c.enabled = false; });
     S.powerChartMetrics = ['avgPower','elevation']; S.powerChartXMode = 'clock';
     S.powerChartSubdivisions = {}; S.powerChartSubdivideTargetIdx = null; S.powerChartSubdivideN = 2;
-    powerChartDetailTarget = null;
+    powerChartDetailTarget = null; p3Reset();
     { const dbox = $('#powerChartDetail'); if (dbox){ dbox.style.display = 'none'; dbox.innerHTML = ''; } const cw = $('#powerChartWrap'); if (cw) cw.innerHTML = ''; }   // the previous ride's chart and its status must not linger
     S.timelineSelectedId = null;
     ivHistory = []; ivRedoStack = [];
@@ -2402,7 +2407,7 @@ function applyState(state, mode){
     const pm = state.powerChartMetrics.filter(k=>POWER_CHART_METRICS[k]).slice(0,4);
     if (pm.length) S.powerChartMetrics = pm;
   }
-  if (state.powerChartXMode && ['clock','elapsed','dist'].includes(state.powerChartXMode)) S.powerChartXMode = state.powerChartXMode;
+  if (state.powerChartXMode && ['clock','elapsed','dist','kcal'].includes(state.powerChartXMode)) S.powerChartXMode = state.powerChartXMode;
   if (Array.isArray(state.comments)){
     S.comments = state.comments.filter(c=>c && typeof c.text==='string').map(c=>({ id:commentSeq++, text:c.text, elapsed:(Number(c.elapsed)||0)+offset }));
     S.commentSelectedId = null;
@@ -2435,8 +2440,6 @@ function syncControlsFromState(){
   if ($('#gearName')) { $('#gearName').value = S.gear ? S.gear.name : ''; $('#gearMemo').value = S.gear ? S.gear.memo : ''; }
   if (typeof presetStatus==='function') presetStatus();
   $$('#powerChartXModeSeg button').forEach(b=> b.classList.toggle('on', b.dataset.x===S.powerChartXMode));
-  $('#powerChartWidthMinus').disabled = S.powerChartWidthMult<=POWER_CHART_WIDTH_MIN;
-  $('#powerChartWidthPlus').disabled = S.powerChartWidthMult>=POWER_CHART_WIDTH_MAX;
   const dialValEl = $('#subdivideDialValue');
   if (dialValEl) dialValEl.textContent = S.powerChartSubdivideN==='raw' ? '∞' : (S.powerChartSubdivideN || 2);
   const t = S.powerChartSubdivideTargetIdx;
@@ -3300,6 +3303,7 @@ function setSelection(idx, clientPos, source){
   }
 
   updateSelBubble();
+  p3OnSeek(source);
 }
 
 function updateSelBubble(){
@@ -5332,13 +5336,6 @@ $$('#powerChartXModeSeg button').forEach(btn=>{
   });
 });
 const POWER_CHART_WIDTH_MIN = 0.2, POWER_CHART_WIDTH_MAX = 6, POWER_CHART_WIDTH_STEP = 0.1;
-function adjustPowerChartWidth(delta){
-  S.powerChartWidthMult = Math.max(POWER_CHART_WIDTH_MIN, Math.min(POWER_CHART_WIDTH_MAX, S.powerChartWidthMult+delta));
-  $('#powerChartWidthMinus').disabled = S.powerChartWidthMult<=POWER_CHART_WIDTH_MIN;
-  $('#powerChartWidthPlus').disabled = S.powerChartWidthMult>=POWER_CHART_WIDTH_MAX;
-  saveState();
-  if (lastResults) renderPowerChart(lastResults.rows.filter(r=>!r.isSummary));
-}
 // pinch the graph to change its width continuously (the point between the fingers stays put)
 (function(){
   const wrap = $('#powerChartWrap');
@@ -5367,16 +5364,22 @@ function adjustPowerChartWidth(delta){
       S.powerChartWidthMult = done.target;
       if (lastResults) renderPowerChart(lastResults.rows.filter(r=>!r.isSummary));
       wrap.scrollLeft = done.frac*wrap.scrollWidth - done.mid;
-      $('#powerChartWidthMinus').disabled = S.powerChartWidthMult<=POWER_CHART_WIDTH_MIN;
-      $('#powerChartWidthPlus').disabled = S.powerChartWidthMult>=POWER_CHART_WIDTH_MAX;
       saveState();
     }
   };
   wrap.addEventListener('touchend', end); wrap.addEventListener('touchcancel', end);
   wrap.addEventListener('gesturestart', e=>e.preventDefault());   // Safari: no page zoom while pinching the graph
 })();
-$('#powerChartWidthMinus').addEventListener('click', ()=> adjustPowerChartWidth(-POWER_CHART_WIDTH_STEP));
-$('#powerChartWidthPlus').addEventListener('click', ()=> adjustPowerChartWidth(POWER_CHART_WIDTH_STEP));
+// ctrl/⌘ + wheel (trackpad pinch) zooms the same way
+$('#powerChartWrap').addEventListener('wheel', e=>{
+  if (!(e.ctrlKey || e.metaKey)) return;
+  e.preventDefault();
+  const wrap = $('#powerChartWrap'), r = wrap.getBoundingClientRect(), mid = e.clientX-r.left;
+  const frac = (wrap.scrollLeft+mid)/Math.max(1, wrap.scrollWidth);
+  S.powerChartWidthMult = Math.max(POWER_CHART_WIDTH_MIN, Math.min(POWER_CHART_WIDTH_MAX, S.powerChartWidthMult*Math.exp(-e.deltaY*0.01)));
+  if (lastResults) renderPowerChart(lastResults.rows.filter(r=>!r.isSummary));
+  wrap.scrollLeft = frac*wrap.scrollWidth - mid;
+}, {passive:false});
 
 // Tapping the dial opens a scrollable wheel picker (like the native iOS
 // date/time picker): a vertical list of numbers with scroll-snap, the
@@ -5453,6 +5456,24 @@ $('#subdivideResetBtn').addEventListener('click', ()=>{
 
 let powerChartBarItems = []; // {iv, r} per clickable bar, in render order — lets tap-for-detail work correctly even for synthetic subdivided slices that aren't in S.intervals
 
+// cumulative energy (kcal, from power: kJ / 0.24 / 4.184 — same as the viewer) per record; null if the ride has no power data
+let p3KcalCache = null;
+function p3KcalCum(){
+  const recs = S.records;
+  if (p3KcalCache && p3KcalCache.recs===recs) return p3KcalCache.cum;
+  let cum = null;
+  if (recs.length && recs.some(r=>r.power!=null)){
+    cum = new Array(recs.length); let kj = 0;
+    for (let i=0;i<recs.length;i++){
+      if (i>0){ const dt = recs[i].elapsed-recs[i-1].elapsed; if (dt>0 && dt<=30) kj += (recs[i].power||0)*dt/1000; }
+      cum[i] = kj/0.24/4.184;
+    }
+  }
+  const idx = new Map(); recs.forEach((r,i)=>idx.set(r,i));
+  p3KcalCache = { recs, cum, idx };
+  return cum;
+}
+function p3RecIndex(rec){ p3KcalCum(); const i = p3KcalCache.idx.get(rec); return i==null ? 0 : i; }
 function renderPowerChart(rows){
   const wrap = $('#powerChartWrap');
   const metrics = S.powerChartMetrics.filter(k=>POWER_CHART_METRICS[k]);
@@ -5500,8 +5521,13 @@ function renderPowerChart(rows){
     $('#powerChartDetail').style.display = 'none';
     return;
   }
-  const xMode = S.powerChartXMode; // 'clock' | 'elapsed' | 'dist'
+  const xMode = (S.powerChartXMode==='kcal' && !p3KcalCum()) ? 'clock' : S.powerChartXMode; // 'clock' | 'elapsed' | 'dist' | 'kcal'
+  const kcalMode = xMode==='kcal';
   const distMode = xMode==='dist';
+  const valMode = distMode || kcalMode; // the two non-time axes (stepped arithmetically from the data's start)
+  const kcalCum = p3KcalCum();
+  const hasKcal = !!kcalCum;
+  { const kb = $('#powerChartKcalBtn'); if (kb) kb.style.display = hasKcal ? '' : 'none'; }
   // Display-only rebasing: if interval 1 doesn't start at the true
   // beginning of the recording (e.g. the ride-to-the-start-line portion
   // was left out of the analysis), elapsed time and distance are shown
@@ -5511,12 +5537,15 @@ function renderPowerChart(rows){
   // real time of day regardless.
   const elapsedOffset = S.intervals.length ? S.intervals[0].start : 0;
   const distOffset = S.intervals.length ? nearestRecordByElapsed(S.intervals[0].start).dist : 0;
-  function ivX0(iv){ return distMode ? nearestRecordByElapsed(iv.start).dist-distOffset : iv.start-elapsedOffset; }
-  function ivX1(iv){ return distMode ? nearestRecordByElapsed(iv.end).dist-distOffset : iv.end-elapsedOffset; }
+  const kcalOffset = (hasKcal && S.intervals.length) ? kcalCum[p3RecIndex(nearestRecordByElapsed(S.intervals[0].start))] : 0;
+  const kcalOfRec = rec => hasKcal ? kcalCum[p3RecIndex(rec)]-kcalOffset : null;
+  const xOfRec = rec => kcalMode ? kcalOfRec(rec) : distMode ? rec.dist-distOffset : rec.elapsed-elapsedOffset;
+  function ivX0(iv){ return valMode ? xOfRec(nearestRecordByElapsed(iv.start)) : iv.start-elapsedOffset; }
+  function ivX1(iv){ return valMode ? xOfRec(nearestRecordByElapsed(iv.end)) : iv.end-elapsedOffset; }
 
   const leftCount = Math.ceil(metrics.length/2), rightCount = Math.floor(metrics.length/2);
   const SCALE = 1.25;
-  const W=800*S.powerChartWidthMult, H=340, padL=76+leftCount*34, padR=58+rightCount*34, padT=68, padB=68;
+  const W=800*S.powerChartWidthMult, H=340, padL=76+leftCount*34, padR=58+rightCount*34, padT=68, padB=68+(hasKcal?13:0);
   let minX = Math.min(...S.intervals.map(ivX0));
   let maxX = Math.max(...S.intervals.map(ivX1));
   const spanX = Math.max(1, maxX-minX);
@@ -5648,6 +5677,9 @@ function renderPowerChart(rows){
   const TIME_SUBMIN_MIN = [0.1,0.2,0.5,1,1,2,2,5,10,10,20,30,30,60,120]; // minutes
   const DIST_MAJOR_KM = [1,2,5,10,20,25,50,100,150,200,250,400,600];
   const DIST_MINOR_KM = [0.5,1,1,5,10,5,25,50,50,100,125,200,300];
+  const KCAL_MAJOR = [10,20,50,100,200,250,500,1000,2000,5000];
+  const KCAL_MINOR = [5,10,10,50,100,50,100,500,1000,1000];
+  const KCAL_SUBMIN = [1,2,5,10,20,10,50,100,200,null];
   const DIST_SUBMIN_KM = [0.1,0.2,0.5,1,2,null,5,10,10,20,25,40,60]; // null = no sub-minor gridline for that major/minor pairing
   // Picks the smallest (densest) major step whose resulting label spacing
   // still leaves at least one character's width of blank gap between
@@ -5666,12 +5698,14 @@ function renderPowerChart(rows){
     const last = majors.length-1;
     return {major:majors[last]*unitSec, minor:minors[last]*unitSec, submin: submins[last]!=null ? submins[last]*unitSec : null};
   }
-  const xStepInfo = distMode
+  const xStepInfo = kcalMode
+    ? pickStep(spanX, KCAL_MAJOR, KCAL_MINOR, KCAL_SUBMIN, 1, W-padL-padR)
+    : distMode
     ? pickStep(spanX, DIST_MAJOR_KM, DIST_MINOR_KM, DIST_SUBMIN_KM, 1000, W-padL-padR)
     : pickStep(spanX, TIME_MAJOR_MIN, TIME_MINOR_MIN, TIME_SUBMIN_MIN, 60, W-padL-padR);
   const xStep = xStepInfo.major, xMinorStep = xStepInfo.minor, xSubminStep = xStepInfo.submin;
   let tickTs;
-  if (distMode || xMode==='elapsed'){
+  if (valMode || xMode==='elapsed'){
     const xStart = Math.ceil(minX/xStep)*xStep;
     tickTs = [];
     for (let t=xStart; t<=maxX+1e-9; t+=xStep) tickTs.push(t);
@@ -5695,20 +5729,25 @@ function renderPowerChart(rows){
   // already relative to interval 1's own start (see elapsedOffset/distOffset
   // above) — the offset is added back only where an actual record lookup
   // needs the recording's true, absolute position.
-  function labelsAt(t){
-    let clockStr, elapsedStr, distStr;
-    if (distMode){
-      distStr = fmtKm(t);
-      const rec = nearestRecordByDist(t+distOffset);
-      clockStr = fmtClockNoSec(rec.t); elapsedStr = fmtHMS(rec.elapsed-elapsedOffset);
-    } else {
-      elapsedStr = fmtHMS(t);
-      clockStr = fmtClockNoSec(S.records[0].t+t+elapsedOffset);
-      distStr = fmtKm(nearestRecordByElapsed(t+elapsedOffset).dist-distOffset);
+  const rowOrder = [xMode].concat(['clock','elapsed','dist','kcal'].filter(k=>k!==xMode && (k!=='kcal' || hasKcal)));
+  const ROW_CAP = {clock:'時刻', elapsed:'経過時間', dist:'距離(km)', kcal:'消費(kcal)'};
+  function recAtX(t){
+    if (kcalMode){
+      let lo=0, hi=kcalCum.length-1; const v=t+kcalOffset;
+      while (lo<hi){ const mid=(lo+hi)>>1; if (kcalCum[mid]<v) lo=mid+1; else hi=mid; }
+      return S.records[lo];
     }
-    return xMode==='clock' ? [clockStr,elapsedStr,distStr]
-      : xMode==='elapsed' ? [elapsedStr,clockStr,distStr]
-      : [distStr,clockStr,elapsedStr];
+    return distMode ? nearestRecordByDist(t+distOffset) : nearestRecordByElapsed(t+elapsedOffset);
+  }
+  function labelsAt(t){
+    const rec = recAtX(t);
+    const o = {
+      clock: fmtClockNoSec(distMode||kcalMode ? rec.t : S.records[0].t+t+elapsedOffset),
+      elapsed: fmtHMS(distMode||kcalMode ? rec.elapsed-elapsedOffset : t),
+      dist: fmtKm(distMode ? t : rec.dist-distOffset),
+      kcal: hasKcal ? String(Math.round(kcalMode ? t : kcalOfRec(rec))) : null
+    };
+    return rowOrder.map(k=>o[k]).filter(v=>v!=null);
   }
   function drawTickLabels(x, lines, anchor){
     anchor = anchor || 'middle';
@@ -5717,9 +5756,7 @@ function renderPowerChart(rows){
     });
   }
   // a small caption at the far left names what each of the three rows is
-  const capLines = xMode==='clock' ? ['時刻','経過時間','距離(km)']
-    : xMode==='elapsed' ? ['経過時間','時刻','距離(km)']
-    : ['距離(km)','時刻','経過時間'];
+  const capLines = rowOrder.map(k=>ROW_CAP[k]);
   capLines.forEach((str,i)=>{
     svg += '<text x="'+(padL-46)+'" y="'+(H-padB+16+i*13)+'" text-anchor="end" font-size="9" font-weight="600" fill="'+cssVar('--text-faint')+'">'+str+'</text>';
   });
@@ -5754,7 +5791,7 @@ function renderPowerChart(rows){
   // step — wall-clock aligned in clock mode, simple arithmetic otherwise
   function generateTicksAtStep(step){
     const ts = [];
-    if (distMode || xMode==='elapsed'){
+    if (valMode || xMode==='elapsed'){
       const tStart = Math.ceil(minX/step)*step;
       for (let t=tStart; t<=maxX+1e-9; t+=step) ts.push(t);
     } else {
@@ -5774,7 +5811,7 @@ function renderPowerChart(rows){
   // gridline actually falls (not always the plot's left text margin, since
   // that gridline's position varies with the data range)
   if (minorTs.length){
-    const fmtGridStep = v => distMode ? (v/1000)+'km' : ((v/60)%1===0 ? (v/60) : (v/60).toFixed(1))+'分';
+    const fmtGridStep = v => kcalMode ? v+'kcal' : distMode ? (v/1000)+'km' : ((v/60)%1===0 ? (v/60) : (v/60).toFixed(1))+'分';
     const leftMinorX = xScale(minorTs[0]);
     const barW = xScale(minX+xMinorStep) - xScale(minX);
     const sbY = 48;
@@ -5858,7 +5895,7 @@ function renderPowerChart(rows){
     for (let i=0;i<S.records.length;i+=step){
       const rec = S.records[i];
       if (rec.altSmooth==null) continue;
-      const xv = (distMode ? rec.dist-distOffset : rec.elapsed-elapsedOffset);
+      const xv = xOfRec(rec);
       if (xv<minX || xv>maxX) continue;
       pts.push([xScale(xv), elevSc.yScale(rec.altSmooth)]);
     }
@@ -5935,7 +5972,7 @@ function renderPowerChart(rows){
       const nextIv = S.intervals[i+1];
       const same = !!(iv.endName && nextIv.startName && iv.endName===nextIv.startName);
       // an end name that is followed by a rest stays (the two names then sit at different places on the time axis)
-      if (same){ if (distMode || nextIv.start-iv.end <= 1) endHide = true; }
+      if (same){ if (valMode || nextIv.start-iv.end <= 1) endHide = true; }
       else if (Math.abs(xScale(ivX1(iv)) - xScale(ivX0(nextIv))) < OVERLAP_PX) endOffset = -CHAR_SHIFT_PX;
     }
     return {startOffset, startHide, endOffset, endHide};
@@ -6010,6 +6047,7 @@ function renderPowerChart(rows){
       const svgRect = svgEl.getBoundingClientRect();
       const tapX = (e.clientX-svgRect.left)/svgRect.width * W;
       const tapT = xScaleInv(tapX);
+      { const rec = recAtX(tapT); p3Internal = true; try{ setSelection(p3RecIndex(rec), null, 'chart'); } finally { p3Internal = false; } }
       showPowerChartDetail(idx, tapT);
       const item = powerChartBarItems[idx];
       if (item){
@@ -6026,6 +6064,7 @@ function renderPowerChart(rows){
     });
   });
   $('#expPowerChartPng').disabled = false;
+  p3Link = { xOfRec, recAtX, ivX0, ivX1, xScale, xScaleInv, kcalOfRec };
   powerChartPlotBounds = {padT, padB, H, W};
   powerChartXScaleFn = xScale;
   applyPowerChartDetailHighlight();
@@ -6038,7 +6077,7 @@ function renderPowerChart(rows){
     const box = $('#powerChartDetail');
     if (box && box.style.display!=='none'){
       const item = powerChartBarItems.find(it=> it && it.origIdx===dt.origIdx && dt.t>=ivX0(it.iv) && dt.t<=ivX1(it.iv));
-      if (item) box.innerHTML = buildPowerChartDetailHtml(item.iv, item.r, item.origIdx);
+      box.innerHTML = p3SeekHtml() + (item ? '<br>'+buildPowerChartDetailHtml(item.iv, item.r, item.origIdx) : '');
     }
   }
 }
@@ -6090,8 +6129,125 @@ function showPowerChartDetail(idx, tapT){
   applyPowerChartDetailHighlight();
   const box = $('#powerChartDetail');
   box.style.display = 'block';
-  box.innerHTML = buildPowerChartDetailHtml(iv, r, item.origIdx);
+  box.innerHTML = p3SeekHtml() + '<br>' + buildPowerChartDetailHtml(iv, r, item.origIdx);
 }
+
+/* ---- page 3: seek (shared with page 2 via S.selection) + map ---- */
+let p3Link = null;       // the latest render's axis helpers
+let p3Internal = false;  // true while page 3 itself is moving the seek (it re-renders on its own)
+let p3Dirty = false;     // the seek moved while page 3 was not on screen
+let p3Map = null;        // {map, recs, ready, cursor, badges, ro}
+function p3SeekHtml(){
+  if (!S.selection || !S.records[S.selection.idx]) return '';
+  const r = S.records[S.selection.idx];
+  const k = p3Link && p3Link.kcalOfRec ? p3Link.kcalOfRec(r) : null;
+  const sp = r.speed!=null ? ' ・ '+(r.speed*3.6).toFixed(1)+'km/h' : '';
+  return '<span style="color:#e08a1e;font-weight:700;">シーク</span> '+fmtClock(r.t)+' ・ 経過 '+fmtHMS(r.elapsed)+' ・ '+fmtKm(r.dist)+' km'+
+    (k!=null ? ' ・ '+Math.round(k)+' kcal' : '')+(r.power!=null?' ・ '+Math.round(r.power)+'W':'')+(r.hr!=null?' ・ '+Math.round(r.hr)+'bpm':'')+sp;
+}
+// put the chart's orange line (and status) on the current seek position
+function p3ApplySelection(){
+  p3Dirty = false;
+  if (!lastResults || !p3Link || !S.selection || !S.records[S.selection.idx]) return;
+  const rec = S.records[S.selection.idx];
+  const t = p3Link.xOfRec(rec);
+  let oi = S.intervals.findIndex(iv=> t>=p3Link.ivX0(iv) && t<=p3Link.ivX1(iv));
+  powerChartDetailTarget = { origIdx: oi, sliceIndex: 0, t };
+  const box = $('#powerChartDetail'); if (box) box.style.display = 'block';
+  renderPowerChart(lastResults.rows.filter(r=>!r.isSummary));
+  if (box && !box.innerHTML) box.innerHTML = p3SeekHtml();
+  const wrap = $('#powerChartWrap');
+  if (p3Link && wrap){   // keep the seek position in view
+    const px = p3Link.xScale(t) * (wrap.scrollWidth / (powerChartPlotBounds ? powerChartPlotBounds.W : 1));
+    if (px < wrap.scrollLeft+20 || px > wrap.scrollLeft+wrap.clientWidth-20) wrap.scrollLeft = px - wrap.clientWidth/2;
+  }
+}
+function p3SyncSlider(){
+  const sl = $('#p3Seek'); if (!sl || !S.records.length) return;
+  sl.max = S.records.length-1;
+  if (S.selection) sl.value = S.selection.idx;
+}
+// called from setSelection()
+function p3OnSeek(source){
+  p3SyncSlider();
+  if (p3Map && p3Map.ready) p3MapFrame(source!=='p3map');
+  if (p3Internal) return;
+  if (currentPageNum!==3){ p3Dirty = true; return; }
+  p3ApplySelection();
+}
+function p3Enter(){
+  p3SyncSlider();
+  const box = $('#p3MapBox');
+  if (box) box.style.display = S.hasGps ? '' : 'none';
+  if (S.hasGps) p3BuildMap();
+  if (p3Dirty) p3ApplySelection();
+}
+function p3Reset(){
+  p3Dirty = false; p3Link = null;
+  if (p3Map){ try{ p3Map.ro && p3Map.ro.disconnect(); p3Map.map.remove(); }catch(e){} p3Map = null; }
+  const w = $('#p3MapWrap'); if (w) w.innerHTML = '';
+}
+function p3BuildMap(){
+  const wrap = $('#p3MapWrap');
+  if (!wrap) return;
+  if (p3Map && p3Map.recs===S.records){ p3Map.map.resize(); p3MapFrame(false); return; }
+  p3Reset();
+  if (!window.maplibregl){ wrap.classList.add('empty'); wrap.innerHTML = '<span>地図ライブラリ(MapLibre)を読み込めませんでした</span>'; return; }
+  wrap.classList.remove('empty');
+  const recs = gpsRecords();
+  if (!recs.length) return;
+  const b = routeBounds(recs);
+  const coords = routeCoords(recs, 3000);
+  const lonlat = coords.map(c=>({lon:c[0], lat:c[1], idx:S.records.indexOf(c[2])}));
+  const map = new maplibregl.Map({ container:wrap, style:mapStyleFor(chooseMapBase(b.midLat, b.midLon)), attributionControl:false, minZoom:2, maxZoom:19, fadeDuration:0,
+    dragRotate:false, pitchWithRotate:false, touchPitch:false, bounds:[[b.minLon,b.minLat],[b.maxLon,b.maxLat]], fitBoundsOptions:{ padding:40, animate:false } });
+  standardMapControls(map);
+  const mv = { map, recs:S.records, ready:false, cursor:null, badges:[], lonlat, start:recs[0], end:recs[recs.length-1] };
+  p3Map = mv;
+  map.on('style.load', ()=>{ addRouteLayers(map, coords); mv.ready = true; p3MapFrame(false); });
+  map.on('click', e=>{
+    let nearest=null, nd=Infinity;
+    for (const q of lonlat){ const sp = map.project([q.lon, q.lat]); const dd=(sp.x-e.point.x)**2+(sp.y-e.point.y)**2; if (dd<nd){ nd=dd; nearest=q; } }
+    if (nearest) setSelection(nearest.idx, null, 'p3map');
+  });
+  if (typeof ResizeObserver!=='undefined'){ mv.ro = new ResizeObserver(()=>map.resize()); mv.ro.observe(wrap); }
+}
+function p3MapFrame(follow){
+  const mv = p3Map; if (!mv || !mv.ready) return;
+  const map = mv.map;
+  if (!mv.startM){
+    mv.startM = addMarker(map, mapDot('mapDot mapDotStart'), mv.start.lon, mv.start.lat);
+    mv.endM = addMarker(map, mapDot('mapDot mapDotEnd'), mv.end.lon, mv.end.lat);
+  }
+  const pts = [];
+  S.intervals.forEach((iv,i)=>{
+    let r = nearestRecordByElapsed(iv.start);
+    if (r && (r.lat==null || r.lon==null)) r = nearestGpsRecordTo(r);
+    if (r) pts.push({lon:r.lon, lat:r.lat, n:i+1});
+  });
+  while (mv.badges.length>pts.length) mv.badges.pop().marker.remove();
+  pts.forEach((q,i)=>{
+    let it = mv.badges[i];
+    if (!it){ it = { marker:addMarker(map, mapDot('mapBadgeNum'), q.lon, q.lat), n:null }; mv.badges.push(it); }
+    if (it.n!==q.n){ it.marker.getElement().textContent = q.n; it.n = q.n; }
+    it.marker.setLngLat([q.lon, q.lat]);
+  });
+  const r = S.selection ? S.records[S.selection.idx] : null;
+  if (r && r.lat!=null && r.lon!=null){
+    if (!mv.cursor) mv.cursor = addMarker(map, mapDot('mapCursor'), r.lon, r.lat);
+    mv.cursor.setLngLat([r.lon, r.lat]);
+    const fol = $('#p3MapFollow');
+    if (follow && fol && fol.checked) map.jumpTo({ center:[r.lon, r.lat] });
+  } else if (mv.cursor){ mv.cursor.remove(); mv.cursor = null; }
+}
+(function(){
+  const sl = $('#p3Seek'); if (!sl) return;
+  let raf = 0;
+  sl.addEventListener('input', ()=>{
+    if (raf) return;
+    raf = requestAnimationFrame(()=>{ raf = 0; if (S.records.length) setSelection(Number(sl.value), null, 'chart'); });
+  });
+})();
 // (the actual refresh happens inside renderPowerChart, right after the
 // subdivide-target rescan, where ivX0/ivX1 are in scope — see there)
 
