@@ -491,6 +491,35 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
   .setBtn:hover{ opacity:.9; }
   .wideConfirm:hover{ opacity:.92; }
 }
+#pageA1{ --muted:var(--text-dim); --warn:#f2c14e; }
+#pageA1 h1{ font-size:18px; margin:0 0 4px; }
+#pageA1 .sub{ color:var(--muted); font-size:12px; margin-bottom:14px; line-height:1.6; }
+#pageA1 .panel{ background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:14px; margin-bottom:14px; }
+#pageA1 .row{ display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+#pageA1 .btn{ font:inherit; font-size:13px; color:var(--text); background:var(--surface-2); border:1px solid var(--border); border-radius:9px; padding:9px 14px; cursor:pointer; }
+#pageA1 button.primary,#pageA1 .btn.primary{ background:var(--accent); color:#06221e; border-color:var(--accent); font-weight:700; }
+#pageA1 button:disabled{ opacity:.4; }
+#pageA1 select{ font:inherit; font-size:13px; color:var(--text); background:var(--surface-2); border:1px solid var(--border); border-radius:9px; padding:8px 10px; }
+#pageA1 label.chk{ display:flex; gap:6px; align-items:center; font-size:12.5px; color:var(--muted); }
+#pageA1 #advStatus{ font-size:12.5px; color:var(--muted); margin-top:10px; line-height:1.6; white-space:pre-wrap; }
+#pageA1 .course{ margin-bottom:22px; }
+#pageA1 .course h2{ font-size:15px; margin:0 0 2px; display:flex; gap:8px; align-items:baseline; flex-wrap:wrap; }
+#pageA1 .course h2 small{ font-size:11.5px; color:var(--muted); font-weight:400; }
+#pageA1 .tableWrap{ overflow-x:auto; border:1px solid var(--border); border-radius:10px; margin:8px 0; }
+#pageA1 table{ border-collapse:collapse; width:100%; font-size:12.5px; white-space:nowrap; }
+#pageA1 th,#pageA1 td{ padding:7px 10px; text-align:right; border-bottom:1px solid var(--border); }
+#pageA1 th{ color:var(--muted); font-weight:600; background:var(--surface-2); position:sticky; top:0; }
+#pageA1 td:first-child,#pageA1 th:first-child{ text-align:left; }
+#pageA1 td.src{ text-align:left; color:var(--muted); max-width:220px; overflow:hidden; text-overflow:ellipsis; }
+#pageA1 tr:last-child td{ border-bottom:none; }
+#pageA1 .chartBox{ position:relative; border:1px solid var(--border); border-radius:10px; background:var(--surface); touch-action:none; overflow:hidden; }
+#pageA1 canvas.chart{ display:block; width:100%; height:340px; touch-action:none; }
+#pageA1 .chartTools{ position:absolute; top:6px; left:6px; display:flex; gap:4px; z-index:2; }
+#pageA1 .chartTools button{ padding:4px 10px; font-size:14px; border-radius:8px; background:rgba(29,32,37,.9); }
+#pageA1 .tip{ position:absolute; z-index:3; pointer-events:none; background:rgba(0,0,0,.88); border:1px solid var(--accent); border-radius:8px; padding:6px 9px; font-size:12px; line-height:1.5; white-space:nowrap; transform:translate(-50%,-100%); }
+#pageA1 .stat{ font-size:12.5px; color:var(--text); margin:6px 0 0; line-height:1.7; }
+#pageA1 .stat b{ color:var(--accent); }
+#pageA1 .hint{ font-size:11px; color:var(--muted); margin-top:4px; }
 </style>
 </head>
 <body>
@@ -505,8 +534,34 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
     <button id="goAnalyzer" class="titleBtn" type="button"><b>アナライザー</b><span>ライドを区間に分けて解析する</span></button>
     <button id="goViewer" class="titleBtn" type="button"><b>ビュワー</b><span>解析済みのライドを振り返る・比べる</span></button>
     <button id="goEditor" class="titleBtn" type="button"><b>エディター</b><span>GPXファイルを分割・統合・逆転する</span></button>
+    <button id="goAdv" class="titleBtn" type="button"><b>アドバンスドアナライザー</b><span>CSVから回帰直線を求める(開発者向け)</span></button>
     <div class="titleVer" id="titleVer"></div>
   </div>
+</div>
+
+<div id="pageA1" class="page hidden">
+<div class="panel">
+  <div class="panel-head"><button id="aBack" class="small ghost icon-btn" type="button" title="タイトルへ">←</button><h2>アドバンスドアナライザー(開発者向け)</h2></div>
+  <div class="sub">Quaniterの「CSVを保存」で出力したCSVを、フォルダごとまとめて読み込みます。区間(コース)ごとに記録を日付順に並べ、パワーウェイトレシオ(PWR)と所要時間の関係を散布図と回帰直線で見ます。ファイルはどこにも送信されません。</div>
+
+  <div class="panel">
+    <div class="row">
+      <label class="btn primary" for="advDirInput">📁 フォルダを選ぶ</label>
+      <input type="file" id="advDirInput" webkitdirectory directory multiple hidden>
+      <label class="btn" for="advFileInput">CSVを選ぶ(複数可)</label>
+      <input type="file" id="advFileInput" accept=".csv,text/csv" multiple hidden>
+      <button id="advPickDir" class="hidden" type="button">フォルダを選ぶ(PC)</button>
+    </div>
+    <div class="row" style="margin-top:12px;">
+      <span style="font-size:12.5px;color:var(--muted);">所要時間 T:</span>
+      <select id="advTimeSel"><option value="net">ネットタイム</option><option value="gross">グロスタイム</option></select>
+      <label class="chk"><input type="checkbox" id="advShowUnnamed"> 名前のない区間(区間N)も含める</label>
+    </div>
+    <div id="advStatus">フォルダを選ぶと、その下にあるCSVをすべて探します。</div>
+  </div>
+
+  <div id="advResults"></div>
+</div>
 </div>
 
 <div id="pageE1" class="page hidden">
@@ -741,7 +796,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
   <div class="panel">
     <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px; flex-wrap:wrap; margin-bottom:8px;">
       <div class="metricChecks" id="powerChartMetricChecks" style="columns:2; margin-bottom:0;"></div>
-      <div class="seg" id="powerChartXModeSeg">
+      <div class="seg" id="powerChartXModeSeg" style="display:none;">
         <button data-x="clock" class="on">時刻</button>
         <button data-x="elapsed">経過時間</button>
         <button data-x="dist">距離</button>
@@ -756,14 +811,13 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
       <button id="subdivideApplyBtn" class="small ghost" type="button" disabled>区間を分割</button>
       <button id="subdivideResetBtn" class="small ghost" type="button" disabled>解除</button>
     </div>
-    <div class="hint" style="margin-bottom:4px;">横軸の目盛りは4項目を同時に表示します(選んだ項目が棒グラフの基準)。グラフをタップするとシーク位置が動き、地図と連動します。2本指で拡大・縮小、スクロールで移動できます。</div>
-    <div id="powerChartWrap" style="position:relative; overflow-x:auto; touch-action:pan-x pan-y;"></div>
-    <input type="range" id="p3Seek" min="0" max="0" value="0" step="1" style="width:100%; margin:6px 0 2px;" aria-label="シーク">
-    <div class="msg" id="powerChartDetail" style="display:none;"></div>
-    <div id="p3MapBox" style="margin-top:8px;">
+    <div class="hint" style="margin-bottom:4px;">横軸の目盛りは4項目を同時に表示します。縦軸・横軸のタイトル付近の「▲▼」で項目を変えられます(横軸は選んだ項目が棒グラフの基準)。グラフをタップするとシーク位置が動き、地図と連動します。2本指で拡大・縮小、スクロールで移動できます。</div>
+    <div id="p3MapBox" style="margin-bottom:8px;">
       <label class="hint" style="display:flex;align-items:center;gap:6px;margin-bottom:4px;"><input type="checkbox" id="p3MapFollow" checked> シーク位置に地図を追従</label>
       <div id="p3MapWrap"></div>
     </div>
+    <div id="powerChartWrap" style="position:relative; overflow-x:auto; touch-action:pan-x pan-y;"><div id="p3Inner" style="position:relative; width:max-content;"><div id="p3SvgHost"></div><div id="p3Touch" style="position:absolute; inset:0; touch-action:pan-x pan-y;"></div></div></div>
+    <div class="msg" id="powerChartDetail" style="display:none;"></div>
     <div class="exportRow">
       <button id="expPowerChartPng" class="small" disabled>PNGを保存</button>
     </div>
@@ -815,6 +869,12 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
             <option value="off">OFF</option>
             <option value="first">開始行</option>
             <option value="last" selected>最終行</option>
+          </select>
+        </label>
+        <label class="field" style="max-width:260px;">全区間の解析情報の範囲
+          <select id="summaryScopeSelect">
+            <option value="intervals" selected>区間に含まれる部分のみ</option>
+            <option value="all">スタートから停止まで全て</option>
           </select>
         </label>
         <label class="field" style="max-width:220px;">停止時間にタイマー停止時間を含める
@@ -891,7 +951,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
 // (this session's own publish count so far) is reconstructed from the
 // conversation itself rather than mechanically verified — best-effort, not
 // guaranteed exact. Increment by exactly 1 on every future publish.
-const APP_VERSION = 203;
+const APP_VERSION = 204;
 
 /* ============ FIT PARSER ============ */
 const FIT_EPOCH = 631065600; // seconds between 1970-01-01 and 1989-12-31 (FIT epoch)
@@ -1082,6 +1142,7 @@ const S = {
   weight: null,
   numberingStyle: 'circled', // 'off' | 'arabic' | 'circled' | 'kanji'
   summaryRowMode: 'last', // 'off' | 'first' | 'last'
+  summaryScope: 'intervals', // 'intervals' (only what the sections cover) | 'all' (the whole recording, start to stop)
   dirty: false, // true once something has changed since the last JSON save
   powerChartMetrics: ['avgPower','elevation'], // up to 4, order = axis stacking order
   powerChartXMode: 'clock', // 'clock' | 'elapsed' | 'dist'
@@ -1544,7 +1605,7 @@ $('#toPage2Btn').addEventListener('click', ()=>{ showPage(2); });
 async function handleFile(file){
   // Replacing an already-loaded, not-yet-saved analysis: offer to save it
   // first, since importing always starts the new file from a clean slate.
-  if (S.records.length && S.dirty){
+  if (S.records.length && isDirty()){
     const choice = await askChoice('区間解析情報を保存しますか?', ['はい','いいえ','キャンセル']);
     if (!choice || choice==='キャンセル') return; // abort opening the new file entirely
     if (choice==='はい'){
@@ -2157,7 +2218,7 @@ async function processFitData(arrayBuffer, displayName, opts){
     }
     S.resultColumns = COLUMN_DEFS.map(d=>({key:d.k, enabled:DEFAULT_ENABLED_COLUMNS.includes(d.k)}));
     S.sensors = { hr:true, power:true, cad:true };
-    S.metrics = ['speed','elevation']; S.xMode = 'clock'; S.ftp = null; S.weight = null; S.numberingStyle = 'circled'; S.summaryRowMode = 'last';
+    S.metrics = ['speed','elevation']; S.xMode = 'clock'; S.ftp = null; S.weight = null; S.numberingStyle = 'circled'; S.summaryRowMode = 'last'; S.summaryScope = 'intervals';
     S.grossIncludesStoppedTime = true; S.avgGradientMethod = 'diff'; S.cadZero = false; S.rideComment = ''; S.gear = null; S.presetName = null;
     applyDisplayPrefs(); // carries 重量/表示列 etc. over from whatever ride was analysed last
     S.ftp = null;        // the FTP is entered anew for every ride; the columns that need it start switched off
@@ -2165,13 +2226,13 @@ async function processFitData(arrayBuffer, displayName, opts){
     S.powerChartMetrics = ['avgPower','elevation']; S.powerChartXMode = 'clock';
     S.powerChartSubdivisions = {}; S.powerChartSubdivideTargetIdx = null; S.powerChartSubdivideN = 2;
     powerChartDetailTarget = null; p3Reset();
-    { const dbox = $('#powerChartDetail'); if (dbox){ dbox.style.display = 'none'; dbox.innerHTML = ''; } const cw = $('#powerChartWrap'); if (cw) cw.innerHTML = ''; }   // the previous ride's chart and its status must not linger
+    { const dbox = $('#powerChartDetail'); if (dbox){ dbox.style.display = 'none'; dbox.innerHTML = ''; } const cw = $('#p3SvgHost'); if (cw) cw.innerHTML = ''; }   // the previous ride's chart and its status must not linger
     S.timelineSelectedId = null;
     ivHistory = []; ivRedoStack = [];
     mapChartInitialized = false;
     S.armed = null;
     S.selection = {idx: 0}; // pre-select the very start of the ride, so it's already marked on the map/chart once page 2 opens
-    S.dirty = false;
+    S.dirty = false; markSaved();
     $('#fileMeta').textContent = displayName+' ・ '+fmtHMS(records[records.length-1].elapsed)+' ・ '+records.length.toLocaleString()+'ポイント';
     $('#app').classList.remove('hidden');
     $('#saveProjectAsTop').disabled = false;
@@ -2191,7 +2252,7 @@ async function processFitData(arrayBuffer, displayName, opts){
     // renderTimeline() (and some of the above) call saveState(), which marks
     // S.dirty=true as a side effect — but this is the initial render of a
     // freshly-loaded, unmodified file, not a user change, so clear it again.
-    S.dirty = false;
+    S.dirty = false; markSaved();
   } catch(err){
     showHeaderMsg('解析エラー: '+err.message, true);
   }
@@ -2200,6 +2261,36 @@ async function processFitData(arrayBuffer, displayName, opts){
 /* ============ PERSISTENCE (localStorage + JSON export/import) ============ */
 const STORAGE_KEY = 'intervalAnalyzer.session.v1';
 
+// What counts as "changed since the last save": the content of the saved JSON
+// (sections, comments, photos, settings), compared with a snapshot taken when
+// the ride was loaded / last saved. Merely touching the chart view (which
+// metrics or x axis page 2/3 show) does not count.
+function dirtySig(){
+  const o = serializeState();
+  ['metrics','xMode','powerChartMetrics','powerChartXMode'].forEach(k=> delete o[k]);
+  return JSON.stringify(o);
+}
+function markSaved(){ try{ S.savedSig = dirtySig(); }catch(e){ S.savedSig = null; } }
+function isDirty(){
+  if (!S.records.length) return false;
+  if (S.savedSig==null) return !!S.dirty;
+  try{ return dirtySig()!==S.savedSig; }catch(e){ return !!S.dirty; }
+}
+function resetAnalyzer(){
+  if (!S.records.length) return;
+  destroyMainMap(); p3Reset();
+  if (S.previewMap){ try{ S.previewMap.remove(); }catch(e){} S.previewMap = null; }
+  previewSig = null;
+  S.records = []; S.intervals = []; S.laps = []; S.selection = null; S.photos = []; S.comments = [];
+  S.hasGps = false; S.dirty = false; S.savedSig = null; S.rawFitBytes = null;
+  ivHistory = []; ivRedoStack = []; lastResults = null; mapChartInitialized = false; powerChartDetailTarget = null;
+  S.powerChartSubdivisions = {}; S.powerChartSubdivideTargetIdx = null;
+  $('#app').classList.add('hidden');
+  $('#fileMeta').textContent = '';
+  $('#fileInput').value = '';
+  $('#saveProjectAsTop').disabled = true; $('#importSettingsBtn').disabled = true;
+  hideHeaderMsg();
+}
 function serializeState(){
   // Interval 1's start is always exported as elapsed=0s, distance=0km — the
   // rest are shifted by the same amount — so a "net segment" analysis (e.g.
@@ -2241,6 +2332,7 @@ function serializeState(){
     age: S.age, sex: S.sex,
     numberingStyle: S.numberingStyle,
     summaryRowMode: S.summaryRowMode,
+    summaryScope: S.summaryScope,
     cadZero: !!S.cadZero,
     grossIncludesStoppedTime: !!S.grossIncludesStoppedTime,
     avgGradientMethod: S.avgGradientMethod,
@@ -2294,7 +2386,7 @@ function saveDisplayPrefs(){
   try{
     localStorage.setItem(DISPLAY_PREFS_KEY, JSON.stringify({
       resultColumns: S.resultColumns, ftp: S.ftp, weight: S.weight, age: S.age, sex: S.sex,
-      summaryRowMode: S.summaryRowMode, grossIncludesStoppedTime: S.grossIncludesStoppedTime,
+      summaryRowMode: S.summaryRowMode, summaryScope: S.summaryScope, grossIncludesStoppedTime: S.grossIncludesStoppedTime,
       avgGradientMethod: S.avgGradientMethod, cadZero: !!S.cadZero,
     }));
   }catch(e){}
@@ -2317,6 +2409,7 @@ function applyDisplayPrefs(){
   if (p.sex) S.sex = p.sex;
   if (p.weight!=null) S.weight = p.weight;
   if (p.summaryRowMode) S.summaryRowMode = p.summaryRowMode;
+  if (['intervals','all'].includes(p.summaryScope)) S.summaryScope = p.summaryScope;
   if (p.grossIncludesStoppedTime!=null) S.grossIncludesStoppedTime = p.grossIncludesStoppedTime;
   if (p.avgGradientMethod) S.avgGradientMethod = p.avgGradientMethod;
   S.cadZero = !!p.cadZero;
@@ -2392,6 +2485,7 @@ function applyState(state, mode){
   if (state.xMode && ['elapsed','clock','dist'].includes(state.xMode)) S.xMode = state.xMode;
   if (['off','arabic','circled','kanji'].includes(state.numberingStyle)) S.numberingStyle = state.numberingStyle;
   if (['off','first','last'].includes(state.summaryRowMode)) S.summaryRowMode = state.summaryRowMode;
+  if (['intervals','all'].includes(state.summaryScope)) S.summaryScope = state.summaryScope;
   if (state.cadZero!=null) S.cadZero = !!state.cadZero;
   if (typeof state.rideComment==='string') S.rideComment = state.rideComment;
   if (state.grossIncludesStoppedTime!=null) S.grossIncludesStoppedTime = !!state.grossIncludesStoppedTime;
@@ -2430,6 +2524,7 @@ function syncControlsFromState(){
   if ($('#sexSelect')) $('#sexSelect').value = S.sex || '';
   const sumEl = $('#summaryRowSelect');
   if (sumEl) sumEl.value = S.summaryRowMode;
+  const scopeEl = $('#summaryScopeSelect'); if (scopeEl) scopeEl.value = S.summaryScope;
   syncSensorSelects();
   const grossEl = $('#grossStoppedSelect');
   if (grossEl) grossEl.value = S.grossIncludesStoppedTime ? 'include' : 'exclude';
@@ -2467,6 +2562,11 @@ $('#resultSettingsBtn').addEventListener('click', ()=>{ $('#resultSettingsModal'
 $('#resultSettingsClose').addEventListener('click', ()=>{
   $('#resultSettingsModal').classList.add('hidden');
   if (lastResults) computeAndRenderResults();   // apply what was changed
+});
+$('#summaryScopeSelect').addEventListener('change', e=>{
+  S.summaryScope = e.target.value;
+  saveState();
+  if (lastResults) computeAndRenderResults();
 });
 $('#summaryRowSelect').addEventListener('change', e=>{
   S.summaryRowMode = e.target.value;
@@ -2533,12 +2633,12 @@ function presetBuild(sel){
   $('#presetLoadBtn').disabled = $('#presetDelBtn').disabled = !list.length;
 }
 function presetCurrent(){
-  return { resultColumns:S.resultColumns.map(c=>({key:c.key, enabled:!!c.enabled})), sensors:{...S.sensors}, summaryRowMode:S.summaryRowMode,
+  return { resultColumns:S.resultColumns.map(c=>({key:c.key, enabled:!!c.enabled})), sensors:{...S.sensors}, summaryRowMode:S.summaryRowMode, summaryScope:S.summaryScope,
     grossIncludesStoppedTime:S.grossIncludesStoppedTime, avgGradientMethod:S.avgGradientMethod, cadZero:!!S.cadZero };
 }
 function presetNorm(d){
   return JSON.stringify({ c:(d.resultColumns||[]).map(c=>c.key+':'+(c.enabled?1:0)), s:[d.sensors&&d.sensors.hr!==false, d.sensors&&d.sensors.power!==false, d.sensors&&d.sensors.cad!==false].map(x=>x?1:0),
-    r:d.summaryRowMode, g:d.grossIncludesStoppedTime ? 1 : 0, a:d.avgGradientMethod, z:d.cadZero ? 1 : 0 });
+    r:d.summaryRowMode, sc:d.summaryScope==='all' ? 'all' : 'intervals', g:d.grossIncludesStoppedTime ? 1 : 0, a:d.avgGradientMethod, z:d.cadZero ? 1 : 0 });
 }
 // the name is shown only while the preset saved in this app under that name holds exactly the settings now in force
 function presetNameShown(){
@@ -2548,7 +2648,7 @@ function presetNameShown(){
 }
 function presetDetailText(d){
   const on = d.resultColumns.filter(c=>c.enabled && COL_META[c.key]).map(c=>COL_META[c.key].label);
-  return '全区間の解析情報: '+({off:'OFF', first:'開始行', last:'最終行'}[d.summaryRowMode]||'--')+' / 停止時間にタイマー停止時間を'+(d.grossIncludesStoppedTime ? '含める' : '含めない')+' / 平均斜度: '+(d.avgGradientMethod==='gain' ? '区間内の獲得標高' : '始点/終点の標高差')+' / 平均ケイデンスの0: '+(d.cadZero ? '含める' : '含めない')+
+  return '全区間の解析情報: '+({off:'OFF', first:'開始行', last:'最終行'}[d.summaryRowMode]||'--')+(d.summaryScope==='all' ? '(スタートから停止まで全て)' : '')+' / 停止時間にタイマー停止時間を'+(d.grossIncludesStoppedTime ? '含める' : '含めない')+' / 平均斜度: '+(d.avgGradientMethod==='gain' ? '区間内の獲得標高' : '始点/終点の標高差')+' / 平均ケイデンスの0: '+(d.cadZero ? '含める' : '含めない')+
     ' / センサー: 心拍'+(d.sensors.hr!==false ? 'あり' : 'なし')+'・パワー'+(d.sensors.power!==false ? 'あり' : 'なし')+'・ケイデンス'+(d.sensors.cad!==false ? 'あり' : 'なし')+' / 表示項目('+on.length+'): '+on.join('、');
 }
 function presetStatus(){
@@ -2567,6 +2667,7 @@ function presetApply(d){
   }
   if (d.sensors) S.sensors = { hr:d.sensors.hr!==false, power:d.sensors.power!==false, cad:d.sensors.cad!==false };
   if (['off','first','last'].includes(d.summaryRowMode)) S.summaryRowMode = d.summaryRowMode;
+  if (['intervals','all'].includes(d.summaryScope)) S.summaryScope = d.summaryScope;
   if (d.grossIncludesStoppedTime!=null) S.grossIncludesStoppedTime = !!d.grossIncludesStoppedTime;
   if (d.avgGradientMethod) S.avgGradientMethod = d.avgGradientMethod;
   S.cadZero = !!d.cadZero;
@@ -2677,7 +2778,7 @@ async function saveProjectJsonFlow(btn){
   }
   const blob = await zip.generateAsync({type:'blob'});
   const ok = await saveAs('project', S.fileBaseName+'.zip', blob, 'application/zip', 'zip', 'ZIP', btn);
-  if (ok){ S.dirty = false; if (nPhotos) showHeaderMsg('写真'+nOrig+'枚は元の画質で、'+nPhotos+'件の縮小画像を含めて保存しました'+(S.photos.some(p=>p.kind==='video')?'(動画の元ファイルは含みません)':''), false); }
+  if (ok){ S.dirty = false; markSaved(); if (nPhotos) showHeaderMsg('写真'+nOrig+'枚は元の画質で、'+nPhotos+'件の縮小画像を含めて保存しました'+(S.photos.some(p=>p.kind==='video')?'(動画の元ファイルは含みません)':''), false); }
 }
 $('#saveProjectAsTop').addEventListener('click', (e)=> saveProjectJsonFlow(e.currentTarget));
 $('#importSettingsBtn').addEventListener('click', ()=>{ $('#importSettingsFile').click(); });
@@ -5243,7 +5344,16 @@ function computeAndRenderResults(){
   // the power chart below always uses the plain per-interval rows.
   let displayRows = rows;
   if (S.summaryRowMode !== 'off'){
-    const summary = computeSummaryRow(rows);
+    let summary = computeSummaryRow(rows);
+    if (S.summaryScope==='all' && S.records.length){
+      // the whole recording, from the very first record to the last — gaps between (and outside) the sections included
+      const all = computeIntervalStats({ name:'ライド全体', start:S.records[0].elapsed, end:S.records[S.records.length-1].elapsed }, 0);
+      all.name = 'ライド全体'; all.isSummary = true;
+      all.durationCum = all.duration; all.netTimeCum = all.netTime; all.distanceCum = all.distance;
+      all.stoppedTime2 = all.stoppedTime1;
+      all.stoppedTime = all.stoppedTime1;
+      summary = all;
+    }
     if (summary) displayRows = S.summaryRowMode==='first' ? [summary, ...rows] : [...rows, summary];
   }
   lastResults = {cols, rows: displayRows};
@@ -5336,40 +5446,91 @@ $$('#powerChartXModeSeg button').forEach(btn=>{
   });
 });
 const POWER_CHART_WIDTH_MIN = 0.2, POWER_CHART_WIDTH_MAX = 6, POWER_CHART_WIDTH_STEP = 0.1;
-// pinch the graph to change its width continuously (the point between the fingers stays put)
+// Everything on the graph is touched through the transparent #p3Touch layer, which is never replaced:
+// the SVG underneath can therefore be redrawn on every pinch step (the browser would drop the touch if
+// the element under the fingers were swapped out), so the graph follows the fingers live.
+function p3Rerender(){ if (lastResults) renderPowerChart(lastResults.rows.filter(r=>!r.isSummary)); }
+let p3LastPinchEnd = 0;
 (function(){
-  const wrap = $('#powerChartWrap');
-  let g = null;
+  const wrap = $('#powerChartWrap'), layer = $('#p3Touch');
+  let g = null, raf = 0;
   const dist = t=> Math.hypot(t[0].clientX-t[1].clientX, t[0].clientY-t[1].clientY);
-  wrap.addEventListener('touchstart', e=>{
+  layer.addEventListener('touchstart', e=>{
     if (e.touches.length===2){
       const r = wrap.getBoundingClientRect(), mid = (e.touches[0].clientX+e.touches[1].clientX)/2 - r.left;
-      g = { d:Math.max(1, dist(e.touches)), mult:S.powerChartWidthMult, mid, scrollW:Math.max(1, wrap.scrollWidth), frac:(wrap.scrollLeft+mid)/Math.max(1, wrap.scrollWidth) };
+      g = { d:Math.max(1, dist(e.touches)), mult:S.powerChartWidthMult, mid, frac:(wrap.scrollLeft+mid)/Math.max(1, wrap.scrollWidth), target:null };
     }
   }, {passive:true});
-  // while the fingers are down the existing SVG is only stretched (replacing it would make the
-  // browser drop the touch); the real redraw happens when the fingers lift
-  wrap.addEventListener('touchmove', e=>{
+  layer.addEventListener('touchmove', e=>{
     if (!g || e.touches.length<2) return;
     e.preventDefault();
     g.target = Math.max(POWER_CHART_WIDTH_MIN, Math.min(POWER_CHART_WIDTH_MAX, g.mult*dist(e.touches)/g.d));
-    const svg = wrap.querySelector('svg'); if (!svg) return;
-    svg.style.transformOrigin = (g.frac*g.scrollW)+'px 0';
-    svg.style.transform = 'scaleX('+(g.target/g.mult)+')';
+    if (raf) return;
+    raf = requestAnimationFrame(()=>{
+      raf = 0;
+      if (!g || g.target==null) return;
+      S.powerChartWidthMult = g.target;
+      p3Rerender();
+      wrap.scrollLeft = g.frac*wrap.scrollWidth - g.mid;
+    });
   }, {passive:false});
   const end = e=>{
-    if (!g || e.touches.length>=2) return;
-    const done = g; g = null;
-    if (done.target!=null){
-      S.powerChartWidthMult = done.target;
-      if (lastResults) renderPowerChart(lastResults.rows.filter(r=>!r.isSummary));
-      wrap.scrollLeft = done.frac*wrap.scrollWidth - done.mid;
-      saveState();
-    }
+    if (!g) return;
+    if (e.touches.length>=2) return;
+    const done = g; g = null; p3LastPinchEnd = Date.now();
+    if (done.target!=null) saveState();
   };
-  wrap.addEventListener('touchend', end); wrap.addEventListener('touchcancel', end);
-  wrap.addEventListener('gesturestart', e=>e.preventDefault());   // Safari: no page zoom while pinching the graph
+  layer.addEventListener('touchend', end); layer.addEventListener('touchcancel', end);
+  layer.addEventListener('gesturestart', e=>e.preventDefault());   // Safari: no page zoom while pinching the graph
+  layer.addEventListener('click', e=>{
+    if (Date.now()-p3LastPinchEnd < 400) return;
+    p3Tap(e.clientX, e.clientY);
+  });
 })();
+// a tap: on a ▲▼ button it opens that axis' picker, anywhere else on the plot it moves the seek there
+function p3Tap(cx, cy){
+  const svg = $('#p3SvgHost svg');
+  if (!svg || !p3Link || !powerChartPlotBounds) return;
+  const {W, H, padT, padB} = powerChartPlotBounds;
+  const r = svg.getBoundingClientRect();
+  const sx = (cx-r.left)/r.width*W, sy = (cy-r.top)/r.height*H;
+  const btn = p3AxisBtns.find(b=> sx>=b.x-3 && sx<=b.x+b.w+3 && sy>=b.y-3 && sy<=b.y+b.h+3);
+  if (btn){ p3AxisPick(btn); return; }
+  if (sy<padT || sy>H-padB) return;
+  const tapT = p3Link.xScaleInv(sx);
+  const rec = p3Link.recAtX(tapT);
+  if (!rec) return;
+  p3Internal = true; try{ setSelection(p3RecIndex(rec), null, 'chart'); } finally { p3Internal = false; }
+  const idx = powerChartBarItems.findIndex(it=> it && tapT>=p3Link.ivX0(it.iv) && tapT<=p3Link.ivX1(it.iv));
+  if (idx<0){ p3ApplySelection(); return; }
+  showPowerChartDetail(idx, tapT);
+  const item = powerChartBarItems[idx];
+  S.powerChartSubdivideTargetIdx = item.origIdx;
+  $('#subdivideApplyBtn').disabled = S.powerChartSubdivisions[item.origIdx]!=null;
+  $('#subdivideResetBtn').disabled = false;
+  p3Rerender();
+}
+function p3AxisPick(b){
+  if (b.kind==='x'){
+    const items = [['clock','時刻'],['elapsed','経過時間'],['dist','距離'],['kcal','消費エネルギー']]
+      .filter(it=> it[0]!=='kcal' || p3KcalCum())
+      .map(it=>({ value:it[0], label:it[1]+(it[0]===S.powerChartXMode?'(現在)':'') }));
+    showAxisPicker(items, v=>{
+      S.powerChartXMode = v;
+      $$('#powerChartXModeSeg button').forEach(x=> x.classList.toggle('on', x.dataset.x===v));
+      saveState(); p3Rerender();
+    });
+    return;
+  }
+  const cur = S.powerChartMetrics.filter(k=>POWER_CHART_METRICS[k]);
+  const items = Object.keys(POWER_CHART_METRICS).filter(pcMetricAvailable).map(k=>({ value:k, label:POWER_CHART_METRICS[k].label+(k===cur[b.index]?'(現在)':(cur.includes(k)?'(入れ替え)':'')) }));
+  showAxisPicker(items, k=>{
+    const ms = cur.slice(), j = ms.indexOf(k);
+    if (j>=0) [ms[b.index], ms[j]] = [ms[j], ms[b.index]]; else ms[b.index] = k;
+    S.powerChartMetrics = ms;
+    buildPowerChartMetricChecks(); saveState(); p3Rerender();
+  });
+}
 // ctrl/⌘ + wheel (trackpad pinch) zooms the same way
 $('#powerChartWrap').addEventListener('wheel', e=>{
   if (!(e.ctrlKey || e.metaKey)) return;
@@ -5475,7 +5636,7 @@ function p3KcalCum(){
 }
 function p3RecIndex(rec){ p3KcalCum(); const i = p3KcalCache.idx.get(rec); return i==null ? 0 : i; }
 function renderPowerChart(rows){
-  const wrap = $('#powerChartWrap');
+  const wrap = $('#p3SvgHost');
   const metrics = S.powerChartMetrics.filter(k=>POWER_CHART_METRICS[k]);
   const primary = metrics[0];
   const primaryDef = POWER_CHART_METRICS[primary];
@@ -5618,6 +5779,7 @@ function renderPowerChart(rows){
   });
 
   let svg = '';
+  p3AxisBtns = []; p3AxisHtml = '';
   // title block, top-left, outside the plot area: start date/time + city
   // (both larger, same line), then the source file's name (smaller) below —
   // left-aligned to a position fixed to line up with the leftmost edge of
@@ -5658,6 +5820,7 @@ function renderPowerChart(rows){
     const titleX = onLeft ? axisX-23 : axisX+27;
     const titleRotate = onLeft ? -90 : 90;
     svg += '<text x="'+titleX+'" y="'+titleY+'" text-anchor="middle" font-size="10" font-weight="700" fill="'+def.color+'" transform="rotate('+titleRotate+' '+titleX+' '+titleY+')">'+def.label+(def.unit?' ('+def.unit+')':'')+'</text>';
+    p3AxisButton({kind:'y', index:mi, x:titleX-15, y:padT-24, w:30, h:15, color:def.color});
   });
 
   // x ticks. Distance mode, and elapsed-time mode when it's the selected
@@ -5757,6 +5920,10 @@ function renderPowerChart(rows){
   }
   // a small caption at the far left names what each of the three rows is
   const capLines = rowOrder.map(k=>ROW_CAP[k]);
+  {
+    const cw0 = Array.from(capLines[0]).reduce((a2,c)=> a2 + (c.charCodeAt(0)>255 ? 9 : 5), 0);
+    p3AxisButton({kind:'x', x:Math.max(2, padL-46-cw0-36), y:H-padB+6, w:30, h:14, color:cssVar('--text-dim')});
+  }
   capLines.forEach((str,i)=>{
     svg += '<text x="'+(padL-46)+'" y="'+(H-padB+16+i*13)+'" text-anchor="end" font-size="9" font-weight="600" fill="'+cssVar('--text-faint')+'">'+str+'</text>';
   });
@@ -6038,34 +6205,11 @@ function renderPowerChart(rows){
   });
   const bars = primaryBarsSvg;
 
-  svg = '<svg viewBox="0 0 '+W+' '+H+'" width="'+(W*SCALE)+'" height="'+(H*SCALE)+'" style="display:block;" font-family="Inter, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif" xmlns="http://www.w3.org/2000/svg">'+svg+bars+'</svg>';
+  svg = '<svg viewBox="0 0 '+W+' '+H+'" width="'+(W*SCALE)+'" height="'+(H*SCALE)+'" style="display:block;" font-family="Inter, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif" xmlns="http://www.w3.org/2000/svg">'+svg+bars+p3AxisHtml+'</svg>';
   wrap.innerHTML = svg;
-  wrap.querySelectorAll('.powerBar').forEach(el=>{
-    el.addEventListener('click', e=>{
-      const idx = Number(el.dataset.idx);
-      const svgEl = wrap.querySelector('svg');
-      const svgRect = svgEl.getBoundingClientRect();
-      const tapX = (e.clientX-svgRect.left)/svgRect.width * W;
-      const tapT = xScaleInv(tapX);
-      { const rec = recAtX(tapT); p3Internal = true; try{ setSelection(p3RecIndex(rec), null, 'chart'); } finally { p3Internal = false; } }
-      showPowerChartDetail(idx, tapT);
-      const item = powerChartBarItems[idx];
-      if (item){
-        // tapping any bar — whether a whole not-yet-split interval, or one
-        // slice of an already-split one — selects that interval as the
-        // "区間を分割"/"解除" target. If it's already split, "区間を分割" is
-        // disabled (must be undone first); otherwise "解除" just clears the
-        // pending selection.
-        S.powerChartSubdivideTargetIdx = item.origIdx;
-        $('#subdivideApplyBtn').disabled = S.powerChartSubdivisions[item.origIdx]!=null;
-        $('#subdivideResetBtn').disabled = false;
-        renderPowerChart(lastResults.rows.filter(r=>!r.isSummary));
-      }
-    });
-  });
   $('#expPowerChartPng').disabled = false;
   p3Link = { xOfRec, recAtX, ivX0, ivX1, xScale, xScaleInv, kcalOfRec };
-  powerChartPlotBounds = {padT, padB, H, W};
+  powerChartPlotBounds = {padT, padB, padL, padR, H, W};
   powerChartXScaleFn = xScale;
   applyPowerChartDetailHighlight();
   // Refresh the detail popup's text too, re-resolving from the line's own
@@ -6133,6 +6277,12 @@ function showPowerChartDetail(idx, tapT){
 }
 
 /* ---- page 3: seek (shared with page 2 via S.selection) + map ---- */
+function p3AxisButton(b){
+  p3AxisBtns.push(b);
+  p3AxisHtml += '<g class="p3Ax"><rect x="'+b.x+'" y="'+b.y+'" width="'+b.w+'" height="'+b.h+'" rx="4" fill="'+cssVar('--surface-2')+'" stroke="'+b.color+'" stroke-opacity="0.6" style="pointer-events:none;"/>'+
+    '<text x="'+(b.x+b.w/2)+'" y="'+(b.y+b.h/2+3.2)+'" text-anchor="middle" font-size="9" fill="'+b.color+'" style="pointer-events:none;">▲▼</text></g>';
+}
+let p3AxisBtns = [], p3AxisHtml = '';
 let p3Link = null;       // the latest render's axis helpers
 let p3Internal = false;  // true while page 3 itself is moving the seek (it re-renders on its own)
 let p3Dirty = false;     // the seek moved while page 3 was not on screen
@@ -6162,21 +6312,14 @@ function p3ApplySelection(){
     if (px < wrap.scrollLeft+20 || px > wrap.scrollLeft+wrap.clientWidth-20) wrap.scrollLeft = px - wrap.clientWidth/2;
   }
 }
-function p3SyncSlider(){
-  const sl = $('#p3Seek'); if (!sl || !S.records.length) return;
-  sl.max = S.records.length-1;
-  if (S.selection) sl.value = S.selection.idx;
-}
 // called from setSelection()
 function p3OnSeek(source){
-  p3SyncSlider();
   if (p3Map && p3Map.ready) p3MapFrame(source!=='p3map');
   if (p3Internal) return;
   if (currentPageNum!==3){ p3Dirty = true; return; }
   p3ApplySelection();
 }
 function p3Enter(){
-  p3SyncSlider();
   const box = $('#p3MapBox');
   if (box) box.style.display = S.hasGps ? '' : 'none';
   if (S.hasGps) p3BuildMap();
@@ -6240,14 +6383,7 @@ function p3MapFrame(follow){
     if (follow && fol && fol.checked) map.jumpTo({ center:[r.lon, r.lat] });
   } else if (mv.cursor){ mv.cursor.remove(); mv.cursor = null; }
 }
-(function(){
-  const sl = $('#p3Seek'); if (!sl) return;
-  let raf = 0;
-  sl.addEventListener('input', ()=>{
-    if (raf) return;
-    raf = requestAnimationFrame(()=>{ raf = 0; if (S.records.length) setSelection(Number(sl.value), null, 'chart'); });
-  });
-})();
+
 // (the actual refresh happens inside renderPowerChart, right after the
 // subdivide-target rescan, where ivX0/ivX1 are in scope — see there)
 
@@ -6264,6 +6400,7 @@ $('#expPowerChartPng').addEventListener('click', ()=>{
   const clone = svgEl.cloneNode(true);
   const selLine = clone.querySelector('#powerChartSelLine');
   if (selLine) selLine.remove();
+  clone.querySelectorAll('.p3Ax').forEach(n=>n.remove());
   const selFill = clone.querySelector('#powerChartSelFill');
   if (selFill) selFill.remove();
   const w = svgEl.width.baseVal.value, h = svgEl.height.baseVal.value;
@@ -6493,8 +6630,20 @@ $('#expJpg').addEventListener('click', async ()=>{
 $('#titleVer').textContent = 'v'+APP_VERSION;
 $('#goAnalyzer').addEventListener('click', ()=> showPage(1));
 $('#goViewer').addEventListener('click', ()=> showPage('V1'));
-$('#homeBtn').addEventListener('click', ()=> showPage(0));
+$('#homeBtn').addEventListener('click', async ()=>{
+  if (S.records.length){
+    if (isDirty()){
+      const choice = await askChoice('区間解析情報を保存しますか?', ['はい','いいえ','キャンセル']);
+      if (!choice || choice==='キャンセル') return;
+      if (choice==='はい') await saveProjectJsonFlow($('#saveProjectAsTop'));
+    }
+    resetAnalyzer();
+  }
+  showPage(0);
+});
 $('#v1Back').addEventListener('click', ()=> showPage(0));
+$('#goAdv').addEventListener('click', ()=> showPage('A1'));
+$('#aBack').addEventListener('click', ()=> showPage(0));
 $('#v2Back').addEventListener('click', ()=> showPage('V1'));
 
 const V = { items:[], sel:new Set(), rides:[], order:[], hidden:new Set(), view:null, cursor:null, series:null, splits:new Map(), splitVer:0, nextId:0 };
@@ -6849,16 +6998,32 @@ function vHalves(ride){
   const A = agg(S2.filter(x=>x.t<mt/2)), B = agg(S2.filter(x=>x.t>=mt/2));
   return { pwhr: A.ef && B.ef ? (A.ef-B.ef)/A.ef*100 : null, pmaint: A.p>0 ? B.p/A.p*100 : null };
 }
-// the whole ride as one section (cached)
+// the whole ride as one section (cached). V.wholeScope: 'all' = from the start to the stop of the recording,
+// 'sections' = only the parts the sections cover (gaps between and outside them left out)
+function vWholeScope(){
+  if (!V.wholeScope){ try{ V.wholeScope = localStorage.getItem('quaniterVWholeScope')==='sections' ? 'sections' : 'all'; }catch(e){ V.wholeScope = 'all'; } }
+  return V.wholeScope;
+}
 function vWholeStats(ride){
-  if (!ride._all){
+  const scope = vWholeScope()==='sections' && ride.sections.length ? 'sections' : 'all', key = scope==='sections' ? '_allSec' : '_all';
+  if (!ride[key]){
     const rs = ride.recs;
-    ride._all = vCompute(ride, { start:rs[0].elapsed, end:rs[rs.length-1].elapsed, name:'全体', nameType:'a', startName:'', endName:'', idx:0 });
-    const hv = vHalves(ride);
-    ride._all.pwhr = hv.pwhr; ride._all.pmaint = hv.pmaint;
-    ride._all.vi = ride._all.np!=null && ride._all.avgPower>0 ? ride._all.np/ride._all.avgPower : null;
+    let st, hr = ride;
+    if (scope==='all'){
+      st = vCompute(ride, { start:rs[0].elapsed, end:rs[rs.length-1].elapsed, name:'全体', nameType:'a', startName:'', endName:'', idx:0 });
+    } else {
+      const rows = ride.sections.map((sec,i)=>{ const x = vCompute(ride, Object.assign({}, sec, { idx:i })); return x; });
+      const keep = { w:S.weight, f:S.ftp, g:S.avgGradientMethod };
+      try{ S.avgGradientMethod = ride.cfg.grad==='gain' ? 'gain' : 'diff'; st = computeSummaryRow(rows) || {}; } finally { S.avgGradientMethod = keep.g; }
+      const inSec = rs.filter(r=> ride.sections.some(sec=> r.elapsed>=sec.start && r.elapsed<=sec.end));
+      hr = { recs:inSec };
+    }
+    const hv = vHalves(hr);
+    st.pwhr = hv.pwhr; st.pmaint = hv.pmaint;
+    st.vi = st.np!=null && st.avgPower>0 ? st.np/st.avgPower : null;
+    ride[key] = st;
   }
-  return ride._all;
+  return ride[key];
 }
 function vSectionAvg(ride, sec, m){
   if (!sec._st) sec._st = vCompute(ride, sec);
@@ -6896,7 +7061,7 @@ function vSectionAvg(ride, sec, m){
     const tsig = [V.cursor==null ? '' : V.cursor.toFixed(4), vVisible().map(r=>r.id).join('.'), vCols().join(','), $('#vMetric').value, $('#vXAxis').value, V.splitVer, V.cadZero ? 1 : 0, V.aligned ? 1 : 0].join('|');
     if (V._tipSig!==tsig || V._tipRides!==V.rides || $('#vTip').classList.contains('hidden')){ V._tipSig = tsig; V._tipRides = V.rides; vRenderTip(); }
     vMapSync();
-    const asig = [vVisible().map(r=>r.id).join('.'), vColsAll().join(','), V.cadZero ? 1 : 0].join('|');
+    const asig = [vVisible().map(r=>r.id).join('.'), vColsAll().join(','), V.cadZero ? 1 : 0, vWholeScope()].join('|');
     if (V._allSig!==asig || V._allRides!==V.rides){ V._allSig = asig; V._allRides = V.rides; vRenderAll(); }
     const psig = [vVisible().map(r=>r.id).join('.'), $('#vPcRange').value, W].join('|');
     if (V._pcSig!==psig || V._pcRides!==V.rides){ V._pcSig = psig; V._pcRides = V.rides; vRenderPc(); }
@@ -7346,7 +7511,14 @@ function vSectionAvg(ride, sec, m){
     if (c==='pwhr') return st.pwhr==null ? '--' : st.pwhr.toFixed(1)+' %';
     if (c==='pmaint') return st.pmaint==null ? '--' : Math.round(st.pmaint)+' %';
     if (c==='vi') return st.vi==null ? '--' : st.vi.toFixed(2);
-    const v = c==='avgCad' ? vAvgCad(ride, { start:rs[0].elapsed, end:rs[rs.length-1].elapsed }) : st[c];
+    let v;
+    if (c==='avgCad'){
+      if (vWholeScope()==='sections' && ride.sections.length){
+        let n = 0, t = 0;
+        ride.recs.forEach(rc=>{ if (ride.sections.some(sec=> rc.elapsed>=sec.start && rc.elapsed<=sec.end) && cadCounts(rc, V.cadZero)){ n++; t += rc.cad; } });
+        v = n ? t/n : null;
+      } else v = vAvgCad(ride, { start:rs[0].elapsed, end:rs[rs.length-1].elapsed });
+    } else v = st[c];
     return COL_META[c].fmt(v==null || isNaN(v) ? null : v);
   }
   window.vRenderAll = function(){
@@ -7360,7 +7532,7 @@ function vSectionAvg(ride, sec, m){
       w[c] = Math.ceil(c==='fname' ? Math.min(mx+34, Math.max(120, window.innerWidth*0.42)) : mx+16);
     });
     const fnW = showFn ? w.fname : 24, tw = fnW + cols.reduce((a,c)=>a+w[c],0), pin = showFn ? -1 : 0;
-    let html = '<div class="vTipHead"><b>ライド全体の比較</b><button type="button" class="small ghost" id="vAllBtn" title="表示項目">⚙</button></div>'+
+    let html = '<div class="vTipHead"><b>ライド全体の比較</b><span style="margin-left:auto;display:flex;gap:6px;align-items:center;"><button type="button" class="small ghost" id="vAllScope" title="集計する範囲を切り替え">'+(vWholeScope()==='sections' ? '範囲: 区間のみ' : '範囲: スタート〜停止')+'</button><button type="button" class="small ghost" id="vAllBtn" title="表示項目">⚙</button></span></div>'+
       '<div class="vTipScroll"><table class="vTbl'+(showFn ? '' : ' noFn')+'" style="width:'+tw+'px;"><colgroup><col style="width:'+fnW+'px;">'+cols.map(c=>'<col style="width:'+w[c]+'px;">').join('')+'</colgroup>'+
       '<thead><tr><th class="vFn">'+(showFn ? 'ファイル名' : '')+'</th>'+cols.map((c,i)=>'<th'+(i===pin ? ' class="vPin"' : '')+'>'+escapeHtml(vColLabel(c))+'</th>').join('')+'</tr></thead><tbody>';
     vis.forEach(r=>{
@@ -7371,6 +7543,11 @@ function vSectionAvg(ride, sec, m){
     box.innerHTML = html;
     const newSc = box.querySelector('.vTipScroll'); if (newSc) newSc.scrollLeft = keepLeft;
     box.querySelector('#vAllBtn').addEventListener('click', ()=> vPickCols('all'));
+    box.querySelector('#vAllScope').addEventListener('click', ()=>{
+      V.wholeScope = vWholeScope()==='sections' ? 'all' : 'sections';
+      try{ localStorage.setItem('quaniterVWholeScope', V.wholeScope); }catch(e){}
+      V._allSig = null; vDraw();
+    });
     box.classList.remove('hidden');
   };
   // fixed column widths from the longest text each column can ever show, so the columns never shift while the seek bar moves
@@ -8133,6 +8310,342 @@ $('#vExpPdf').addEventListener('click', ()=>{
   vShareOrSave(vExportName('pdf'), vMakePdf(vExportCanvas()));
 });
 
+})();
+</script>
+<script>
+
+(function(){
+"use strict";
+const $ = s=>document.querySelector('#pageA1 '+s);
+
+/* ---------- CSV reading ---------- */
+function parseCsv(text){
+  const rows = []; let row = [], cell = '', q = false;
+  for (let i=0;i<text.length;i++){
+    const c = text[i];
+    if (q){
+      if (c==='"'){ if (text[i+1]==='"'){ cell += '"'; i++; } else q = false; }
+      else cell += c;
+    } else if (c==='"') q = true;
+    else if (c===','){ row.push(cell); cell = ''; }
+    else if (c==='\n'){ row.push(cell); rows.push(row); row = []; cell = ''; }
+    else if (c==='\r'){ /* skip */ }
+    else cell += c;
+  }
+  if (cell!=='' || row.length){ row.push(cell); rows.push(row); }
+  return rows;
+}
+async function readText(file){
+  const buf = await file.arrayBuffer();
+  let t = new TextDecoder('utf-8').decode(buf);
+  if (t.includes('�')){ try{ t = new TextDecoder('shift_jis').decode(buf); }catch(e){} }
+  return t.replace(/^﻿/, '');
+}
+function stripUnit(h){ return h.trim().replace(/\([^()]*\)$/, '').trim(); }
+function parseDur(t){            // "9:54" = 9 min 54 s, "1:05:03" = 1 h 5 min 3 s
+  if (!t) return null;
+  const p = t.trim().split(':').map(Number);
+  if (p.some(x=>isNaN(x))) return null;
+  if (p.length===3) return p[0]*3600+p[1]*60+p[2];
+  if (p.length===2) return p[0]*60+p[1];
+  return null;
+}
+function parseNum(t){ if (t==null) return null; const v = parseFloat(String(t).replace('+','')); return isNaN(v) ? null : v; }
+function dateFromName(name){
+  let m = /(?:^|[^0-9])(20\d{2})[-_/.]?(\d{2})[-_/.]?(\d{2})(?!\d)/.exec(name);
+  if (m) return m[1]+'/'+m[2]+'/'+m[3];
+  m = /(?:^|[^0-9])(\d{2})(\d{2})(\d{2})(?!\d)/.exec(name);
+  if (m && +m[2]>=1 && +m[2]<=12 && +m[3]>=1 && +m[3]<=31) return '20'+m[1]+'/'+m[2]+'/'+m[3];
+  return null;
+}
+function normDate(t){
+  const m = /(\d{4})[\/\-.](\d{1,2})[\/\-.](\d{1,2})/.exec(t||'');
+  return m ? m[1]+'/'+m[2].padStart(2,'0')+'/'+m[3].padStart(2,'0') : null;
+}
+function fmtLocalDate(ms){ const d = new Date(ms); return d.getFullYear()+'/'+String(d.getMonth()+1).padStart(2,'0')+'/'+String(d.getDate()).padStart(2,'0'); }
+
+// one CSV -> records [{course, date, start, net, gross, dist, gain, avgPower, pwr, src}]
+function extract(rows, file, path){
+  if (rows.length<2) return null;
+  const head = rows[0].map(stripUnit);
+  const ix = name=> head.indexOf(name);
+  const iName = ix('区間');
+  if (iName<0) return null;                 // not a Quaniter CSV
+  const iDate = ix('日付'), iStart = ix('開始時刻'), iNet = ix('ネットタイム'), iGross = ix('グロスタイム');
+  const iDist = ix('距離'), iGain = ix('獲得標高'), iAvgP = ix('平均パワー'), iPwr = ix('Power Weight Ratio');
+  const fileDate = dateFromName(path) || fmtLocalDate(file.lastModified || Date.now());
+  const out = [];
+  for (let r=1;r<rows.length;r++){
+    const row = rows[r];
+    const name = (row[iName]||'').trim();
+    if (!name || name==='全区間') continue;
+    const date = (iDate>=0 && normDate(row[iDate])) || fileDate;
+    out.push({
+      course: name.replace(/\s*->\s*/g,'→'),
+      date, start: iStart>=0 ? (row[iStart]||'').trim() : '',
+      net: iNet>=0 ? parseDur(row[iNet]) : null,
+      gross: iGross>=0 ? parseDur(row[iGross]) : null,
+      dist: iDist>=0 ? parseNum(row[iDist]) : null,
+      gain: iGain>=0 ? parseNum(row[iGain]) : null,
+      avgPower: iAvgP>=0 ? parseNum(row[iAvgP]) : null,
+      pwr: iPwr>=0 ? parseNum(row[iPwr]) : null,
+      src: path,
+    });
+  }
+  return out;
+}
+
+/* ---------- loading ---------- */
+let allRecords = [];
+async function loadFiles(entries){          // entries: [{file, path}]
+  const csvs = entries.filter(e=>/\.csv$/i.test(e.file.name));
+  $('#advStatus').textContent = 'CSVを読み込み中… 0 / '+csvs.length;
+  const recs = []; let used = 0, skipped = 0;
+  for (let i=0;i<csvs.length;i++){
+    if (i%10===0){ $('#advStatus').textContent = 'CSVを読み込み中… '+i+' / '+csvs.length; await new Promise(r=>setTimeout(r,0)); }
+    try{
+      const r = extract(parseCsv(await readText(csvs[i].file)), csvs[i].file, csvs[i].path);
+      if (r && r.length){ recs.push(...r); used++; } else skipped++;
+    }catch(e){ skipped++; }
+  }
+  // the same ride exported twice must count once
+  const seen = new Set();
+  allRecords = recs.filter(r=>{ const k = r.course+'|'+r.date+'|'+r.start; if (seen.has(k)) return false; seen.add(k); return true; });
+  $('#advStatus').textContent = 'CSV '+csvs.length+'件を調べ、'+used+'件を使用('+skipped+'件はQuaniterの出力ではないため除外)。記録 '+allRecords.length+'行(重複は除く)。';
+  render();
+}
+$('#advDirInput').addEventListener('change', e=> loadFiles([...e.target.files].map(f=>({file:f, path:f.webkitRelativePath||f.name}))));
+$('#advFileInput').addEventListener('change', e=> loadFiles([...e.target.files].map(f=>({file:f, path:f.name}))));
+if (window.showDirectoryPicker){
+  $('#advPickDir').classList.remove('hidden');
+  $('#advPickDir').addEventListener('click', async ()=>{
+    try{
+      const root = await window.showDirectoryPicker();
+      const out = [];
+      (async function walk(dir, prefix){
+        for await (const [name, h] of dir.entries()){
+          if (h.kind==='directory') await walk(h, prefix+name+'/');
+          else if (/\.csv$/i.test(name)) out.push({file:await h.getFile(), path:prefix+name});
+        }
+      })(root, root.name+'/').then(()=> loadFiles(out));
+    }catch(e){ /* cancelled */ }
+  });
+}
+$('#advTimeSel').addEventListener('change', render);
+$('#advShowUnnamed').addEventListener('change', render);
+
+/* ---------- maths ---------- */
+function fmtT(sec){
+  sec = Math.round(sec);
+  const h = Math.floor(sec/3600), m = Math.floor((sec%3600)/60), s = sec%60;
+  return h>0 ? h+':'+String(m).padStart(2,'0')+':'+String(s).padStart(2,'0') : m+':'+String(s).padStart(2,'0');
+}
+function regress(pts){          // y on x
+  const n = pts.length; if (n<2) return null;
+  const mx = pts.reduce((a,p)=>a+p.x,0)/n, my = pts.reduce((a,p)=>a+p.y,0)/n;
+  let sxx=0, syy=0, sxy=0;
+  pts.forEach(p=>{ sxx += (p.x-mx)**2; syy += (p.y-my)**2; sxy += (p.x-mx)*(p.y-my); });
+  if (sxx<=0) return null;
+  const a = sxy/sxx, b = my-a*mx;
+  return { a, b, r: syy>0 ? sxy/Math.sqrt(sxx*syy) : null, n };
+}
+
+/* ---------- rendering ---------- */
+function render(){
+  const box = $('#advResults'); box.innerHTML = '';
+  const useGross = $('#advTimeSel').value==='gross';
+  const showUnnamed = $('#advShowUnnamed').checked;
+  const groups = new Map();
+  allRecords.forEach(r=>{
+    if (!showUnnamed && /^区間\d+$/.test(r.course)) return;
+    (groups.get(r.course) || groups.set(r.course, []).get(r.course)).push(r);
+  });
+  [...groups.entries()].sort((a,b)=> b[1].length-a[1].length || a[0].localeCompare(b[0], 'ja')).forEach(([name, list])=>{
+    list.sort((a,b)=> a.date.localeCompare(b.date) || toMin(a.start)-toMin(b.start));
+    box.appendChild(courseCard(name, list, useGross));
+  });
+  if (!groups.size && allRecords.length) box.innerHTML = '<div class="sub">表示できる区間がありません(「名前のない区間」を含めると表示される場合があります)。</div>';
+}
+function toMin(t){ const m = /^(\d+):(\d+)/.exec(t||''); return m ? +m[1]*60+ +m[2] : 0; }
+function el(tag, cls, html){ const e = document.createElement(tag); if (cls) e.className = cls; if (html!=null) e.innerHTML = html; return e; }
+function esc(s){ return String(s).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+function courseCard(name, list, useGross){
+  const card = el('div', 'course');
+  const T = r=> { const v = useGross ? r.gross : r.net; return v!=null ? v : (useGross ? r.net : r.gross); };
+  card.appendChild(el('h2', null, esc(name)+' <small>'+list.length+'回</small>'));
+  // table
+  let html = '<table><thead><tr><th>日付</th><th>開始</th><th>ネットタイム</th><th>グロスタイム</th><th>距離(km)</th><th>獲得標高(m)</th><th>平均パワー(W)</th><th>PWR(W/kg)</th><th>ファイル</th></tr></thead><tbody>';
+  list.forEach(r=>{
+    html += '<tr><td>'+r.date+'</td><td>'+esc(r.start)+'</td><td>'+(r.net!=null?fmtT(r.net):'')+'</td><td>'+(r.gross!=null?fmtT(r.gross):'')+'</td><td>'+(r.dist!=null?r.dist:'')+'</td><td>'+(r.gain!=null?r.gain:'')+'</td><td>'+(r.avgPower!=null?r.avgPower:'')+'</td><td>'+(r.pwr!=null?r.pwr.toFixed(2):'')+'</td><td class="src" title="'+esc(r.src)+'">'+esc(r.src)+'</td></tr>';
+  });
+  html += '</tbody></table>';
+  const tw = el('div', 'tableWrap', html); card.appendChild(tw);
+  // chart
+  const pts = list.filter(r=>r.pwr!=null && T(r)>0).map(r=>({ x:r.pwr, y:1000/T(r), t:T(r), rec:r }));
+  if (pts.length<1){
+    card.appendChild(el('div', 'hint', 'PWRの記録がないため、グラフは作れません(Quaniterで体重を入力してからCSVを保存すると、PWRの列が入ります)。'));
+    return card;
+  }
+  const reg = pts.length>=2 ? regress(pts) : null;
+  const cb = el('div', 'chartBox');
+  const cv = el('canvas', 'chart'); cb.appendChild(cv);
+  const tools = el('div', 'chartTools', '<button type="button" data-a="in">＋</button><button type="button" data-a="out">－</button><button type="button" data-a="reset">全体</button>');
+  cb.appendChild(tools);
+  card.appendChild(cb);
+  let stat = '';
+  if (reg){
+    const sign = reg.b>=0 ? '+' : '−';
+    stat = '回帰直線: <b>y = '+reg.a.toFixed(3)+' x '+sign+' '+Math.abs(reg.b).toFixed(3)+'</b>(x:PWR[W/kg]、y:1000/T[s])　相関係数 <b>r = '+(reg.r!=null?reg.r.toFixed(3):'―')+'</b>(R² = '+(reg.r!=null?(reg.r*reg.r).toFixed(3):'―')+')　n = '+reg.n;
+  } else stat = '回帰直線は、PWRの異なる記録が2回分以上あると表示されます。';
+  card.appendChild(el('div', 'stat', stat));
+  card.appendChild(el('div', 'hint', '指2本または＋/－で拡大縮小、ドラッグで移動、点をタップすると日付と時刻が出ます。左の縦軸は 1000/T、右の縦軸は同じ高さに対応する所要時間です。'));
+  makeChart(cv, cb, pts, reg, useGross);
+  return card;
+}
+
+/* ---------- scatter chart (canvas, zoom / pan / tap) ---------- */
+function makeChart(cv, box, pts, reg, useGross){
+  const ML = 52, MR = 58, MT = 14, MB = 40;
+  let W = 0, H = 0;
+  const xs = pts.map(p=>p.x), ys = pts.map(p=>p.y);
+  function fit(){
+    let x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+    if (x1-x0 < 1e-9){ x0 -= 0.5; x1 += 0.5; }
+    if (y1-y0 < 1e-9){ y0 -= 0.05*y0||0.5; y1 += 0.05*y1||0.5; }
+    const px = (x1-x0)*0.12, py = (y1-y0)*0.15;
+    return { x0:x0-px, x1:x1+px, y0:y0-py, y1:y1+py };
+  }
+  let view = fit(), home = fit();
+  const toX = x=> ML + (x-view.x0)/(view.x1-view.x0)*(W-ML-MR);
+  const toY = y=> MT + (1-(y-view.y0)/(view.y1-view.y0))*(H-MT-MB);
+  const fromX = px=> view.x0 + (px-ML)/(W-ML-MR)*(view.x1-view.x0);
+  const fromY = py=> view.y0 + (1-(py-MT)/(H-MT-MB))*(view.y1-view.y0);
+  function niceStep(range, target){
+    const raw = range/target, p = Math.pow(10, Math.floor(Math.log10(raw))), f = raw/p;
+    return (f<1.5?1:f<3.5?2:f<7.5?5:10)*p;
+  }
+  const TSTEPS = [1,2,5,10,15,20,30,60,120,180,300,600,900,1200,1800,3600,7200,14400];
+  function draw(){
+    const dpr = window.devicePixelRatio||1;
+    W = cv.clientWidth; H = cv.clientHeight;
+    if (cv.width!==Math.round(W*dpr)){ cv.width = Math.round(W*dpr); cv.height = Math.round(H*dpr); }
+    const ctx = cv.getContext('2d'); ctx.setTransform(dpr,0,0,dpr,0,0); ctx.clearRect(0,0,W,H);
+    const css = getComputedStyle(cv);
+    const grid = css.getPropertyValue('--border').trim(), muted = css.getPropertyValue('--muted').trim(), accent = css.getPropertyValue('--accent').trim(), warn = css.getPropertyValue('--warn').trim();
+    ctx.font = '11px sans-serif';
+    ctx.save(); ctx.beginPath(); ctx.rect(ML, MT, W-ML-MR, H-MT-MB); ctx.clip();
+    // grid
+    ctx.strokeStyle = grid; ctx.lineWidth = 1;
+    const sx = niceStep(view.x1-view.x0, 5), sy = niceStep(view.y1-view.y0, 5);
+    for (let x=Math.ceil(view.x0/sx)*sx; x<=view.x1; x+=sx){ const px = Math.round(toX(x))+.5; ctx.beginPath(); ctx.moveTo(px,MT); ctx.lineTo(px,H-MB); ctx.stroke(); }
+    for (let y=Math.ceil(view.y0/sy)*sy; y<=view.y1; y+=sy){ const py = Math.round(toY(y))+.5; ctx.beginPath(); ctx.moveTo(ML,py); ctx.lineTo(W-MR,py); ctx.stroke(); }
+    // regression line across the visible x range
+    if (reg){
+      ctx.strokeStyle = warn; ctx.lineWidth = 1.6; ctx.setLineDash([6,4]);
+      ctx.beginPath(); ctx.moveTo(toX(view.x0), toY(reg.a*view.x0+reg.b)); ctx.lineTo(toX(view.x1), toY(reg.a*view.x1+reg.b)); ctx.stroke(); ctx.setLineDash([]);
+    }
+    // points
+    pts.forEach(p=>{
+      const px = toX(p.x), py = toY(p.y);
+      ctx.beginPath(); ctx.arc(px, py, p===sel ? 7 : 5, 0, Math.PI*2);
+      ctx.fillStyle = p===sel ? '#fff' : accent; ctx.fill();
+      ctx.lineWidth = 1.5; ctx.strokeStyle = '#06221e'; ctx.stroke();
+    });
+    ctx.restore();
+    // axes
+    ctx.fillStyle = muted; ctx.strokeStyle = grid;
+    ctx.strokeRect(ML+.5, MT+.5, W-ML-MR, H-MT-MB);
+    ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+    for (let x=Math.ceil(view.x0/sx)*sx; x<=view.x1; x+=sx) ctx.fillText((+x.toFixed(6)).toString(), toX(x), H-MB+4);
+    ctx.fillText('PWR (W/kg)', (ML+W-MR)/2, H-MB+20);
+    ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+    for (let y=Math.ceil(view.y0/sy)*sy; y<=view.y1; y+=sy) ctx.fillText((+y.toFixed(6)).toString(), ML-5, toY(y));
+    ctx.save(); ctx.translate(11, (MT+H-MB)/2); ctx.rotate(-Math.PI/2); ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('1000/T (s)', 0, 0); ctx.restore();
+    // right axis: the same heights as elapsed times (T = 1000 / y)
+    const tLo = 1000/view.y1, tHi = 1000/Math.max(view.y0, 1e-6);
+    let step = TSTEPS[TSTEPS.length-1];
+    for (const s of TSTEPS){ if ((tHi-tLo)/s <= 8){ step = s; break; } }
+    ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+    for (let t=Math.ceil(tLo/step)*step; t<=tHi; t+=step){
+      const py = toY(1000/t);
+      if (py<MT || py>H-MB) continue;
+      ctx.strokeStyle = muted; ctx.beginPath(); ctx.moveTo(W-MR, py); ctx.lineTo(W-MR+4, py); ctx.stroke();
+      ctx.fillStyle = muted; ctx.fillText(fmtT(t), W-MR+6, py);
+    }
+    ctx.save(); ctx.translate(W-6, (MT+H-MB)/2); ctx.rotate(Math.PI/2); ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillStyle = muted; ctx.fillText('経過時間('+(useGross?'グロス':'ネット')+')', 0, 0); ctx.restore();
+  }
+
+  /* zoom / pan / tap */
+  const ptrs = new Map(); let gesture = null, sel = null, tip = null;
+  function hideTip(){ if (tip){ tip.remove(); tip = null; } sel = null; draw(); }
+  function zoomAt(px, py, k){          // k>1 zooms in
+    const cx = fromX(px), cy = fromY(py);
+    view = { x0:cx-(cx-view.x0)/k, x1:cx+(view.x1-cx)/k, y0:cy-(cy-view.y0)/k, y1:cy+(view.y1-cy)/k };
+  }
+  function local(e){ const r = cv.getBoundingClientRect(); return { x:e.clientX-r.left, y:e.clientY-r.top }; }
+  cv.addEventListener('pointerdown', e=>{
+    cv.setPointerCapture(e.pointerId); ptrs.set(e.pointerId, local(e));
+    if (ptrs.size===1) gesture = { type:'pan', start:local(e), t:performance.now(), moved:false, view:{...view} };
+    else if (ptrs.size===2){
+      const [a,b] = [...ptrs.values()];
+      gesture = { type:'pinch', d:Math.hypot(a.x-b.x,a.y-b.y), view:{...view}, mid:{x:(a.x+b.x)/2, y:(a.y+b.y)/2}, moved:true };
+    }
+  });
+  cv.addEventListener('pointermove', e=>{
+    if (!ptrs.has(e.pointerId)) return;
+    ptrs.set(e.pointerId, local(e));
+    if (!gesture) return;
+    if (gesture.type==='pan' && ptrs.size===1){
+      const p = local(e), dx = p.x-gesture.start.x, dy = p.y-gesture.start.y;
+      if (Math.abs(dx)+Math.abs(dy) > 6) gesture.moved = true;
+      if (!gesture.moved) return;
+      const g = gesture.view, wx = (g.x1-g.x0)/(W-ML-MR), wy = (g.y1-g.y0)/(H-MT-MB);
+      view = { x0:g.x0-dx*wx, x1:g.x1-dx*wx, y0:g.y0+dy*wy, y1:g.y1+dy*wy };
+      if (tip) hideTip(); else draw();
+    } else if (gesture.type==='pinch' && ptrs.size>=2){
+      const [a,b] = [...ptrs.values()], d = Math.hypot(a.x-b.x,a.y-b.y);
+      view = {...gesture.view};
+      zoomAt(gesture.mid.x, gesture.mid.y, d/Math.max(1,gesture.d));
+      if (tip) hideTip(); else draw();
+    }
+  });
+  function up(e){
+    if (!ptrs.has(e.pointerId)) return;
+    const p = local(e), was = gesture;
+    ptrs.delete(e.pointerId);
+    if (ptrs.size===0){
+      if (was && was.type==='pan' && !was.moved && performance.now()-was.t < 500) tap(p);
+      gesture = null;
+    } else if (ptrs.size===1){
+      const rem = [...ptrs.values()][0];
+      gesture = { type:'pan', start:rem, t:performance.now(), moved:true, view:{...view} };
+    }
+  }
+  cv.addEventListener('pointerup', up); cv.addEventListener('pointercancel', up);
+  cv.addEventListener('wheel', e=>{ e.preventDefault(); const p = local(e); zoomAt(p.x, p.y, e.deltaY<0 ? 1.2 : 1/1.2); if (tip) hideTip(); else draw(); }, {passive:false});
+  function tap(p){
+    let best = null, bd = 26;
+    pts.forEach(q=>{ const d = Math.hypot(toX(q.x)-p.x, toY(q.y)-p.y); if (d<bd){ bd = d; best = q; } });
+    if (tip){ tip.remove(); tip = null; }
+    sel = best; draw();
+    if (!best) return;
+    const r = best.rec;
+    tip = el('div', 'tip', '<b>'+r.date+(r.start?' '+esc(r.start):'')+'</b><br>'+(useGross?'グロス ':'ネット ')+fmtT(best.t)+' ・ PWR '+best.x.toFixed(2)+'<br>1000/T = '+best.y.toFixed(2));
+    box.appendChild(tip);
+    const bw = box.clientWidth;
+    tip.style.left = Math.max(60, Math.min(bw-60, toX(best.x)))+'px';
+    tip.style.top = Math.max(40, toY(best.y)-12)+'px';
+  }
+  box.querySelector('.chartTools').addEventListener('click', e=>{
+    const a = e.target.dataset && e.target.dataset.a; if (!a) return;
+    const cx = (ML+W-MR)/2, cy = (MT+H-MB)/2;
+    if (a==='in') zoomAt(cx, cy, 1.5); else if (a==='out') zoomAt(cx, cy, 1/1.5); else view = {...home};
+    if (tip) hideTip(); else draw();
+  });
+  new ResizeObserver(draw).observe(cv);
+  draw();
+}
 })();
 </script>
 </body>
