@@ -438,8 +438,8 @@ td.num{ text-align:right; font-variant-numeric:tabular-nums; }
 .wideConfirm{ display:block; width:100%; text-align:center; padding:10px 6px; font-weight:600; font-size:13px;
   background:var(--accent); border:1px solid var(--accent); color:#08211d; border-radius:7px; cursor:pointer; }
 .hidden{ display:none !important; }
-.axisPicker{ position:absolute; inset:0; background:rgba(0,0,0,.55); display:flex; align-items:center; justify-content:center; z-index:6; border-radius:8px; }
-.axisPicker > div{ background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:10px; display:flex; flex-wrap:wrap; gap:6px; max-width:88%; justify-content:center; }
+.axisPicker{ position:fixed; inset:0; background:rgba(0,0,0,.55); display:flex; align-items:center; justify-content:center; z-index:70; }
+.axisPicker > div{ background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:10px; display:flex; flex-wrap:wrap; gap:6px; max-width:88%; max-height:80vh; overflow-y:auto; justify-content:center; }
 .axisPicker button{ padding:9px 16px; font-size:13.5px; }
 .confirmModal{ position:fixed; inset:0; background:rgba(0,0,0,.55); display:flex; align-items:center; justify-content:center; z-index:50; padding:20px; }
 .confirmBox{ background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:18px; max-width:340px; width:100%; }
@@ -795,7 +795,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
 
   <div class="panel">
     <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px; flex-wrap:wrap; margin-bottom:8px;">
-      <div class="metricChecks" id="powerChartMetricChecks" style="columns:2; margin-bottom:0;"></div>
+      <div class="metricChecks" id="powerChartMetricChecks" style="display:none;"></div>
       <div class="seg" id="powerChartXModeSeg" style="display:none;">
         <button data-x="clock" class="on">時刻</button>
         <button data-x="elapsed">経過時間</button>
@@ -951,7 +951,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
 // (this session's own publish count so far) is reconstructed from the
 // conversation itself rather than mechanically verified — best-effort, not
 // guaranteed exact. Increment by exactly 1 on every future publish.
-const APP_VERSION = 204;
+const APP_VERSION = 205;
 
 /* ============ FIT PARSER ============ */
 const FIT_EPOCH = 631065600; // seconds between 1970-01-01 and 1989-12-31 (FIT epoch)
@@ -3177,7 +3177,6 @@ function chartMetricRange(m){
   let mn=Infinity, mx=-Infinity;
   S.records.forEach(r=>{ const v=meta.get(r); if (v!=null){ if(v<mn)mn=v; if(v>mx)mx=v; } });
   if (!isFinite(mn)){ mn=0; mx=1; }
-  if (m==='elevation') mn = Math.min(mn, -10);
   if (mn===mx){ mn-=1; mx+=1; }
   return {min:mn, max:mx};
 }
@@ -3370,6 +3369,7 @@ function askChoice(message, options){
 
 function showAxisPicker(items, onSelect){
   const picker = $('#axisPicker');
+  if (picker.parentElement!==document.body) document.body.appendChild(picker);   // it must not live inside a hidden page
   picker.innerHTML = '<div>'+items.map(it=>'<button type="button" data-v="'+it.value+'">'+it.label+'</button>').join('')+'</div>';
   picker.classList.remove('hidden');
   picker.querySelectorAll('button').forEach(btn=>{
@@ -5411,6 +5411,7 @@ const POWER_CHART_METRICS = {
   workKj: {label:'運動量', unit:'kJ', color:'#d98c5f', get:r=>r.workKj, fmt:v=>Math.round(v)},
   kcal: {label:'カロリー', unit:'kcal', color:'#c9a227', get:r=>r.kcal, fmt:v=>Math.round(v)},
   pwr: {label:'PWR', unit:'W/kg', color:'#3949ab', get:r=>r.pwr, fmt:v=>v.toFixed(2)},
+  temp: {label:'気温', unit:'℃', color:'#4aa3df', get:r=>r.avgTemp, fmt:v=>Math.round(v), raw:true},
 };
 function buildPowerChartMetricChecks(){
   const wrap = $('#powerChartMetricChecks');
@@ -5496,7 +5497,7 @@ function p3Tap(cx, cy){
   const sx = (cx-r.left)/r.width*W, sy = (cy-r.top)/r.height*H;
   const btn = p3AxisBtns.find(b=> sx>=b.x-3 && sx<=b.x+b.w+3 && sy>=b.y-3 && sy<=b.y+b.h+3);
   if (btn){ p3AxisPick(btn); return; }
-  if (sy<padT || sy>H-padB) return;
+  if (sy<padT || sy>H-padB || sx<powerChartPlotBounds.padL || sx>W-powerChartPlotBounds.padR) return;
   const tapT = p3Link.xScaleInv(sx);
   const rec = p3Link.recAtX(tapT);
   if (!rec) return;
@@ -5523,12 +5524,24 @@ function p3AxisPick(b){
     return;
   }
   const cur = S.powerChartMetrics.filter(k=>POWER_CHART_METRICS[k]);
-  const items = Object.keys(POWER_CHART_METRICS).filter(pcMetricAvailable).map(k=>({ value:k, label:POWER_CHART_METRICS[k].label+(k===cur[b.index]?'(現在)':(cur.includes(k)?'(入れ替え)':'')) }));
+  const avail = Object.keys(POWER_CHART_METRICS).filter(pcMetricAvailable);
+  // temperature is always drawn from the raw records (never as bars), so it can't be the first (bar) axis
+  const choices = b.index===0 ? avail.filter(k=>!POWER_CHART_METRICS[k].raw) : avail;
+  let items;
+  if (b.kind==='add') items = choices.filter(k=>!cur.includes(k)).map(k=>({ value:k, label:POWER_CHART_METRICS[k].label }));
+  else {
+    items = choices.map(k=>({ value:k, label:POWER_CHART_METRICS[k].label+(k===cur[b.index]?'(現在)':(cur.includes(k)?'(入れ替え)':'')) }));
+    if (cur.length>1 && !(b.index===0 && POWER_CHART_METRICS[cur[1]] && POWER_CHART_METRICS[cur[1]].raw && cur.length===2)) items.push({ value:'__remove', label:'× この軸を表示しない' });
+  }
   showAxisPicker(items, k=>{
-    const ms = cur.slice(), j = ms.indexOf(k);
-    if (j>=0) [ms[b.index], ms[j]] = [ms[j], ms[b.index]]; else ms[b.index] = k;
+    let ms = cur.slice();
+    if (k==='__remove') ms.splice(b.index, 1);
+    else if (b.kind==='add') ms.push(k);
+    else { const j = ms.indexOf(k); if (j>=0) [ms[b.index], ms[j]] = [ms[j], ms[b.index]]; else ms[b.index] = k; }
+    if (ms.length>1 && POWER_CHART_METRICS[ms[0]].raw){ const i = ms.findIndex(x=>!POWER_CHART_METRICS[x].raw); if (i>0){ const t = ms[0]; ms[0] = ms[i]; ms[i] = t; } }
+    if (!ms.length || (ms.length===1 && POWER_CHART_METRICS[ms[0]].raw)) return;
     S.powerChartMetrics = ms;
-    buildPowerChartMetricChecks(); saveState(); p3Rerender();
+    saveState(); p3Rerender();
   });
 }
 // ctrl/⌘ + wheel (trackpad pinch) zooms the same way
@@ -5757,14 +5770,27 @@ function renderPowerChart(rows){
       // make the lower ticks land at an uneven spacing from the rest.
       const alts = S.records.map(r=>r.altSmooth).filter(v=>v!=null);
       if (!alts.length){ metricScales[k] = null; return; }
-      const rawMax = Math.max(...alts) * 1.1;
-      const rawMin = Math.min(...alts);
-      const niceMin = rawMin<0 ? rawMin : 0;
-      const step = niceStep(Math.max(rawMax,100)-Math.min(0,niceMin), 4);
-      const niceMax = Math.max(100, Math.ceil(rawMax/step)*step);
+      // the axis starts at (the round tick just below) the lowest point of this ride, not at 0 m
+      let rawMax = alts[0], rawMin = alts[0];
+      alts.forEach(v=>{ if (v>rawMax) rawMax = v; if (v<rawMin) rawMin = v; });
+      const step = niceStep(Math.max(rawMax-rawMin, 100)*1.1, 4);
+      const niceMin = Math.floor(rawMin/step)*step;
+      const niceMax = Math.ceil(Math.max(rawMax*1.0, niceMin+100)/step)*step;
       const ticks = [];
-      for (let v=Math.ceil(niceMin/step)*step; v<=niceMax+1e-9; v+=step) ticks.push(v);
-      if (niceMin<0 && !ticks.some(t=>Math.abs(t)<1e-6)){ ticks.push(0); ticks.sort((a,b)=>a-b); }
+      for (let v=niceMin; v<=niceMax+1e-9; v+=step) ticks.push(v);
+      metricScales[k] = { niceMax, niceMin, step, ticks, yScale: v => (H-padB) - ((v-niceMin)/(niceMax-niceMin)) * (H-padT-padB) };
+      return;
+    }
+    if (k==='temp'){
+      // temperature: always the raw recorded values, on an axis spanning this ride's own range
+      let lo = Infinity, hi = -Infinity;
+      S.records.forEach(r=>{ if (r.temp!=null){ if (r.temp<lo) lo = r.temp; if (r.temp>hi) hi = r.temp; } });
+      if (!isFinite(lo)){ metricScales[k] = null; return; }
+      const step = niceStep(Math.max(hi-lo, 4)*1.1, 4);
+      const niceMin = Math.floor(lo/step)*step;
+      const niceMax = Math.max(Math.ceil(hi/step)*step, niceMin+step);
+      const ticks = [];
+      for (let v=niceMin; v<=niceMax+1e-9; v+=step) ticks.push(v);
       metricScales[k] = { niceMax, niceMin, step, ticks, yScale: v => (H-padB) - ((v-niceMin)/(niceMax-niceMin)) * (H-padT-padB) };
       return;
     }
@@ -5823,6 +5849,13 @@ function renderPowerChart(rows){
     p3AxisButton({kind:'y', index:mi, x:titleX-15, y:padT-24, w:30, h:15, color:def.color});
   });
 
+  // an empty axis slot (up to 4 axes in all): a ＋ button where the next axis would go
+  if (metrics.length<4){
+    const slot = metrics.length, onLeft = slot%2===0;
+    const axisX = onLeft ? (padL - 8 - li*34) : (W-padR + 8 + ri*34);
+    const titleX = onLeft ? axisX-23 : axisX+27;
+    p3AxisButton({kind:'add', index:slot, x:titleX-15, y:padT-24, w:30, h:15, color:cssVar('--text-dim'), text:'＋'});
+  }
   // x ticks. Distance mode, and elapsed-time mode when it's the selected
   // (primary) axis, both step arithmetically from the data's own start —
   // there's no natural "round" anchor for distance, and when elapsed time
@@ -5978,7 +6011,7 @@ function renderPowerChart(rows){
   // gridline actually falls (not always the plot's left text margin, since
   // that gridline's position varies with the data range)
   if (minorTs.length){
-    const fmtGridStep = v => kcalMode ? v+'kcal' : distMode ? (v/1000)+'km' : ((v/60)%1===0 ? (v/60) : (v/60).toFixed(1))+'分';
+    const fmtGridStep = v => kcalMode ? v+'kcal' : distMode ? (v/1000)+'km' : (v<60 ? Math.round(v)+'秒' : ((v/60)%1===0 ? (v/60) : (v/60).toFixed(1))+'分');
     const leftMinorX = xScale(minorTs[0]);
     const barW = xScale(minX+xMinorStep) - xScale(minX);
     const sbY = 48;
@@ -6025,7 +6058,7 @@ function renderPowerChart(rows){
     // draw their own border at the shared edge, doubling up and poking
     // inward in a way that looked like a rendering glitch. A single bold
     // outline traces the outer silhouette separately, below.
-    const y0 = primaryScale.yScale(0), y1p = primaryScale.yScale(primaryDef.get(r));
+    const y0 = primaryScale.yScale(primaryScale.niceMin), y1p = primaryScale.yScale(primaryDef.get(r));
     primaryBarsSvg += '<rect class="powerBar" data-idx="'+idx+'" x="'+x0+'" y="'+y1p+'" width="'+w+'" height="'+Math.max(0,y0-y1p)+'" '+
       'fill="'+primaryDef.color+'" fill-opacity="0.4" style="cursor:pointer;"/>';
     // any extra metrics: thin horizontal line segments at their own scale —
@@ -6034,7 +6067,7 @@ function renderPowerChart(rows){
     // per-interval average (an averaged elevation line looks like stairs
     // and hides the real climb/descent shape)
     metrics.slice(1).forEach(k=>{
-      if (k==='elevation') return;
+      if (k==='elevation' || k==='temp') return;
       const def = POWER_CHART_METRICS[k], sc = metricScales[k];
       const v = sc && def.get(r);
       if (v==null) return;
@@ -6050,7 +6083,7 @@ function renderPowerChart(rows){
     x0: xScale(ivX0(iv)), x1: xScale(ivX1(iv)), y: primaryScale.yScale(primaryDef.get(r))
   }));
   if (primaryOutlineItems.length){
-    primaryBarsSvg += '<path d="'+buildStepOutline(primaryOutlineItems, primaryScale.yScale(0))+'" fill="none" stroke="'+primaryDef.color+'" stroke-width="1.25" stroke-linejoin="round" style="pointer-events:none;"/>';
+    primaryBarsSvg += '<path d="'+buildStepOutline(primaryOutlineItems, primaryScale.yScale(primaryScale.niceMin))+'" fill="none" stroke="'+primaryDef.color+'" stroke-width="1.25" stroke-linejoin="round" style="pointer-events:none;"/>';
   }
   // elevation, if selected as a secondary metric, gets a continuous smooth
   // profile line built straight from the ride's own record data (not
@@ -6073,6 +6106,19 @@ function renderPowerChart(rows){
       d += 'L'+pts[pts.length-1][0]+' '+baseline+' Z';
       primaryBarsSvg += '<path d="'+d+'" fill="'+POWER_CHART_METRICS.elevation.color+'" fill-opacity="0.4" stroke="none" style="pointer-events:none;"/>';
     }
+  }
+  // temperature: the raw record values as a line (never averaged per section)
+  if (metrics.slice(1).includes('temp') && metricScales.temp){
+    const tsc = metricScales.temp, step = Math.max(1, Math.floor(S.records.length/700));
+    let d = '';
+    for (let i=0;i<S.records.length;i+=step){
+      const rec = S.records[i];
+      if (rec.temp==null) continue;
+      const xv = xOfRec(rec);
+      if (xv<minX || xv>maxX) continue;
+      d += (d ? 'L' : 'M')+xScale(xv).toFixed(1)+' '+tsc.yScale(rec.temp).toFixed(1)+' ';
+    }
+    if (d) primaryBarsSvg += '<path d="'+d+'" fill="none" stroke="'+POWER_CHART_METRICS.temp.color+'" stroke-width="1.6" stroke-linejoin="round" style="pointer-events:none;"/>';
   }
   // interval markers, drawn last so they're always on top of both the fill
   // and the outline. The specifically-targeted (subdivided) interval gets
@@ -6112,7 +6158,7 @@ function renderPowerChart(rows){
     }
     if (hr && primaryDef.get(hr)!=null){
       const barTopY = primaryScale.yScale(primaryDef.get(hr));
-      const baseY = primaryScale.yScale(0);
+      const baseY = primaryScale.yScale(primaryScale.niceMin);
       const rectY = Math.min(barTopY, baseY), rectH = Math.abs(baseY-barTopY);
       primaryBarsSvg += '<rect id="powerChartSelFill" x="'+hx0+'" y="'+rectY+'" width="'+(hx1-hx0)+'" height="'+rectH+'" fill="#ffffff" fill-opacity="0.35" stroke="none" style="pointer-events:none;"/>';
     }
@@ -6280,7 +6326,7 @@ function showPowerChartDetail(idx, tapT){
 function p3AxisButton(b){
   p3AxisBtns.push(b);
   p3AxisHtml += '<g class="p3Ax"><rect x="'+b.x+'" y="'+b.y+'" width="'+b.w+'" height="'+b.h+'" rx="4" fill="'+cssVar('--surface-2')+'" stroke="'+b.color+'" stroke-opacity="0.6" style="pointer-events:none;"/>'+
-    '<text x="'+(b.x+b.w/2)+'" y="'+(b.y+b.h/2+3.2)+'" text-anchor="middle" font-size="9" fill="'+b.color+'" style="pointer-events:none;">▲▼</text></g>';
+    '<text x="'+(b.x+b.w/2)+'" y="'+(b.y+b.h/2+3.2)+'" text-anchor="middle" font-size="9" fill="'+b.color+'" style="pointer-events:none;">'+(b.text||'▲▼')+'</text></g>';
 }
 let p3AxisBtns = [], p3AxisHtml = '';
 let p3Link = null;       // the latest render's axis helpers
