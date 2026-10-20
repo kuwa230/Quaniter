@@ -357,7 +357,7 @@ td.num{ text-align:right; font-variant-numeric:tabular-nums; }
 .vLegend i{ width:18px; height:4px; border-radius:2px; flex:none; }
 .vLegend span.t{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .vChartBox{ position:relative; border:1px solid var(--border); border-radius:10px; background:var(--surface); overflow:hidden; touch-action:none; }
-#vCanvas{ display:block; width:100%; height:360px; touch-action:none; }
+#vCanvas{ display:block; width:100%; height:386px; touch-action:none; }
 .vTools{ position:absolute; top:6px; left:6px; display:flex; gap:4px; z-index:2; }
 .vTools button{ padding:4px 10px; font-size:14px; border-radius:8px; background:rgba(29,32,37,.9); border:1px solid var(--border); color:var(--text); }
 .vOnly-overlay.hidden, .vOnly-chart.hidden{ display:none; }
@@ -618,6 +618,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
     <div id="vLegend" class="vLegend"></div>
     <div class="vRow hidden" id="vNoteRow"><label class="inl"><input type="checkbox" id="vShowCm" checked> コメント</label><label class="inl"><input type="checkbox" id="vShowPh" checked> 写真</label></div>
     <div class="vMapBox hidden" id="vMapBox"><div id="vMap"></div></div>
+    <div class="vRow" id="vExportRow" style="margin:8px 0;"><button id="vSplitBtn" class="small primary" type="button" disabled>区間を分割</button><button id="vAlignBtn" class="small" type="button">区間の先頭で揃える</button><button id="vAlignReset" class="small ghost hidden" type="button">揃えを解除</button><button id="vExpPng" class="small" type="button">PNGを保存</button><button id="vExpPdf" class="small" type="button">PDFを保存</button></div>
     <div class="vAlignBar hidden" id="vAlignBar"><span id="vAlignMsg"></span><button id="vAlignOk" class="small primary" type="button" disabled>決定</button><button id="vAlignCancel" class="small ghost" type="button">やめる</button></div>
     <div class="vChartBox" id="vChartBox">
       <canvas id="vCanvas"></canvas>
@@ -633,7 +634,6 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
       <div class="vPcCap">実線:20m　破線:60m(横軸:消費エネルギー)</div>
       <canvas id="vPcCanvas2"></canvas>
     </div>
-    <div class="vRow" id="vExportRow" style="margin-top:10px;"><button id="vSplitBtn" class="small primary" type="button" disabled>区間を分割</button><button id="vAlignBtn" class="small" type="button">区間の先頭で揃える</button><button id="vAlignReset" class="small ghost hidden" type="button">揃えを解除</button><button id="vExpPng" class="small" type="button">PNGを保存</button><button id="vExpPdf" class="small" type="button">PDFを保存</button></div>
   </div>
 </div>
 
@@ -811,12 +811,10 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
       <button id="subdivideApplyBtn" class="small ghost" type="button" disabled>区間を分割</button>
       <button id="subdivideResetBtn" class="small ghost" type="button" disabled>解除</button>
     </div>
-    <div class="hint" style="margin-bottom:4px;">横軸の目盛りは4項目を同時に表示します。縦軸・横軸のタイトル付近の「▲▼」で項目を変えられます(横軸は選んだ項目が棒グラフの基準)。グラフをタップするとシーク位置が動き、地図と連動します。2本指で拡大・縮小、スクロールで移動できます。</div>
     <div id="p3MapBox" style="margin-bottom:8px;">
-      <label class="hint" style="display:flex;align-items:center;gap:6px;margin-bottom:4px;"><input type="checkbox" id="p3MapFollow" checked> シーク位置に地図を追従</label>
       <div id="p3MapWrap"></div>
     </div>
-    <div id="powerChartWrap" style="position:relative; overflow-x:auto; touch-action:pan-x pan-y;"><div id="p3Inner" style="position:relative; width:max-content;"><div id="p3SvgHost"></div><div id="p3Touch" style="position:absolute; inset:0; touch-action:pan-x pan-y;"></div></div></div>
+    <div id="powerChartWrap" style="position:relative; overflow-x:auto; touch-action:pan-x pan-y;"><div id="p3Inner" style="position:relative; width:max-content;"><div id="p3SvgHost"></div><div id="p3Touch" style="position:absolute; inset:0; touch-action:none;"></div></div></div>
     <div class="msg" id="powerChartDetail" style="display:none;"></div>
     <div class="exportRow">
       <button id="expPowerChartPng" class="small" disabled>PNGを保存</button>
@@ -951,7 +949,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
 // (this session's own publish count so far) is reconstructed from the
 // conversation itself rather than mechanically verified — best-effort, not
 // guaranteed exact. Increment by exactly 1 on every future publish.
-const APP_VERSION = 205;
+const APP_VERSION = 206;
 
 /* ============ FIT PARSER ============ */
 const FIT_EPOCH = 631065600; // seconds between 1970-01-01 and 1989-12-31 (FIT epoch)
@@ -1194,6 +1192,16 @@ function fmtClock(unixSec){
 function fmtClockNoSec(unixSec){
   const d = new Date(unixSec*1000);
   return d.getHours()+':'+String(d.getMinutes()).padStart(2,'0');
+}
+// Axis labels: while the time between ticks is 2 minutes or less both the clock and the elapsed time carry seconds
+// (h:mm:ss); from 5 minutes up neither does (h:mm). Elapsed time always has its hour field.
+const TICK_FINE_SEC = 120;
+function fmtClockAt(unixSec, fine){ return fine ? fmtClock(unixSec) : fmtClockNoSec(unixSec); }
+function fmtElapsedAt(sec, fine){
+  if (sec<-0.5) return '-'+fmtElapsedAt(-sec, fine);
+  sec = Math.max(0, Math.round(sec));
+  const h = Math.floor(sec/3600), m = Math.floor((sec%3600)/60), sc = sec%60, p2 = n=>String(n).padStart(2,'0');
+  return h+':'+p2(m)+(fine ? ':'+p2(sc) : '');
 }
 function fmtKm(m){ return (m/1000).toFixed(1); }
 function fmtDate(unixSec){
@@ -3214,8 +3222,8 @@ function computeXTicks(view, widthPx){
       const km = v/1000;
       label = km.toFixed(step%1000===0 ? 0 : (step>=100 ? 1 : 2))+' km';
     } else if (clock){
-      label = step<60 ? fmtClock(S.records[0].t+v) : fmtClockNoSec(S.records[0].t+v);
-    } else label = fmtHMS(v);
+      label = fmtClockAt(S.records[0].t+v, step<=TICK_FINE_SEC);
+    } else label = fmtElapsedAt(v, step<=TICK_FINE_SEC);
     ticks.push({v, label});
   }
   return ticks;
@@ -5452,42 +5460,120 @@ const POWER_CHART_WIDTH_MIN = 0.2, POWER_CHART_WIDTH_MAX = 6, POWER_CHART_WIDTH_
 // the element under the fingers were swapped out), so the graph follows the fingers live.
 function p3Rerender(){ if (lastResults) renderPowerChart(lastResults.rows.filter(r=>!r.isSummary)); }
 let p3LastPinchEnd = 0;
+// one finger: drag scrolls (and glides on), tap seeks, hold then drag moves the seek bar with the map point;
+// two fingers: zoom. Drawn live: the layer under the fingers is never replaced.
 (function(){
   const wrap = $('#powerChartWrap'), layer = $('#p3Touch');
-  let g = null, raf = 0;
-  const dist = t=> Math.hypot(t[0].clientX-t[1].clientX, t[0].clientY-t[1].clientY);
-  layer.addEventListener('touchstart', e=>{
-    if (e.touches.length===2){
-      const r = wrap.getBoundingClientRect(), mid = (e.touches[0].clientX+e.touches[1].clientX)/2 - r.left;
-      g = { d:Math.max(1, dist(e.touches)), mult:S.powerChartWidthMult, mid, frac:(wrap.scrollLeft+mid)/Math.max(1, wrap.scrollWidth), target:null };
-    }
-  }, {passive:true});
-  layer.addEventListener('touchmove', e=>{
-    if (!g || e.touches.length<2) return;
-    e.preventDefault();
-    g.target = Math.max(POWER_CHART_WIDTH_MIN, Math.min(POWER_CHART_WIDTH_MAX, g.mult*dist(e.touches)/g.d));
-    if (raf) return;
-    raf = requestAnimationFrame(()=>{
-      raf = 0;
-      if (!g || g.target==null) return;
-      S.powerChartWidthMult = g.target;
-      p3Rerender();
-      wrap.scrollLeft = g.frac*wrap.scrollWidth - g.mid;
-    });
-  }, {passive:false});
-  const end = e=>{
-    if (!g) return;
-    if (e.touches.length>=2) return;
-    const done = g; g = null; p3LastPinchEnd = Date.now();
-    if (done.target!=null) saveState();
+  const ptrs = new Map(); let g = null, raf = 0, momRAF = null;
+  const tracker = createVelocityTracker();
+  const stopMom = ()=>{ if (momRAF!=null){ cancelAnimationFrame(momRAF); momRAF = null; } };
+  const startMom = v0=>{   // v0: px per ms, positive = the finger moved right
+    stopMom();
+    let v = v0, last = null;
+    const step = t=>{
+      const dt = last==null ? 16 : Math.min(48, t-last); last = t;
+      if (dt<=0){ momRAF = requestAnimationFrame(step); return; }
+      v *= Math.pow(MOMENTUM_DECELERATION, dt);
+      if (Math.abs(v) < MOMENTUM_STOP_THRESHOLD){ momRAF = null; return; }
+      const before = wrap.scrollLeft;
+      wrap.scrollLeft = before - v*dt;
+      if (Math.abs(wrap.scrollLeft-before) < 0.01){ momRAF = null; return; }
+      momRAF = requestAnimationFrame(step);
+    };
+    momRAF = requestAnimationFrame(step);
   };
-  layer.addEventListener('touchend', end); layer.addEventListener('touchcancel', end);
-  layer.addEventListener('gesturestart', e=>e.preventDefault());   // Safari: no page zoom while pinching the graph
-  layer.addEventListener('click', e=>{
-    if (Date.now()-p3LastPinchEnd < 400) return;
-    p3Tap(e.clientX, e.clientY);
+  const pt = e=> ({ x:e.clientX, y:e.clientY });
+  layer.addEventListener('pointerdown', e=>{
+    stopMom();
+    try{ layer.setPointerCapture(e.pointerId); }catch(_){}
+    ptrs.set(e.pointerId, pt(e));
+    if (g && g.lp) clearTimeout(g.lp);
+    if (ptrs.size===1){
+      g = { type:'pan', start:pt(e), last:pt(e), t:performance.now(), moved:false };
+      tracker.reset(e.clientX, e.timeStamp || performance.now());
+      g.lp = setTimeout(()=>{      // held without moving: the finger now carries the seek bar
+        if (g && g.type==='pan' && !g.moved && ptrs.size===1){ g.type = 'seek'; if (navigator.vibrate) navigator.vibrate(8); p3SeekFast(g.start.x); }
+      }, 380);
+    } else if (ptrs.size===2){
+      const [a,b] = [...ptrs.values()], r = wrap.getBoundingClientRect(), mid = (a.x+b.x)/2 - r.left;
+      g = { type:'pinch', d:Math.max(1, Math.hypot(a.x-b.x, a.y-b.y)), mult:S.powerChartWidthMult, mid, frac:(wrap.scrollLeft+mid)/Math.max(1, wrap.scrollWidth), target:null, moved:true };
+    }
   });
+  layer.addEventListener('pointermove', e=>{
+    if (!ptrs.has(e.pointerId) || !g) return;
+    ptrs.set(e.pointerId, pt(e));
+    if (g.type==='seek'){ p3SeekFast(e.clientX); return; }
+    if (g.type==='pan' && ptrs.size===1){
+      const p = pt(e);
+      tracker.add(e, 0);
+      if (Math.abs(p.x-g.start.x)>6 || Math.abs(p.y-g.start.y)>6){ g.moved = true; if (g.lp){ clearTimeout(g.lp); g.lp = null; } }
+      if (!g.moved) return;
+      wrap.scrollLeft -= p.x-g.last.x;
+      if (e.pointerType==='touch') window.scrollBy(0, g.last.y-p.y);   // vertical drags still scroll the page
+      g.last = p;
+    } else if (g.type==='pinch' && ptrs.size>=2){
+      const [a,b] = [...ptrs.values()];
+      g.target = Math.max(POWER_CHART_WIDTH_MIN, Math.min(POWER_CHART_WIDTH_MAX, g.mult*Math.hypot(a.x-b.x, a.y-b.y)/g.d));
+      if (raf) return;
+      raf = requestAnimationFrame(()=>{
+        raf = 0;
+        if (!g || g.type!=='pinch' || g.target==null) return;
+        S.powerChartWidthMult = g.target;
+        p3Rerender();
+        wrap.scrollLeft = g.frac*wrap.scrollWidth - g.mid;
+      });
+    }
+  });
+  const up = e=>{
+    if (!ptrs.has(e.pointerId)) return;
+    const p = pt(e), was = g;
+    ptrs.delete(e.pointerId);
+    if (was && was.lp){ clearTimeout(was.lp); was.lp = null; }
+    if (ptrs.size===0){
+      if (was && was.type==='pan'){
+        if (!was.moved && performance.now()-was.t<500 && e.type==='pointerup') p3Tap(p.x, p.y);
+        else if (was.moved && e.type==='pointerup'){
+          const v = tracker.velocity(e.timeStamp || performance.now());
+          if (Math.abs(v) > MOMENTUM_TRIGGER_THRESHOLD) startMom(v);
+        }
+      } else if (was && was.type==='seek'){
+        p3ApplySelection();     // the finger is up: settle the interval highlight and the status
+      } else if (was && was.type==='pinch'){
+        p3LastPinchEnd = Date.now();
+        if (was.target!=null) saveState();
+      }
+      g = null;
+    } else if (ptrs.size===1){
+      const rem = [...ptrs.values()][0];
+      if (g && g.type==='pinch'){ p3LastPinchEnd = Date.now(); if (g.target!=null) saveState(); }
+      g = { type:'pan', start:rem, last:rem, t:performance.now(), moved:true };
+      tracker.reset(rem.x, performance.now());
+    }
+  };
+  layer.addEventListener('pointerup', up); layer.addEventListener('pointercancel', up);
+  layer.addEventListener('gesturestart', e=>e.preventDefault());
 })();
+// during a long-press drag: move the seek (and the map point) at once, redrawing only the line and the status
+function p3SeekFast(cx){
+  const svg = $('#p3SvgHost svg');
+  if (!svg || !p3Link || !powerChartPlotBounds) return;
+  const {W, H, padL, padR} = powerChartPlotBounds;
+  const r = svg.getBoundingClientRect();
+  const sx = Math.max(padL, Math.min(W-padR, (cx-r.left)/r.width*W));
+  const rec = p3Link.recAtX(p3Link.xScaleInv(sx));
+  if (!rec) return;
+  p3Internal = true; try{ setSelection(p3RecIndex(rec), null, 'chart'); } finally { p3Internal = false; }
+  const t = p3Link.xOfRec(rec);
+  const oi = S.intervals.findIndex(iv=> t>=p3Link.ivX0(iv) && t<=p3Link.ivX1(iv));
+  powerChartDetailTarget = { origIdx: oi, sliceIndex: 0, t };
+  applyPowerChartDetailHighlight();
+  const box = $('#powerChartDetail');
+  if (box){
+    const item = powerChartBarItems.find(it=> it && it.origIdx===oi && t>=p3Link.ivX0(it.iv) && t<=p3Link.ivX1(it.iv));
+    box.style.display = 'block';
+    box.innerHTML = p3SeekHtml() + (item ? '<br>'+buildPowerChartDetailHtml(item.iv, item.r, item.origIdx) : '');
+  }
+}
 // a tap: on a ▲▼ button it opens that axis' picker, anywhere else on the plot it moves the seek there
 function p3Tap(cx, cy){
   const svg = $('#p3SvgHost svg');
@@ -5872,11 +5958,11 @@ function renderPowerChart(rows){
   const TIME_MINOR_MIN = [0.5,1,1,5,5,10,10,20,30,60,60,120,120,240,480]; // minutes
   const TIME_SUBMIN_MIN = [0.1,0.2,0.5,1,1,2,2,5,10,10,20,30,30,60,120]; // minutes
   const DIST_MAJOR_KM = [1,2,5,10,20,25,50,100,150,200,250,400,600];
-  const DIST_MINOR_KM = [0.5,1,1,5,10,5,25,50,50,100,125,200,300];
+  const DIST_MINOR_KM = [0.5,0.5,1,5,10,5,25,50,50,100,125,200,300];
   const KCAL_MAJOR = [10,20,50,100,200,250,500,1000,2000,5000];
   const KCAL_MINOR = [5,10,10,50,100,50,100,500,1000,1000];
   const KCAL_SUBMIN = [1,2,5,10,20,10,50,100,200,null];
-  const DIST_SUBMIN_KM = [0.1,0.2,0.5,1,2,null,5,10,10,20,25,40,60]; // null = no sub-minor gridline for that major/minor pairing
+  const DIST_SUBMIN_KM = [0.1,0.1,0.5,1,2,null,5,10,10,20,25,40,60]; // null = no sub-minor gridline for that major/minor pairing
   // Picks the smallest (densest) major step whose resulting label spacing
   // still leaves at least one character's width of blank gap between
   // adjacent labels, given the chart's ACTUAL current pixel width — rather
@@ -5935,11 +6021,17 @@ function renderPowerChart(rows){
     }
     return distMode ? nearestRecordByDist(t+distOffset) : nearestRecordByElapsed(t+elapsedOffset);
   }
+  const fineTime = (()=>{
+    if (!valMode) return xStep<=TICK_FINE_SEC;
+    if (tickTs.length<2) return false;
+    const i = Math.floor((tickTs.length-1)/2);
+    return Math.abs(recAtX(tickTs[i+1]).elapsed-recAtX(tickTs[i]).elapsed) <= TICK_FINE_SEC;
+  })();
   function labelsAt(t){
     const rec = recAtX(t);
     const o = {
-      clock: fmtClockNoSec(distMode||kcalMode ? rec.t : S.records[0].t+t+elapsedOffset),
-      elapsed: fmtHMS(distMode||kcalMode ? rec.elapsed-elapsedOffset : t),
+      clock: fmtClockAt(distMode||kcalMode ? rec.t : S.records[0].t+t+elapsedOffset, fineTime),
+      elapsed: fmtElapsedAt(distMode||kcalMode ? rec.elapsed-elapsedOffset : t, fineTime),
       dist: fmtKm(distMode ? t : rec.dist-distOffset),
       kcal: hasKcal ? String(Math.round(kcalMode ? t : kcalOfRec(rec))) : null
     };
@@ -6425,8 +6517,7 @@ function p3MapFrame(follow){
   if (r && r.lat!=null && r.lon!=null){
     if (!mv.cursor) mv.cursor = addMarker(map, mapDot('mapCursor'), r.lon, r.lat);
     mv.cursor.setLngLat([r.lon, r.lat]);
-    const fol = $('#p3MapFollow');
-    if (follow && fol && fol.checked) map.jumpTo({ center:[r.lon, r.lat] });
+    if (follow) map.jumpTo({ center:[r.lon, r.lat] });
   } else if (mv.cursor){ mv.cursor.remove(); mv.cursor = null; }
 }
 
@@ -6695,6 +6786,7 @@ $('#v2Back').addEventListener('click', ()=> showPage('V1'));
 const V = { items:[], sel:new Set(), rides:[], order:[], hidden:new Set(), view:null, cursor:null, series:null, splits:new Map(), splitVer:0, nextId:0 };
 const V_COLORS = ['#17b8a4','#f2994a','#6c8cff','#f0506a','#c9a227','#b57cf0','#4fc3f7','#9ccc65','#ff8a80','#a1887f'];
 // 1h30m00s style (hours and minutes dropped while they are zero)
+function vHmsCol(sec, fine){ return fmtElapsedAt(sec, fine); }
 function vHms(sec, withSec){
   if (sec<0 && Math.round(sec)!==0) return '-'+vHms(-sec, withSec);
   sec = Math.max(0, Math.round(sec));
@@ -7080,7 +7172,7 @@ function vSectionAvg(ride, sec, m){
 /* ---- the chart: canvas, pan / pinch / wheel on x, tap for values ---- */
 (function(){
   const cv = $('#vCanvas'), box = $('#vChartBox');
-  const ML = 60, MR = 12, MT = 12, MB = 50;
+  const ML = 60, MR = 12, MT = 12, MB = 76;   // MB: room for the four rows of x labels
   let W = 0, H = 0, yr = {y0:0, y1:1};
   const toX = x=> ML + (x-V.view.x0)/(V.view.x1-V.view.x0)*(W-ML-MR);
   const fromX = px=> V.view.x0 + (px-ML)/(W-ML-MR)*(V.view.x1-V.view.x0);
@@ -7252,14 +7344,52 @@ function vSectionAvg(ride, sec, m){
     ctx.font = '11px sans-serif'; ctx.strokeStyle = grid; ctx.lineWidth = 1; ctx.fillStyle = muted;
     const sdist = $('#vXAxis').value!=='elapsed';
     const opts = [1,2,5,10,15,30,60,120,300,600,900,1800,3600,7200,14400,28800];
-    const pwid = W-ML-MR, span0 = V.view.x1-V.view.x0, wSec = ctx.measureText('-00h00m00s').width+34, wMin = ctx.measureText('-00h00m').width+34;
+    const pwid = W-ML-MR, span0 = V.view.x1-V.view.x0, wSec = ctx.measureText('0:00:00').width+34, wMin = ctx.measureText('00:00').width+34;
     // labels keep a clear gap: take the finest step whose labels fit
-    const xstep = sdist ? niceStep(span0, Math.max(2, Math.floor(pwid/(ctx.measureText('0000.0').width+34)))) : (opts.find(o=> span0/o <= Math.max(2, Math.floor(pwid/(o<60 ? wSec : wMin)))) || 28800);
+    const xstep = sdist ? niceStep(span0, Math.max(2, Math.floor(pwid/(ctx.measureText('0000.0').width+34)))) : (opts.find(o=> span0/o <= Math.max(2, Math.floor(pwid/(o<=TICK_FINE_SEC ? wSec : wMin)))) || 28800);
+    // four rows of labels (clock, elapsed time, distance, energy) read off the front ride, the chosen axis in the brighter one
+    const ax = $('#vXAxis').value, fr = all[0] ? all[0].r : null;
+    const rowKeys = ['clock','elapsed','dist'].concat(fr && vKcalCum(fr) ? ['kcal'] : []);
+    const ROWCAP = { clock:'時刻', elapsed:'経過時間', dist:'距離(km)', kcal:'消費(kcal)' };
+    const own = ax==='elapsed' ? 'elapsed' : ax;
+    let fineTime = xstep<=TICK_FINE_SEC, p0f = 0, o0 = 0, d0 = 0, k0 = 0, kc = null;
+    if (fr){
+      p0f = vPos(fr, vOrigin(fr), ax); o0 = vOrigin(fr); d0 = vDistAt(fr, o0); kc = vKcalCum(fr); k0 = kc ? kc[vIdxAt(fr, o0)] : 0;
+      if (sdist){
+        const c = Math.round((V.view.x0+V.view.x1)/2/xstep)*xstep;
+        fineTime = Math.abs(vTimeAtPos(fr, ax, c+xstep+p0f)-vTimeAtPos(fr, ax, c+p0f)) <= TICK_FINE_SEC;
+      }
+    }
+    const textCol = getComputedStyle(document.documentElement).getPropertyValue('--text-dim').trim() || muted;
+    const rowsAt = x=>{
+      const o = {};
+      if (!fr){ o[own] = sdist ? (+x.toFixed(3))+'' : vHmsCol(x, fineTime); return o; }
+      const t = vTimeAtPos(fr, ax, x+p0f), r0 = fr.recs[0], rl = fr.recs[fr.recs.length-1];
+      const inside = t>=r0.elapsed-1e-9 && t<=rl.elapsed+1e-9;
+      o.clock = inside ? fmtClockAt(r0.t+(t-r0.elapsed), fineTime) : '';
+      o.elapsed = fmtElapsedAt(t-o0, fineTime);
+      o.dist = inside ? (+((vDistAt(fr, t)-d0)/1000).toFixed(3))+'' : '';
+      if (kc) o.kcal = inside ? Math.round(kc[vIdxAt(fr, t)]-k0)+'' : '';
+      if (ax==='dist') o.dist = (+x.toFixed(3))+''; else if (ax==='kcal' && kc) o.kcal = Math.round(x)+'';
+      return o;
+    };
+    ctx.textAlign = 'right'; ctx.textBaseline = 'top'; ctx.font = '9px sans-serif'; ctx.fillStyle = muted;
+    rowKeys.forEach((k,i)=> ctx.fillText(ROWCAP[k], ML-20, H-MB+6+i*12));
+    ctx.font = '11px sans-serif';
     ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+    // auxiliary lines for distance: half / fifth of the main step, never finer than 0.5 km
+    if (sdist && ax==='dist'){
+      const lead = xstep/Math.pow(10, Math.floor(Math.log10(xstep)+1e-9)), minor = lead<4 ? xstep/2 : xstep/5;
+      if (minor>=0.5-1e-9){
+        ctx.save(); ctx.globalAlpha = 0.4;
+        for (let x=Math.ceil(V.view.x0/minor)*minor; x<=V.view.x1+1e-9; x+=minor){ if (Math.abs(x/xstep-Math.round(x/xstep))<1e-6) continue; const px = Math.round(toX(x))+.5; ctx.beginPath(); ctx.moveTo(px,MT); ctx.lineTo(px,H-MB); ctx.stroke(); }
+        ctx.restore();
+      }
+    }
     for (let x=Math.ceil(V.view.x0/xstep)*xstep; x<=V.view.x1+1e-9; x+=xstep){
       const px = Math.round(toX(x))+.5; ctx.beginPath(); ctx.moveTo(px,MT); ctx.lineTo(px,H-MB); ctx.stroke();
-      if (sdist){ ctx.fillText((+x.toFixed(3))+'', px, H-MB+5); continue; }
-      ctx.fillText(vHms(x, xstep<60), px, H-MB+5);   // seconds appear once the scale is that fine
+      const o = rowsAt(x);
+      rowKeys.forEach((k,i)=>{ if (o[k]==null) return; ctx.fillStyle = k===own ? textCol : muted; ctx.fillText(o[k], px, H-MB+5+i*12); });
     }
     ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
     for (let y=0; y<=yr.y1+1e-9; y+=sy){
@@ -7366,7 +7496,7 @@ function vSectionAvg(ride, sec, m){
   // ---- export: the whole graph (not the zoomed view) on a white page, with a title and the legend
   window.vExportCanvas = function(){
     const keep = { W, H, view:V.view, cursor:V.cursor, yr };
-    const EW = 1100, EH = 520, K = 2, HEAD = 74;
+    const EW = 1100, EH = 546, K = 2, HEAD = 74;
     const plot = document.createElement('canvas'); plot.width = EW*K; plot.height = EH*K;
     const pctx = plot.getContext('2d'); pctx.setTransform(K,0,0,K,0,0); pctx.fillStyle = '#fff'; pctx.fillRect(0,0,EW,EH);
     W = EW; H = EH; V.view = { x0:vXMin(), x1:vXMax() > vXMin() ? vXMax() : vXMin()+1 }; V.cursor = null;
