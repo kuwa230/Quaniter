@@ -534,7 +534,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
     <button id="goAnalyzer" class="titleBtn" type="button"><b>アナライザー</b><span>ライドを区間に分けて解析する</span></button>
     <button id="goViewer" class="titleBtn" type="button"><b>ビュワー</b><span>解析済みのライドを振り返る・比べる</span></button>
     <button id="goEditor" class="titleBtn" type="button"><b>エディター</b><span>GPXファイルを分割・統合・逆転する</span></button>
-    <button id="goAdv" class="titleBtn" type="button"><b>アドバンスドアナライザー</b><span>CSVから回帰直線を求める(開発者向け)</span></button>
+    <button id="goAdv" class="titleBtn" type="button"><b>アドバンスドアナライザー</b><span>お気に入り区間の記録を並べて回帰直線を求める(開発者向け)</span></button>
     <div class="titleVer" id="titleVer"></div>
   </div>
 </div>
@@ -542,14 +542,14 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
 <div id="pageA1" class="page hidden">
 <div class="panel">
   <div class="panel-head"><button id="aBack" class="small ghost icon-btn" type="button" title="タイトルへ">←</button><h2>アドバンスドアナライザー(開発者向け)</h2></div>
-  <div class="sub">Quaniterの「CSVを保存」で出力したCSVを、フォルダごとまとめて読み込みます。区間(コース)ごとに記録を日付順に並べ、パワーウェイトレシオ(PWR)と所要時間の関係を散布図と回帰直線で見ます。ファイルはどこにも送信されません。</div>
+  <div class="sub">アナライザーで区間解析済みのZIP、またはFITファイルを、フォルダごとまとめて読み込みます。お気に入り区間が検出されたら、お気に入り区間ごとに記録を日付順に並べ、パワーウェイトレシオ(PWR)と所要時間の関係を散布図と回帰直線で見ます。ファイルはどこにも送信されません。</div>
 
   <div class="panel">
     <div class="row">
       <label class="btn primary" for="advDirInput">📁 フォルダを選ぶ</label>
       <input type="file" id="advDirInput" webkitdirectory directory multiple hidden>
-      <label class="btn" for="advFileInput">CSVを選ぶ(複数可)</label>
-      <input type="file" id="advFileInput" accept=".csv,text/csv" multiple hidden>
+      <label class="btn" for="advFileInput">ZIP / FITを選ぶ(複数可)</label>
+      <input type="file" id="advFileInput" accept=".zip,.fit,application/zip,application/octet-stream" multiple hidden>
       <button id="advPickDir" class="hidden" type="button">フォルダを選ぶ(PC)</button>
     </div>
     <div class="row" style="margin-top:12px;">
@@ -557,7 +557,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
       <select id="advTimeSel"><option value="net">ネットタイム</option><option value="gross">グロスタイム</option></select>
       <label class="chk"><input type="checkbox" id="advShowUnnamed"> 名前のない区間(区間N)も含める</label>
     </div>
-    <div id="advStatus">フォルダを選ぶと、その下にあるCSVをすべて探します。</div>
+    <div id="advStatus">フォルダを選ぶと、その下にあるZIP(アナライザーで保存したもの)とFITをすべて探します。</div>
   </div>
 
   <div id="advResults"></div>
@@ -949,7 +949,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
 // (this session's own publish count so far) is reconstructed from the
 // conversation itself rather than mechanically verified — best-effort, not
 // guaranteed exact. Increment by exactly 1 on every future publish.
-const APP_VERSION = 206;
+const APP_VERSION = 207;
 
 /* ============ FIT PARSER ============ */
 const FIT_EPOCH = 631065600; // seconds between 1970-01-01 and 1989-12-31 (FIT epoch)
@@ -1534,6 +1534,26 @@ function startMomentum(v0, canvasWidth){
     c -= v*dt*shiftPerPixel;
     scrollCenterTo(c);
     c = scrollState.c; // clamped
+    momentumRAF = requestAnimationFrame(step);
+  }
+  momentumRAF = requestAnimationFrame(step);
+}
+// the same glide for multi-select mode: only the view moves, the seek bar stays where it is
+function startViewMomentum(v0, canvasWidth){
+  if (!S.chartView || !canvasWidth) return;
+  stopMomentum();
+  let v = v0, lastT = null;
+  function step(t){
+    const rawDt = lastT==null ? 16 : t-lastT;
+    lastT = t;
+    if (rawDt <= 0){ momentumRAF = requestAnimationFrame(step); return; }
+    const dt = Math.min(48, rawDt);
+    v *= Math.pow(MOMENTUM_DECELERATION, dt);
+    if (Math.abs(v) < MOMENTUM_STOP_THRESHOLD){ momentumRAF = null; return; }
+    const xs = S.chartView, before = xs.min;
+    const sh = -v*dt*(xs.max-xs.min)/canvasWidth;
+    clampAndSetX(xs.min+sh, xs.max+sh);
+    if (Math.abs(S.chartView.min-before) < 1e-9){ momentumRAF = null; return; }   // reached an end
     momentumRAF = requestAnimationFrame(step);
   }
   momentumRAF = requestAnimationFrame(step);
@@ -4411,7 +4431,7 @@ function attachTimelineGestures(){
     if (lpFired){ lpFired = false; moved = false; return; }   // the long press itself did something
     if (moved){
       const v = e.type==='pointercancel' ? 0 : tlVelocity.velocity(e.timeStamp || performance.now());
-      if (ivSelectMode) { /* no glide while selecting: it would move the seek bar */ }
+      if (ivSelectMode){ if (Math.abs(v) > MOMENTUM_TRIGGER_THRESHOLD) startViewMomentum(v, lastWidth); }   // glides too, without touching the seek bar
       else if (Math.abs(v) > MOMENTUM_TRIGGER_THRESHOLD) startMomentum(v, lastWidth);
       else endScrollSeeking();
     } else if (e.type==='pointerup' && !noTap){
@@ -7163,6 +7183,58 @@ function vWholeStats(ride){
   }
   return ride[key];
 }
+// Advanced analyzer: the favourite sections found in each ride, one row per ride and section.
+// A zip saved by the analyzer: the sections its JSON names as favourites (auto-detected, or named like a stored
+// favourite). A plain .fit (or a zip without any): the stored favourites are searched for along the route.
+window.QuaniterAdvLoad = async function(entries, progress){
+  const out = []; let used = 0, skipped = 0, noFav = 0;
+  const libNames = new Set(libEntries.map(e=>e.name));
+  for (let i=0;i<entries.length;i++){
+    const { file, path } = entries[i];
+    if (progress) progress(i, entries.length);
+    await new Promise(r=>setTimeout(r,0));
+    try{
+      let buf, set = null;
+      if (/\.zip$/i.test(file.name)){
+        const zip = await JSZip.loadAsync(file);
+        const fit = Object.values(zip.files).find(f=>!f.dir && /\.fit$/i.test(f.name));
+        if (!fit){ skipped++; continue; }
+        buf = await fit.async('arraybuffer');
+        const jf = Object.values(zip.files).find(f=>!f.dir && /\.json$/i.test(f.name));
+        if (jf){ try{ const st = JSON.parse(await jf.async('string')); set = st.settings || st; }catch(e){} }
+      } else buf = await file.arrayBuffer();
+      const recs = parseFit(buf); smoothAltitudes(recs);
+      if (!recs.length){ skipped++; continue; }
+      const secs = [];
+      if (set && Array.isArray(set.intervals)){
+        const off = Number(set.intervalTimeOffset)||0;
+        set.intervals.forEach(iv=>{
+          const nm = (iv.name||'').trim(), sn = (iv.startName||'').trim(), en = (iv.endName||'').trim();
+          const named = nm || (iv.nameType==='b' && (sn || en) ? sn+'→'+en : '');
+          const fav = named && !/^区間\d+$/.test(named) && (libNames.has(nm) || iv.origin==='auto');
+          if (!fav) return;
+          const start = (Number(iv.start)||0)+off, end = (Number(iv.end)||0)+off;
+          if (end>start) secs.push({ name:named, nameType:iv.nameType==='b' ? 'b' : 'a', startName:sn, endName:en, start, end });
+        });
+      }
+      if (!secs.length && libEntries.length){
+        libMatchAll(recs).forEach(m=> secs.push({ name:m.name, nameType:m.nameType||'a', startName:m.startName||'', endName:m.endName||'', start:m.start, end:m.end }));
+      }
+      if (!secs.length){ noFav++; continue; }
+      const cfg = set ? { weight:set.weight, ftp:set.ftp, age:set.age, sex:set.sex, grad:set.avgGradientMethod } : {};
+      secs.forEach((sec,k)=>{
+        const st = vCompute({ recs, cfg }, Object.assign({}, sec, { idx:k }));
+        if (!st || st.duration==null || !(st.duration>0)) return;
+        const d = new Date(st.startTime*1000), p2 = n=>String(n).padStart(2,'0');
+        out.push({ course:sec.name, date:d.getFullYear()+'/'+p2(d.getMonth()+1)+'/'+p2(d.getDate()), start:p2(d.getHours())+':'+p2(d.getMinutes()),
+          net:st.netTime, gross:st.duration, dist:st.distance!=null ? Math.round(st.distance/10)/100 : null, gain:st.elevGain!=null ? Math.round(st.elevGain) : null,
+          avgPower:st.avgPower!=null ? Math.round(st.avgPower) : null, pwr:st.pwr!=null ? st.pwr : null, src:path });
+      });
+      used++;
+    }catch(e){ skipped++; }
+  }
+  return { rows:out, used, skipped, noFav, libCount:libEntries.length };
+};
 function vSectionAvg(ride, sec, m){
   if (!sec._st) sec._st = vCompute(ride, sec);
   const v = m.stat==='avgCad' ? vAvgCad(ride, sec) : sec._st[m.stat];
@@ -7349,9 +7421,10 @@ function vSectionAvg(ride, sec, m){
     const xstep = sdist ? niceStep(span0, Math.max(2, Math.floor(pwid/(ctx.measureText('0000.0').width+34)))) : (opts.find(o=> span0/o <= Math.max(2, Math.floor(pwid/(o<=TICK_FINE_SEC ? wSec : wMin)))) || 28800);
     // four rows of labels (clock, elapsed time, distance, energy) read off the front ride, the chosen axis in the brighter one
     const ax = $('#vXAxis').value, fr = all[0] ? all[0].r : null;
-    const rowKeys = ['clock','elapsed','dist'].concat(fr && vKcalCum(fr) ? ['kcal'] : []);
+    const rowKeys0 = ['clock','elapsed','dist'].concat(fr && vKcalCum(fr) ? ['kcal'] : []);
     const ROWCAP = { clock:'時刻', elapsed:'経過時間', dist:'距離(km)', kcal:'消費(kcal)' };
     const own = ax==='elapsed' ? 'elapsed' : ax;
+    const rowKeys = [own].concat(rowKeys0.filter(k=>k!==own));   // the chosen axis first, the rest in the usual order
     let fineTime = xstep<=TICK_FINE_SEC, p0f = 0, o0 = 0, d0 = 0, k0 = 0, kc = null;
     if (fr){
       p0f = vPos(fr, vOrigin(fr), ax); o0 = vOrigin(fr); d0 = vDistAt(fr, o0); kc = vKcalCum(fr); k0 = kc ? kc[vIdxAt(fr, o0)] : 0;
@@ -8494,100 +8567,18 @@ $('#vExpPdf').addEventListener('click', ()=>{
 "use strict";
 const $ = s=>document.querySelector('#pageA1 '+s);
 
-/* ---------- CSV reading ---------- */
-function parseCsv(text){
-  const rows = []; let row = [], cell = '', q = false;
-  for (let i=0;i<text.length;i++){
-    const c = text[i];
-    if (q){
-      if (c==='"'){ if (text[i+1]==='"'){ cell += '"'; i++; } else q = false; }
-      else cell += c;
-    } else if (c==='"') q = true;
-    else if (c===','){ row.push(cell); cell = ''; }
-    else if (c==='\n'){ row.push(cell); rows.push(row); row = []; cell = ''; }
-    else if (c==='\r'){ /* skip */ }
-    else cell += c;
-  }
-  if (cell!=='' || row.length){ row.push(cell); rows.push(row); }
-  return rows;
-}
-async function readText(file){
-  const buf = await file.arrayBuffer();
-  let t = new TextDecoder('utf-8').decode(buf);
-  if (t.includes('�')){ try{ t = new TextDecoder('shift_jis').decode(buf); }catch(e){} }
-  return t.replace(/^﻿/, '');
-}
-function stripUnit(h){ return h.trim().replace(/\([^()]*\)$/, '').trim(); }
-function parseDur(t){            // "9:54" = 9 min 54 s, "1:05:03" = 1 h 5 min 3 s
-  if (!t) return null;
-  const p = t.trim().split(':').map(Number);
-  if (p.some(x=>isNaN(x))) return null;
-  if (p.length===3) return p[0]*3600+p[1]*60+p[2];
-  if (p.length===2) return p[0]*60+p[1];
-  return null;
-}
-function parseNum(t){ if (t==null) return null; const v = parseFloat(String(t).replace('+','')); return isNaN(v) ? null : v; }
-function dateFromName(name){
-  let m = /(?:^|[^0-9])(20\d{2})[-_/.]?(\d{2})[-_/.]?(\d{2})(?!\d)/.exec(name);
-  if (m) return m[1]+'/'+m[2]+'/'+m[3];
-  m = /(?:^|[^0-9])(\d{2})(\d{2})(\d{2})(?!\d)/.exec(name);
-  if (m && +m[2]>=1 && +m[2]<=12 && +m[3]>=1 && +m[3]<=31) return '20'+m[1]+'/'+m[2]+'/'+m[3];
-  return null;
-}
-function normDate(t){
-  const m = /(\d{4})[\/\-.](\d{1,2})[\/\-.](\d{1,2})/.exec(t||'');
-  return m ? m[1]+'/'+m[2].padStart(2,'0')+'/'+m[3].padStart(2,'0') : null;
-}
+/* ---------- loading: analysed zips / .fit files ---------- */
 function fmtLocalDate(ms){ const d = new Date(ms); return d.getFullYear()+'/'+String(d.getMonth()+1).padStart(2,'0')+'/'+String(d.getDate()).padStart(2,'0'); }
-
-// one CSV -> records [{course, date, start, net, gross, dist, gain, avgPower, pwr, src}]
-function extract(rows, file, path){
-  if (rows.length<2) return null;
-  const head = rows[0].map(stripUnit);
-  const ix = name=> head.indexOf(name);
-  const iName = ix('区間');
-  if (iName<0) return null;                 // not a Quaniter CSV
-  const iDate = ix('日付'), iStart = ix('開始時刻'), iNet = ix('ネットタイム'), iGross = ix('グロスタイム');
-  const iDist = ix('距離'), iGain = ix('獲得標高'), iAvgP = ix('平均パワー'), iPwr = ix('Power Weight Ratio');
-  const fileDate = dateFromName(path) || fmtLocalDate(file.lastModified || Date.now());
-  const out = [];
-  for (let r=1;r<rows.length;r++){
-    const row = rows[r];
-    const name = (row[iName]||'').trim();
-    if (!name || name==='全区間') continue;
-    const date = (iDate>=0 && normDate(row[iDate])) || fileDate;
-    out.push({
-      course: name.replace(/\s*->\s*/g,'→'),
-      date, start: iStart>=0 ? (row[iStart]||'').trim() : '',
-      net: iNet>=0 ? parseDur(row[iNet]) : null,
-      gross: iGross>=0 ? parseDur(row[iGross]) : null,
-      dist: iDist>=0 ? parseNum(row[iDist]) : null,
-      gain: iGain>=0 ? parseNum(row[iGain]) : null,
-      avgPower: iAvgP>=0 ? parseNum(row[iAvgP]) : null,
-      pwr: iPwr>=0 ? parseNum(row[iPwr]) : null,
-      src: path,
-    });
-  }
-  return out;
-}
-
-/* ---------- loading ---------- */
 let allRecords = [];
 async function loadFiles(entries){          // entries: [{file, path}]
-  const csvs = entries.filter(e=>/\.csv$/i.test(e.file.name));
-  $('#advStatus').textContent = 'CSVを読み込み中… 0 / '+csvs.length;
-  const recs = []; let used = 0, skipped = 0;
-  for (let i=0;i<csvs.length;i++){
-    if (i%10===0){ $('#advStatus').textContent = 'CSVを読み込み中… '+i+' / '+csvs.length; await new Promise(r=>setTimeout(r,0)); }
-    try{
-      const r = extract(parseCsv(await readText(csvs[i].file)), csvs[i].file, csvs[i].path);
-      if (r && r.length){ recs.push(...r); used++; } else skipped++;
-    }catch(e){ skipped++; }
-  }
-  // the same ride exported twice must count once
+  const files = entries.filter(e=>/\.(zip|fit)$/i.test(e.file.name));
+  $('#advStatus').textContent = '読み込み中… 0 / '+files.length;
+  const res = await window.QuaniterAdvLoad(files, (i,n)=>{ $('#advStatus').textContent = '読み込み中… '+i+' / '+n; });
   const seen = new Set();
-  allRecords = recs.filter(r=>{ const k = r.course+'|'+r.date+'|'+r.start; if (seen.has(k)) return false; seen.add(k); return true; });
-  $('#advStatus').textContent = 'CSV '+csvs.length+'件を調べ、'+used+'件を使用('+skipped+'件はQuaniterの出力ではないため除外)。記録 '+allRecords.length+'行(重複は除く)。';
+  allRecords = res.rows.filter(r=>{ const k = r.course+'|'+r.date+'|'+r.start; if (seen.has(k)) return false; seen.add(k); return true; });
+  let msg = files.length+'件を調べ、'+res.used+'件でお気に入り区間を検出しました(検出なし '+res.noFav+'件、読み込めず '+res.skipped+'件)。記録 '+allRecords.length+'行(重複は除く)。';
+  if (!res.libCount && res.noFav) msg += '\nお気に入り区間がこの端末に登録されていません。アナライザーで区間を登録するか、お気に入り区間を検出済みのZIPを読み込んでください。';
+  $('#advStatus').textContent = msg;
   render();
 }
 $('#advDirInput').addEventListener('change', e=> loadFiles([...e.target.files].map(f=>({file:f, path:f.webkitRelativePath||f.name}))));
@@ -8601,7 +8592,7 @@ if (window.showDirectoryPicker){
       (async function walk(dir, prefix){
         for await (const [name, h] of dir.entries()){
           if (h.kind==='directory') await walk(h, prefix+name+'/');
-          else if (/\.csv$/i.test(name)) out.push({file:await h.getFile(), path:prefix+name});
+          else if (/\.(zip|fit)$/i.test(name)) out.push({file:await h.getFile(), path:prefix+name});
         }
       })(root, root.name+'/').then(()=> loadFiles(out));
     }catch(e){ /* cancelled */ }
@@ -8660,7 +8651,7 @@ function courseCard(name, list, useGross){
   // chart
   const pts = list.filter(r=>r.pwr!=null && T(r)>0).map(r=>({ x:r.pwr, y:1000/T(r), t:T(r), rec:r }));
   if (pts.length<1){
-    card.appendChild(el('div', 'hint', 'PWRの記録がないため、グラフは作れません(Quaniterで体重を入力してからCSVを保存すると、PWRの列が入ります)。'));
+    card.appendChild(el('div', 'hint', 'PWRの記録がないため、グラフは作れません(アナライザーで体重を入力してから保存したZIPを読み込むと、PWRが入ります)。'));
     return card;
   }
   const reg = pts.length>=2 ? regress(pts) : null;
