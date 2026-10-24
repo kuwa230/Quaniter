@@ -44,7 +44,7 @@ h1,h2,h3,.disp{ font-family:"Barlow Condensed",Impact,"Arial Narrow",sans-serif;
 /* System messages now float over whatever's on screen (the map, on page 2)
    instead of living in a dedicated header bar, which has been removed. */
 .headerMsg{ position:fixed; top:calc(8px + env(safe-area-inset-top,0px)); left:12px; right:12px; margin:0 auto; width:fit-content;
-  z-index:50; max-width:calc(100% - 24px); white-space:pre-wrap; overflow-wrap:anywhere; text-align:center; font-size:12px; font-weight:600; line-height:1.5;
+  z-index:80; max-width:calc(100% - 24px); white-space:pre-wrap; overflow-wrap:anywhere; text-align:center; font-size:12px; font-weight:600; line-height:1.5;
   color:#fff; padding:7px 14px; border-radius:8px; background:rgba(60,60,60,.55); pointer-events:none;
   opacity:0; transition:opacity .4s ease; } /* normal-operation messages stay low-key */
 .headerMsg.err{ background:rgba(200,40,40,.72); } /* actual errors/warnings still stand out in red */
@@ -815,7 +815,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
     <div id="p3MapBox" style="margin-bottom:8px;">
       <div id="p3MapWrap"></div>
     </div>
-    <div id="powerChartWrap" style="position:relative; overflow-x:auto; touch-action:pan-x pan-y;"><div id="p3Inner" style="position:relative; width:max-content;"><div id="p3SvgHost"></div><div id="p3Touch" style="position:absolute; inset:0; touch-action:none;"></div></div></div>
+    <div id="powerChartWrap" style="position:relative; overflow-x:auto; touch-action:pan-x pan-y;"><div id="p3Inner" style="position:relative; width:max-content;"><div id="p3SvgHost"></div><div id="p3Touch" style="position:absolute; inset:0; touch-action:pan-y;"></div></div></div>
     <div class="msg" id="powerChartDetail" style="display:none;"></div>
     <div class="exportRow">
       <button id="expPowerChartPng" class="small" disabled>PNGを保存</button>
@@ -950,7 +950,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
 // (this session's own publish count so far) is reconstructed from the
 // conversation itself rather than mechanically verified — best-effort, not
 // guaranteed exact. Increment by exactly 1 on every future publish.
-const APP_VERSION = 208;
+const APP_VERSION = 209;
 
 /* ============ FIT PARSER ============ */
 const FIT_EPOCH = 631065600; // seconds between 1970-01-01 and 1989-12-31 (FIT epoch)
@@ -2257,7 +2257,7 @@ async function processFitData(arrayBuffer, displayName, opts){
     powerChartDetailTarget = null; p3Reset();
     { const dbox = $('#powerChartDetail'); if (dbox){ dbox.style.display = 'none'; dbox.innerHTML = ''; } const cw = $('#p3SvgHost'); if (cw) cw.innerHTML = ''; }   // the previous ride's chart and its status must not linger
     S.timelineSelectedId = null;
-    ivHistory = []; ivRedoStack = [];
+    ivHistory = []; ivRedoStack = []; updateUndoRedoButtons();   // a new file starts with nothing to undo (the buttons must say so too)
     mapChartInitialized = false;
     S.armed = null;
     S.selection = {idx: 0}; // pre-select the very start of the ride, so it's already marked on the map/chart once page 2 opens
@@ -2312,7 +2312,7 @@ function resetAnalyzer(){
   previewSig = null;
   S.records = []; S.intervals = []; S.laps = []; S.selection = null; S.photos = []; S.comments = [];
   S.hasGps = false; S.dirty = false; S.savedSig = null; S.rawFitBytes = null;
-  ivHistory = []; ivRedoStack = []; lastResults = null; mapChartInitialized = false; powerChartDetailTarget = null;
+  ivHistory = []; ivRedoStack = []; updateUndoRedoButtons(); lastResults = null; mapChartInitialized = false; powerChartDetailTarget = null;
   S.powerChartSubdivisions = {}; S.powerChartSubdivideTargetIdx = null;
   $('#app').classList.add('hidden');
   $('#fileMeta').textContent = '';
@@ -5530,7 +5530,6 @@ let p3LastPinchEnd = 0;
       if (Math.abs(p.x-g.start.x)>6 || Math.abs(p.y-g.start.y)>6){ g.moved = true; if (g.lp){ clearTimeout(g.lp); g.lp = null; } }
       if (!g.moved) return;
       wrap.scrollLeft -= p.x-g.last.x;
-      if (e.pointerType==='touch') window.scrollBy(0, g.last.y-p.y);   // vertical drags still scroll the page
       g.last = p;
     } else if (g.type==='pinch' && ptrs.size>=2){
       const [a,b] = [...ptrs.values()];
@@ -5573,6 +5572,8 @@ let p3LastPinchEnd = 0;
   };
   layer.addEventListener('pointerup', up); layer.addEventListener('pointercancel', up);
   layer.addEventListener('gesturestart', e=>e.preventDefault());
+  // vertical drags are the browser's own (smooth) page scroll; once a seek-drag or a pinch is under way the page must not move
+  layer.addEventListener('touchmove', e=>{ if (g && (g.type==='seek' || g.type==='pinch')) e.preventDefault(); }, {passive:false});
 })();
 // during a long-press drag: move the seek (and the map point) at once, redrawing only the line and the status
 function p3SeekFast(cx){
@@ -5630,26 +5631,46 @@ function p3AxisPick(b){
     });
     return;
   }
-  const cur = S.powerChartMetrics.filter(k=>POWER_CHART_METRICS[k]);
-  const avail = Object.keys(POWER_CHART_METRICS).filter(pcMetricAvailable);
-  // temperature is always drawn from the raw records (never as bars), so it can't be the first (bar) axis
-  const choices = b.index===0 ? avail.filter(k=>!POWER_CHART_METRICS[k].raw) : avail;
-  let items;
-  if (b.kind==='add') items = choices.filter(k=>!cur.includes(k)).map(k=>({ value:k, label:POWER_CHART_METRICS[k].label }));
-  else {
-    items = choices.map(k=>({ value:k, label:POWER_CHART_METRICS[k].label+(k===cur[b.index]?'(現在)':(cur.includes(k)?'(入れ替え)':'')) }));
-    if (cur.length>1 && !(b.index===0 && POWER_CHART_METRICS[cur[1]] && POWER_CHART_METRICS[cur[1]].raw && cur.length===2)) items.push({ value:'__remove', label:'× この軸を表示しない' });
-  }
-  showAxisPicker(items, k=>{
-    let ms = cur.slice();
-    if (k==='__remove') ms.splice(b.index, 1);
-    else if (b.kind==='add') ms.push(k);
-    else { const j = ms.indexOf(k); if (j>=0) [ms[b.index], ms[j]] = [ms[j], ms[b.index]]; else ms[b.index] = k; }
-    if (ms.length>1 && POWER_CHART_METRICS[ms[0]].raw){ const i = ms.findIndex(x=>!POWER_CHART_METRICS[x].raw); if (i>0){ const t = ms[0]; ms[0] = ms[i]; ms[i] = t; } }
-    if (!ms.length || (ms.length===1 && POWER_CHART_METRICS[ms[0]].raw)) return;
-    S.powerChartMetrics = ms;
-    saveState(); p3Rerender();
-  });
+  p3MetricPicker();
+}
+// A multi-select list of the chart's items: the ones already on an axis are coloured (and say which axis),
+// tapping one takes it off, tapping another puts it on the next free axis (left 1, right 1, left 2, right 2).
+function p3MetricPicker(){
+  const SLOT = ['左第1軸','右第1軸','左第2軸','右第2軸'];
+  const picker = $('#axisPicker');
+  const build = ()=>{
+    const cur = S.powerChartMetrics.filter(k=>POWER_CHART_METRICS[k]);
+    const avail = Object.keys(POWER_CHART_METRICS).filter(pcMetricAvailable);
+    picker.innerHTML = '<div style="flex-direction:column;align-items:stretch;gap:6px;max-width:92%;">'+
+      '<div class="hint" style="text-align:center;">タップで選択/解除(最大4つ)</div>'+
+      '<div style="display:flex;flex-wrap:wrap;gap:6px;justify-content:center;">'+
+      avail.map(k=>{
+        const def = POWER_CHART_METRICS[k], i = cur.indexOf(k);
+        const on = i>=0;
+        return '<button type="button" data-k="'+k+'" style="'+(on ? 'background:'+def.color+';border-color:'+def.color+';color:#fff;font-weight:700;' : 'color:'+def.color+';border-color:'+def.color+'66;')+'">'+def.label+(on ? '<br><small>'+SLOT[i]+'</small>' : '')+'</button>';
+      }).join('')+'</div><button type="button" data-close="1" class="primary">閉じる</button></div>';
+    picker.classList.remove('hidden');
+    picker.querySelectorAll('button[data-k]').forEach(btn=> btn.addEventListener('click', ()=>{
+      const k = btn.dataset.k;
+      let ms = S.powerChartMetrics.filter(x=>POWER_CHART_METRICS[x]);
+      const i = ms.indexOf(k);
+      if (i>=0){
+        const rest = ms.filter(x=>x!==k);
+        if (!rest.some(x=>!POWER_CHART_METRICS[x].raw)){ showHeaderMsg('棒グラフにする項目が1つ以上必要です(気温だけにはできません)', true); return; }
+        ms = rest;
+      } else {
+        if (ms.length>=4){ showHeaderMsg('最大4つまで選択できます。先に別の項目をタップして解除してください', true); return; }
+        ms.push(k);
+      }
+      if (ms.length>1 && POWER_CHART_METRICS[ms[0]].raw){ const j = ms.findIndex(x=>!POWER_CHART_METRICS[x].raw); if (j>0){ const t = ms[0]; ms[0] = ms[j]; ms[j] = t; } }
+      S.powerChartMetrics = ms;
+      saveState(); p3Rerender(); build();
+    }));
+    picker.querySelector('[data-close]').addEventListener('click', hideAxisPicker);
+  };
+  if (picker.parentElement!==document.body) document.body.appendChild(picker);
+  build();
+  picker.onclick = e=>{ if (e.target===picker) hideAxisPicker(); };
 }
 // ctrl/⌘ + wheel (trackpad pinch) zooms the same way
 $('#powerChartWrap').addEventListener('wheel', e=>{
