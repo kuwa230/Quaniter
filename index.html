@@ -43,8 +43,8 @@ h1,h2,h3,.disp{ font-family:"Barlow Condensed",Impact,"Arial Narrow",sans-serif;
 .wrap{ max-width:1320px; margin:0 auto; padding:0 16px 56px; min-width:0; }
 /* System messages now float over whatever's on screen (the map, on page 2)
    instead of living in a dedicated header bar, which has been removed. */
-.headerMsg{ position:fixed; top:calc(8px + env(safe-area-inset-top,0px)); left:50%; transform:translateX(-50%);
-  z-index:50; max-width:calc(100% - 24px); white-space:nowrap; overflow-x:auto; font-size:12px; font-weight:600;
+.headerMsg{ position:fixed; top:calc(8px + env(safe-area-inset-top,0px)); left:12px; right:12px; margin:0 auto; width:fit-content;
+  z-index:50; max-width:calc(100% - 24px); white-space:pre-wrap; overflow-wrap:anywhere; text-align:center; font-size:12px; font-weight:600; line-height:1.5;
   color:#fff; padding:7px 14px; border-radius:8px; background:rgba(60,60,60,.55); pointer-events:none;
   opacity:0; transition:opacity .4s ease; } /* normal-operation messages stay low-key */
 .headerMsg.err{ background:rgba(200,40,40,.72); } /* actual errors/warnings still stand out in red */
@@ -560,6 +560,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
     <div id="advStatus">フォルダを選ぶと、その下にあるZIP(アナライザーで保存したもの)とFITをすべて探します。</div>
   </div>
 
+  <div class="row" style="margin:8px 0;"><button id="advCsv" type="button" disabled>表をCSVで保存</button></div>
   <div id="advResults"></div>
 </div>
 </div>
@@ -949,7 +950,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
 // (this session's own publish count so far) is reconstructed from the
 // conversation itself rather than mechanically verified — best-effort, not
 // guaranteed exact. Increment by exactly 1 on every future publish.
-const APP_VERSION = 207;
+const APP_VERSION = 208;
 
 /* ============ FIT PARSER ============ */
 const FIT_EPOCH = 631065600; // seconds between 1970-01-01 and 1989-12-31 (FIT epoch)
@@ -7186,6 +7187,7 @@ function vWholeStats(ride){
 // Advanced analyzer: the favourite sections found in each ride, one row per ride and section.
 // A zip saved by the analyzer: the sections its JSON names as favourites (auto-detected, or named like a stored
 // favourite). A plain .fit (or a zip without any): the stored favourites are searched for along the route.
+window.QuaniterSave = (name, blob)=> vShareOrSave(name, blob);
 window.QuaniterAdvLoad = async function(entries, progress){
   const out = []; let used = 0, skipped = 0, noFav = 0;
   const libNames = new Set(libEntries.map(e=>e.name));
@@ -7222,13 +7224,15 @@ window.QuaniterAdvLoad = async function(entries, progress){
       }
       if (!secs.length){ noFav++; continue; }
       const cfg = set ? { weight:set.weight, ftp:set.ftp, age:set.age, sex:set.sex, grad:set.avgGradientMethod } : {};
+      const gearName = set && set.gear && set.gear.name ? set.gear.name+(set.gear.memo ? '('+String(set.gear.memo).replace(/\s+/g,' ')+')' : '') : '';
       secs.forEach((sec,k)=>{
         const st = vCompute({ recs, cfg }, Object.assign({}, sec, { idx:k }));
         if (!st || st.duration==null || !(st.duration>0)) return;
         const d = new Date(st.startTime*1000), p2 = n=>String(n).padStart(2,'0');
         out.push({ course:sec.name, date:d.getFullYear()+'/'+p2(d.getMonth()+1)+'/'+p2(d.getDate()), start:p2(d.getHours())+':'+p2(d.getMinutes()),
           net:st.netTime, gross:st.duration, dist:st.distance!=null ? Math.round(st.distance/10)/100 : null, gain:st.elevGain!=null ? Math.round(st.elevGain) : null,
-          avgPower:st.avgPower!=null ? Math.round(st.avgPower) : null, pwr:st.pwr!=null ? st.pwr : null, src:path });
+          avgPower:st.avgPower!=null ? Math.round(st.avgPower) : null, pwr:st.pwr!=null ? st.pwr : null,
+          weight:Number(cfg.weight)>0 ? Number(cfg.weight) : null, ftp:Number(cfg.ftp)>0 ? Number(cfg.ftp) : null, gear:gearName, src:path });
       });
       used++;
     }catch(e){ skipped++; }
@@ -8579,6 +8583,7 @@ async function loadFiles(entries){          // entries: [{file, path}]
   let msg = files.length+'件を調べ、'+res.used+'件でお気に入り区間を検出しました(検出なし '+res.noFav+'件、読み込めず '+res.skipped+'件)。記録 '+allRecords.length+'行(重複は除く)。';
   if (!res.libCount && res.noFav) msg += '\nお気に入り区間がこの端末に登録されていません。アナライザーで区間を登録するか、お気に入り区間を検出済みのZIPを読み込んでください。';
   $('#advStatus').textContent = msg;
+  $('#advCsv').disabled = !allRecords.length;
   render();
 }
 $('#advDirInput').addEventListener('change', e=> loadFiles([...e.target.files].map(f=>({file:f, path:f.webkitRelativePath||f.name}))));
@@ -8598,6 +8603,15 @@ if (window.showDirectoryPicker){
     }catch(e){ /* cancelled */ }
   });
 }
+$('#advCsv').addEventListener('click', ()=>{
+  const showUnnamed = $('#advShowUnnamed').checked;
+  const q = v=>{ v = v==null ? '' : String(v); return /[",\n]/.test(v) ? '"'+v.replace(/"/g,'""')+'"' : v; };
+  const lines = [['区間','日付','開始','ネットタイム','グロスタイム','距離(km)','獲得標高(m)','平均パワー(W)','PWR(W/kg)','重量(kg)','FTP(W)','ギア','ファイル'].join(',')];
+  allRecords.filter(r=> showUnnamed || !/^区間\d+$/.test(r.course)).slice().sort((a,b)=> a.course.localeCompare(b.course,'ja') || a.date.localeCompare(b.date) || toMin(a.start)-toMin(b.start)).forEach(r=>{
+    lines.push([r.course, r.date, r.start, r.net!=null?fmtT(r.net):'', r.gross!=null?fmtT(r.gross):'', r.dist, r.gain, r.avgPower, r.pwr!=null?r.pwr.toFixed(2):'', r.weight, r.ftp, r.gear, r.src].map(q).join(','));
+  });
+  window.QuaniterSave('お気に入り区間の記録.csv', new Blob(['\uFEFF'+lines.join('\r\n')+'\r\n'], {type:'text/csv'}));
+});
 $('#advTimeSel').addEventListener('change', render);
 $('#advShowUnnamed').addEventListener('change', render);
 
@@ -8642,14 +8656,17 @@ function courseCard(name, list, useGross){
   const T = r=> { const v = useGross ? r.gross : r.net; return v!=null ? v : (useGross ? r.net : r.gross); };
   card.appendChild(el('h2', null, esc(name)+' <small>'+list.length+'回</small>'));
   // table
-  let html = '<table><thead><tr><th>日付</th><th>開始</th><th>ネットタイム</th><th>グロスタイム</th><th>距離(km)</th><th>獲得標高(m)</th><th>平均パワー(W)</th><th>PWR(W/kg)</th><th>ファイル</th></tr></thead><tbody>';
+  let html = '<table><thead><tr><th>日付</th><th>開始</th><th>ネットタイム</th><th>グロスタイム</th><th>距離(km)</th><th>獲得標高(m)</th><th>平均パワー(W)</th><th>PWR(W/kg)</th><th>重量(kg)</th><th>FTP(W)</th><th>ギア</th><th>ファイル</th></tr></thead><tbody>';
   list.forEach(r=>{
-    html += '<tr><td>'+r.date+'</td><td>'+esc(r.start)+'</td><td>'+(r.net!=null?fmtT(r.net):'')+'</td><td>'+(r.gross!=null?fmtT(r.gross):'')+'</td><td>'+(r.dist!=null?r.dist:'')+'</td><td>'+(r.gain!=null?r.gain:'')+'</td><td>'+(r.avgPower!=null?r.avgPower:'')+'</td><td>'+(r.pwr!=null?r.pwr.toFixed(2):'')+'</td><td class="src" title="'+esc(r.src)+'">'+esc(r.src)+'</td></tr>';
+    html += '<tr><td>'+r.date+'</td><td>'+esc(r.start)+'</td><td>'+(r.net!=null?fmtT(r.net):'')+'</td><td>'+(r.gross!=null?fmtT(r.gross):'')+'</td><td>'+(r.dist!=null?r.dist:'')+'</td><td>'+(r.gain!=null?r.gain:'')+'</td><td>'+(r.avgPower!=null?r.avgPower:'')+'</td><td>'+(r.pwr!=null?r.pwr.toFixed(2):'')+'</td><td>'+(r.weight!=null?r.weight:'')+'</td><td>'+(r.ftp!=null?r.ftp:'')+'</td><td class="src" title="'+esc(r.gear||'')+'">'+esc(r.gear||'')+'</td><td class="src" title="'+esc(r.src)+'">'+esc(r.src)+'</td></tr>';
   });
   html += '</tbody></table>';
   const tw = el('div', 'tableWrap', html); card.appendChild(tw);
   // chart
-  const pts = list.filter(r=>r.pwr!=null && T(r)>0).map(r=>({ x:r.pwr, y:1000/T(r), t:T(r), rec:r }));
+  const gears = [...new Set(list.map(r=>r.gear||''))].sort((a,b)=> (a===''?-1:b===''?1:a.localeCompare(b,'ja')));
+  const SHAPES = ['circle','square','triangle','diamond','cross'], COLORS = ['#17b8a4','#f2c14e','#f0506a','#6aa9ff','#c58cff','#ff9f43','#7bd88f'];
+  const style = g=>{ const i = gears.indexOf(g); return { shape:SHAPES[i%SHAPES.length], color:COLORS[i%COLORS.length] }; };
+  const pts = list.filter(r=>r.pwr!=null && T(r)>0).map(r=>({ x:r.pwr, y:1000/T(r), t:T(r), rec:r, st:style(r.gear||'') }));
   if (pts.length<1){
     card.appendChild(el('div', 'hint', 'PWRの記録がないため、グラフは作れません(アナライザーで体重を入力してから保存したZIPを読み込むと、PWRが入ります)。'));
     return card;
@@ -8666,6 +8683,10 @@ function courseCard(name, list, useGross){
     stat = '回帰直線: <b>y = '+reg.a.toFixed(3)+' x '+sign+' '+Math.abs(reg.b).toFixed(3)+'</b>(x:PWR[W/kg]、y:1000/T[s])　相関係数 <b>r = '+(reg.r!=null?reg.r.toFixed(3):'―')+'</b>(R² = '+(reg.r!=null?(reg.r*reg.r).toFixed(3):'―')+')　n = '+reg.n;
   } else stat = '回帰直線は、PWRの異なる記録が2回分以上あると表示されます。';
   card.appendChild(el('div', 'stat', stat));
+  if (gears.length>1){
+    const mk = g=>{ const st = style(g); const sym = {circle:'●',square:'■',triangle:'▲',diamond:'◆',cross:'✚'}[st.shape]; return '<span style="color:'+st.color+'">'+sym+'</span> '+esc(g||'ギアなし'); };
+    card.appendChild(el('div', 'stat', 'ギア: '+gears.map(mk).join('　')));
+  }
   card.appendChild(el('div', 'hint', '指2本または＋/－で拡大縮小、ドラッグで移動、点をタップすると日付と時刻が出ます。左の縦軸は 1000/T、右の縦軸は同じ高さに対応する所要時間です。'));
   makeChart(cv, cb, pts, reg, useGross);
   return card;
@@ -8715,8 +8736,13 @@ function makeChart(cv, box, pts, reg, useGross){
     // points
     pts.forEach(p=>{
       const px = toX(p.x), py = toY(p.y);
-      ctx.beginPath(); ctx.arc(px, py, p===sel ? 7 : 5, 0, Math.PI*2);
-      ctx.fillStyle = p===sel ? '#fff' : accent; ctx.fill();
+      const rr = p===sel ? 7 : 5.5; ctx.beginPath();
+      if (p.st.shape==='square') ctx.rect(px-rr, py-rr, rr*2, rr*2);
+      else if (p.st.shape==='triangle'){ ctx.moveTo(px, py-rr*1.2); ctx.lineTo(px+rr*1.1, py+rr*0.9); ctx.lineTo(px-rr*1.1, py+rr*0.9); ctx.closePath(); }
+      else if (p.st.shape==='diamond'){ ctx.moveTo(px, py-rr*1.3); ctx.lineTo(px+rr*1.1, py); ctx.lineTo(px, py+rr*1.3); ctx.lineTo(px-rr*1.1, py); ctx.closePath(); }
+      else if (p.st.shape==='cross'){ ctx.rect(px-rr*0.45, py-rr*1.2, rr*0.9, rr*2.4); ctx.rect(px-rr*1.2, py-rr*0.45, rr*2.4, rr*0.9); }
+      else ctx.arc(px, py, rr, 0, Math.PI*2);
+      ctx.fillStyle = p===sel ? '#fff' : p.st.color; ctx.fill();
       ctx.lineWidth = 1.5; ctx.strokeStyle = '#06221e'; ctx.stroke();
     });
     ctx.restore();
@@ -8798,7 +8824,7 @@ function makeChart(cv, box, pts, reg, useGross){
     sel = best; draw();
     if (!best) return;
     const r = best.rec;
-    tip = el('div', 'tip', '<b>'+r.date+(r.start?' '+esc(r.start):'')+'</b><br>'+(useGross?'グロス ':'ネット ')+fmtT(best.t)+' ・ PWR '+best.x.toFixed(2)+'<br>1000/T = '+best.y.toFixed(2));
+    tip = el('div', 'tip', '<b>'+r.date+(r.start?' '+esc(r.start):'')+'</b><br>'+(useGross?'グロス ':'ネット ')+fmtT(best.t)+' ・ PWR '+best.x.toFixed(2)+'<br>1000/T = '+best.y.toFixed(2)+(r.gear ? '<br>ギア '+esc(r.gear) : ''));
     box.appendChild(tip);
     const bw = box.clientWidth;
     tip.style.left = Math.max(60, Math.min(bw-60, toX(best.x)))+'px';
