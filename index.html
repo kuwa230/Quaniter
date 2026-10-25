@@ -520,6 +520,11 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
 #pageA1 .stat{ font-size:12.5px; color:var(--text); margin:6px 0 0; line-height:1.7; }
 #pageA1 .stat b{ color:var(--accent); }
 #pageA1 .hint{ font-size:11px; color:var(--muted); margin-top:4px; }
+.plGrid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(120px,1fr)); gap:8px; }
+.plRow{ display:flex; align-items:center; gap:5px; margin-bottom:6px; flex-wrap:wrap; }
+.plRow input{ font:inherit; font-size:13px; color:var(--text); background:var(--surface-2); border:1px solid var(--border); border-radius:7px; padding:6px 6px; }
+.plNo{ width:20px; text-align:right; font-size:12px; color:var(--text-dim); }
+.plRow input.plKm{ width:66px; } .plRow input.plPow{ width:62px; } .plRow input.plRest{ width:50px; } .plRow input.plName{ width:auto; flex:1 1 110px; min-width:90px; }
 </style>
 </head>
 <body>
@@ -566,6 +571,47 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
   <div class="row" style="margin:8px 0;"><button id="advCsv" type="button" disabled>表をCSVで保存</button></div>
   <div id="advResults"></div>
 </div>
+</div>
+
+<div id="pagePL" class="page hidden">
+  <div class="panel">
+    <div class="panel-head">
+      <button id="plBack" class="small ghost icon-btn" type="button" title="タイトルへ">←</button>
+      <h2>プランナー:ペース配分を決める</h2>
+    </div>
+    <div class="hint">過去のライドのパワーカーブから、新しいコースの区間ごとの目標平均パワーと通過時刻を計算します。① コースのGPX → ② ライダー設定と過去のライド → ③ 出発時刻と休憩・区間 → ④ 計画テキスト。</div>
+  </div>
+  <div class="panel">
+    <div class="panel-head"><h2>① コース</h2></div>
+    <div class="vRow"><label class="vBtn primary" for="plGpx">GPXを選ぶ</label><input type="file" id="plGpx" accept=".gpx,application/gpx+xml,text/xml,application/xml" hidden><span class="hint" id="plCourse">未選択</span></div>
+  </div>
+  <div class="panel">
+    <div class="panel-head"><h2>② ライダーと過去のライド</h2></div>
+    <div class="plGrid">
+      <label class="field">体重(kg)<input type="number" id="plWeight" min="30" max="200" step="0.5" value="65"></label>
+      <label class="field">機材・荷物(kg)<input type="number" id="plBike" min="0" max="60" step="0.5" value="12"></label>
+      <label class="field">CdA(m²)<input type="number" id="plCda" min="0.15" max="0.7" step="0.01" value="0.32"></label>
+      <label class="field">転がり抵抗 Crr<input type="number" id="plCrr" min="0.002" max="0.02" step="0.001" value="0.005"></label>
+      <label class="field">強度(%)<input type="number" id="plInt" min="40" max="130" step="1" value="100"></label>
+      <label class="field">後半の低下(%)<input type="number" id="plFat" min="0" max="50" step="1" value="15"></label>
+      <label class="field">基準パワー 1時間(W)<input type="number" id="plP60" min="50" max="500" step="1" value="200"></label>
+    </div>
+    <div class="vRow" style="margin-top:8px;"><label class="vBtn" for="plRides">過去のライドを選ぶ(ZIP/FIT・複数可)</label><input type="file" id="plRides" accept=".zip,.fit,application/zip,application/octet-stream" multiple hidden>
+      <label class="vBtn" for="plRidesDir">📁 フォルダ</label><input type="file" id="plRidesDir" webkitdirectory directory multiple hidden></div>
+    <div class="hint" id="plCurveInfo" style="margin-top:6px;">過去のライドが未選択のときは、「基準パワー 1時間」から作った標準のカーブを使います。</div>
+  </div>
+  <div class="panel">
+    <div class="panel-head"><h2>③ 出発と休憩・区間</h2></div>
+    <div class="vRow"><label class="field" style="max-width:160px;">出発時刻<input type="time" id="plDep" value="06:00"></label></div>
+    <div class="hint" style="margin:6px 0;">下の標高グラフをタップすると、その距離に地点(休憩場所や区間の切れ目)を追加できます。地点と地点の間が1つの区間です。</div>
+    <canvas id="plProfile" style="width:100%;height:150px;display:block;background:var(--surface-2);border-radius:8px;touch-action:manipulation;"></canvas>
+    <div id="plPoints" style="margin-top:8px;"></div>
+  </div>
+  <div class="panel">
+    <div class="panel-head"><h2>④ 計画</h2></div>
+    <pre id="plOut" style="white-space:pre-wrap;font:inherit;font-size:13px;line-height:1.6;margin:0 0 8px;user-select:text;">GPXを選ぶと計画が表示されます。</pre>
+    <div class="vRow"><button id="plCopy" class="small" type="button" disabled>コピー</button><button id="plSave" class="small" type="button" disabled>テキストを保存</button></div>
+  </div>
 </div>
 
 <div id="pageE1" class="page hidden">
@@ -953,7 +999,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
 // (this session's own publish count so far) is reconstructed from the
 // conversation itself rather than mechanically verified — best-effort, not
 // guaranteed exact. Increment by exactly 1 on every future publish.
-const APP_VERSION = 212;
+const APP_VERSION = 213;
 
 /* ============ FIT PARSER ============ */
 const FIT_EPOCH = 631065600; // seconds between 1970-01-01 and 1989-12-31 (FIT epoch)
@@ -6964,7 +7010,7 @@ $('#homeBtn').addEventListener('click', async ()=>{
 });
 $('#v1Back').addEventListener('click', ()=> showPage(0));
 $('#goAdv').addEventListener('click', ()=> showPage('A1'));
-[['goPlanner','プランナー'],['goCoach','リアルタイムコーチ'],['goHistory','ヒストリー']].forEach(([id,nm])=> $('#'+id).addEventListener('click', ()=> showHeaderMsg(nm+'は準備中です', false)));
+[['goCoach','リアルタイムコーチ'],['goHistory','ヒストリー']].forEach(([id,nm])=> $('#'+id).addEventListener('click', ()=> showHeaderMsg(nm+'は準備中です', false)));
 $('#aBack').addEventListener('click', ()=> showPage(0));
 $('#v2Back').addEventListener('click', ()=> showPage('V1'));
 
@@ -8172,6 +8218,257 @@ async function eAdd(list){
 $('#eFileInput').addEventListener('change', e=>{ const l = [...e.target.files].map(f=>({file:f})); e.target.value = ''; eAdd(l); });
 $('#eDirInput').addEventListener('change', e=>{ const l = [...e.target.files].map(f=>({file:f})); e.target.value = ''; eAdd(l); });
 $('#goEditor').addEventListener('click', ()=> showPage('E1'));
+$('#goPlanner').addEventListener('click', ()=> showPage('PL'));
+$('#plBack').addEventListener('click', ()=> showPage(0));
+
+/* ============ PLANNER ============ */
+// Pace plan for a new course: the power curve of past rides says what can be held for how long; the course is cut into
+// sections by points (rests / names); each section gets a target average power and the times follow from a simple physical model.
+const PL = { course:null, pts:[], curveRides:null, curve:null, hasWheel:false };
+const PL_DURS = [60,120,300,600,1200,1800,3600,5400,7200,10800,14400,21600,28800,43200];
+(function(){
+  const KEY = 'quaniter.planner.v1', IDS = ['plWeight','plBike','plCda','plCrr','plInt','plFat','plP60','plDep'];
+  try{ const v = JSON.parse(localStorage.getItem(KEY)||'null'); if (v) IDS.forEach(id=>{ if (v[id]!=null) $('#'+id).value = v[id]; }); }catch(e){}
+  IDS.forEach(id=> $('#'+id).addEventListener('change', ()=>{
+    try{ const o = {}; IDS.forEach(i=> o[i] = $('#'+i).value); localStorage.setItem(KEY, JSON.stringify(o)); }catch(e){}
+    plRecalc();
+  }));
+})();
+const plNum = (id, d)=>{ const v = parseFloat($('#'+id).value); return isFinite(v) ? v : d; };
+// best average power over each duration, across the chosen rides
+function plBestCurve(recs){
+  const n = recs.length, E = new Float64Array(n), T = new Float64Array(n);
+  let j = 0;
+  for (let i=0;i<n;i++){
+    T[i] = recs[i].elapsed;
+    if (i>0){ const dt = Math.min(10, recs[i].elapsed-recs[i-1].elapsed); j += (recs[i-1].power||0)*Math.max(0,dt); }
+    E[i] = j;
+  }
+  const out = {};
+  PL_DURS.forEach(d=>{
+    if (!n || T[n-1]-T[0] < d) return;
+    let best = 0, k = 0;
+    for (let i=0;i<n;i++){
+      if (k<i) k = i;
+      while (k<n-1 && T[k]-T[i] < d) k++;
+      if (T[k]-T[i] < d) break;
+      const w = (E[k]-E[i])/(T[k]-T[i]);
+      if (w>best) best = w;
+    }
+    if (best>0) out[d] = best;
+  });
+  return out;
+}
+async function plLoadRides(list){
+  const files = list.filter(f=>/\.(zip|fit)$/i.test(f.name));
+  if (!files.length){ showHeaderMsg('ZIPまたはFITファイルが見つかりませんでした。', true); return; }
+  const best = {}; let used = 0, skipped = 0;
+  for (let i=0;i<files.length;i++){
+    $('#plCurveInfo').textContent = '過去のライドを読み込み中… '+i+' / '+files.length;
+    await new Promise(r=>setTimeout(r,0));
+    try{
+      let buf;
+      if (/\.zip$/i.test(files[i].name)){
+        const zip = await JSZip.loadAsync(files[i]);
+        const fit = Object.values(zip.files).find(f=>!f.dir && /\.fit$/i.test(f.name));
+        if (!fit){ skipped++; continue; }
+        buf = await fit.async('arraybuffer');
+      } else buf = await files[i].arrayBuffer();
+      const recs = parseFit(buf);
+      if (!recs.some(r=>r.power!=null)){ skipped++; continue; }
+      const c = plBestCurve(recs);
+      Object.keys(c).forEach(d=>{ if (!(best[d]>=c[d])) best[d] = c[d]; });
+      used++;
+    }catch(e){ skipped++; }
+  }
+  PL.curveRides = used ? best : null;
+  plShowCurve(used, skipped);
+  plRecalc();
+}
+// power (W) that can be held for d seconds: the rides' curve (log-linear between its points), else a standard curve from the 1-hour power
+function plCurve(d){
+  const base = plNum('plP60', 200);
+  const c = PL.curveRides;
+  if (!c) return base*Math.pow(Math.max(d,60)/3600, -0.07);
+  const ks = Object.keys(c).map(Number).sort((a,b)=>a-b);
+  if (d<=ks[0]) return c[ks[0]];
+  const last = ks[ks.length-1];
+  if (d>=last) return c[last]*Math.pow(d/last, -0.05);
+  let i = 0; while (ks[i+1] < d) i++;
+  const f = (Math.log(d)-Math.log(ks[i]))/(Math.log(ks[i+1])-Math.log(ks[i]));
+  return c[ks[i]] + (c[ks[i+1]]-c[ks[i]])*f;
+}
+function plShowCurve(used, skipped){
+  const c = PL.curveRides;
+  const lab = d=> d<3600 ? (d/60)+'分' : (d/3600)+'時間';
+  $('#plCurveInfo').innerHTML = c
+    ? '過去のライド '+used+'件'+(skipped ? '(読めなかった/パワーなし '+skipped+'件)' : '')+' から作ったパワーカーブ:<br>'+Object.keys(c).map(Number).sort((a,b)=>a-b).map(d=>lab(d)+' '+Math.round(c[d])+'W').join(' ・ ')
+    : '使えるライドがありませんでした(パワーのあるZIP/FITが必要です)。標準のカーブを使います。';
+}
+$('#plRides').addEventListener('change', e=> plLoadRides([...e.target.files]));
+$('#plRidesDir').addEventListener('change', e=> plLoadRides([...e.target.files]));
+
+// the course: cumulative distance and smoothed elevation
+function plSetCourse(r){
+  const pts = r.pts, d = [0], alt = [];
+  for (let i=1;i<pts.length;i++) d.push(d[i-1]+haversineM(pts[i-1][0], pts[i-1][1], pts[i][0], pts[i][1]));
+  let last = null;
+  const raw = pts.map(p=>{ if (p[2]!=null) last = p[2]; return last; });
+  const first = raw.find(v=>v!=null);
+  for (let i=0;i<raw.length;i++) raw[i] = raw[i]!=null ? raw[i] : (first!=null ? first : 0);
+  // moving average over about 150 m
+  for (let i=0;i<raw.length;i++){
+    let a = i, b = i;
+    while (a>0 && d[i]-d[a-1] < 75) a--;
+    while (b<raw.length-1 && d[b+1]-d[i] < 75) b++;
+    let sum = 0; for (let k=a;k<=b;k++) sum += raw[k];
+    alt.push(sum/(b-a+1));
+  }
+  PL.course = { name:r.name, d, alt, total:d[d.length-1] };
+  PL.pts = [ { km:0, name:'出発', rest:0, power:null }, { km:d[d.length-1]/1000, name:'到着', rest:0, power:null } ];
+  $('#plCourse').textContent = r.name+'('+(d[d.length-1]/1000).toFixed(1)+' km・獲得標高 '+Math.round(alt.reduce((g,v,i)=> i && v>alt[i-1] ? g+v-alt[i-1] : g, 0))+' m)';
+  plRender();
+}
+$('#plGpx').addEventListener('change', async e=>{
+  const f = e.target.files[0]; if (!f) return;
+  try{ plSetCourse(await eParse(f)); }catch(err){ showHeaderMsg('GPXを読み込めませんでした: '+err.message, true); }
+});
+function plAltAt(m){
+  const C = PL.course; if (m<=0) return C.alt[0]; if (m>=C.total) return C.alt[C.alt.length-1];
+  let lo = 0, hi = C.d.length-1;
+  while (hi-lo>1){ const mid = (lo+hi)>>1; if (C.d[mid]<=m) lo = mid; else hi = mid; }
+  const f = (m-C.d[lo])/Math.max(1e-9, C.d[hi]-C.d[lo]);
+  return C.alt[lo]+(C.alt[hi]-C.alt[lo])*f;
+}
+// speed (m/s) at power P (W at the pedals) on a gradient g
+function plSpeed(P, g, mass, cda, crr){
+  const rho = 1.2, G = 9.8067, eff = 0.975, VMAX = 15;   // 54 km/h: nobody pedals faster than that downhill on average
+  const f = v=> P*eff - (0.5*rho*cda*v*v*v + mass*G*(crr+g)*v);
+  let lo = 0.3, hi = VMAX;
+  if (f(hi) >= 0) return VMAX;
+  if (f(lo) <= 0) return lo;
+  for (let i=0;i<40;i++){ const mid = (lo+hi)/2; if (f(mid)>0) lo = mid; else hi = mid; }
+  return lo;
+}
+// time (s) for the stretch [a,b] metres at constant power P
+function plTimeFor(a, b, P, mass, cda, crr){
+  let t = 0;
+  const n = Math.max(1, Math.ceil((b-a)/200));
+  for (let k=0;k<n;k++){
+    const x0 = a+(b-a)*k/n, x1 = a+(b-a)*(k+1)/n;
+    const g = (plAltAt(x1)-plAltAt(x0))/Math.max(1, x1-x0);
+    t += (x1-x0)/plSpeed(P, g, mass, cda, crr);
+  }
+  return t;
+}
+function plRecalc(){
+  const C = PL.course; if (!C) return;
+  const pts = PL.pts.slice().sort((a,b)=>a.km-b.km);
+  PL.pts = pts;
+  const mass = plNum('plWeight',65)+plNum('plBike',12), cda = plNum('plCda',0.32), crr = plNum('plCrr',0.005);
+  const inten = plNum('plInt',100)/100, fat = plNum('plFat',15)/100;
+  const dep = ($('#plDep').value||'06:00').split(':').map(Number);
+  let clock = (dep[0]*60+dep[1])*60;
+  pts[0].arr = clock; pts[0].dep = clock; pts[0].auto = null;
+  const total = C.total;
+  pts.forEach((p,i)=>{ p.cum = p.km*1000; });
+  for (let i=1;i<pts.length;i++){
+    const a = pts[i-1].cum, b = pts[i].cum, len = b-a;
+    const prog = total>0 ? ((a+b)/2)/total : 0;
+    const f = inten*(1-fat*prog);
+    let P = pts[i].power>0 ? pts[i].power : 150, t = len>0 ? plTimeFor(a, b, P, mass, cda, crr) : 0;
+    if (!(pts[i].power>0)){
+      for (let k=0;k<8;k++){ P = Math.max(40, plCurve(Math.max(60,t))*f); t = len>0 ? plTimeFor(a, b, P, mass, cda, crr) : 0; }
+    }
+    pts[i].auto = P; pts[i].secP = P; pts[i].secT = t;
+    pts[i].arr = pts[i-1].dep + t;
+    pts[i].dep = pts[i].arr + (i<pts.length-1 ? pts[i].rest*60 : 0);
+  }
+  plOutput(); plDrawProfile();
+}
+const plHM = s=>{ s = Math.round(s/60)*60; const day = Math.floor(s/86400); const m = Math.floor((s%86400)/60); return (day>0 ? '翌' : '')+Math.floor(m/60)+':'+String(m%60).padStart(2,'0'); };
+function plOutput(){
+  const pts = PL.pts; const lines = [];
+  pts.forEach((p,i)=>{
+    let l = (i+1)+' '+plHM(p.arr)+' '+Math.round(p.km)+'km'+(i>0 ? ' '+Math.round(p.secP)+'W' : '');
+    lines.push(l+'\n'+(p.name||'')+(i>0 && i<pts.length-1 && p.rest>0 ? '\n↓ '+plHM(p.dep)+' 出発' : ''));
+  });
+  PL.text = lines.join('\n\n');
+  $('#plOut').textContent = PL.text;
+  $('#plCopy').disabled = $('#plSave').disabled = false;
+  plRenderList();
+}
+function plRenderList(){
+  const box = $('#plPoints'), pts = PL.pts;
+  if (box.contains(document.activeElement) && document.activeElement.tagName==='INPUT') return;   // do not rebuild under a field being typed in
+  box.innerHTML = pts.map((p,i)=>{
+    const fixed = i===0 || i===pts.length-1;
+    return '<div class="plRow" data-i="'+i+'"><b class="plNo">'+(i+1)+'</b>'+
+      '<input class="plKm" type="number" step="0.1" min="0" value="'+(Math.round(p.km*10)/10)+'"'+(fixed ? ' disabled' : '')+'><span class="hint">km</span>'+
+      '<input class="plName" type="text" value="'+escapeHtml(p.name||'')+'" placeholder="名前">'+
+      (i>0 ? '<input class="plPow" type="number" step="1" min="0" value="'+(p.power>0 ? p.power : '')+'" placeholder="'+Math.round(p.auto||0)+'"><span class="hint">W</span>' : '<span class="hint plSp"></span>')+
+      (i>0 && !fixed ? '<input class="plRest" type="number" step="1" min="0" value="'+(p.rest||0)+'"><span class="hint">分休</span>' : '')+
+      (!fixed ? '<button type="button" class="small ghost plDel">✕</button>' : '')+'</div>';
+  }).join('');
+  box.querySelectorAll('.plRow').forEach(row=>{
+    const i = Number(row.dataset.i), p = PL.pts[i];
+    const on = (sel, fn)=>{ const el = row.querySelector(sel); if (el) el.addEventListener('change', ()=>{ fn(el); plRecalc(); box.innerHTML = ''; plRenderList(); }); };
+    on('.plKm', el=>{ const v = parseFloat(el.value); if (isFinite(v)) p.km = Math.max(0.1, Math.min(PL.course.total/1000-0.1, v)); });
+    on('.plName', el=>{ p.name = el.value; });
+    on('.plPow', el=>{ const v = parseFloat(el.value); p.power = v>0 ? v : null; });
+    on('.plRest', el=>{ p.rest = Math.max(0, parseFloat(el.value)||0); });
+    const del = row.querySelector('.plDel'); if (del) del.addEventListener('click', ()=>{ PL.pts.splice(i,1); plRecalc(); box.innerHTML = ''; plRenderList(); });
+  });
+}
+function plRender(){ plRecalc(); }
+// elevation profile; a tap adds a point
+function plDrawProfile(){
+  const cv = $('#plProfile'), C = PL.course; if (!cv || !C) return;
+  const dpr = window.devicePixelRatio||1, W = cv.clientWidth, H = cv.clientHeight; if (!W) return;
+  cv.width = Math.round(W*dpr); cv.height = Math.round(H*dpr);
+  const g = cv.getContext('2d'); g.setTransform(dpr,0,0,dpr,0,0);
+  const ML = 6, MR = 6, MT = 16, MB = 14;
+  let lo = Infinity, hi = -Infinity; C.alt.forEach(v=>{ if (v<lo) lo = v; if (v>hi) hi = v; });
+  if (hi-lo<20) hi = lo+20;
+  const X = m=> ML+m/C.total*(W-ML-MR), Y = a=> H-MB-(a-lo)/(hi-lo)*(H-MT-MB);
+  const css = getComputedStyle(document.documentElement);
+  g.fillStyle = 'rgba(165,170,180,.22)'; g.strokeStyle = 'rgba(165,170,180,.8)'; g.lineWidth = 1.2;
+  g.beginPath(); g.moveTo(X(0), H-MB);
+  const step = Math.max(1, Math.floor(C.d.length/600));
+  for (let i=0;i<C.d.length;i+=step) g.lineTo(X(C.d[i]), Y(C.alt[i]));
+  g.lineTo(X(C.total), Y(C.alt[C.alt.length-1])); g.lineTo(X(C.total), H-MB); g.closePath(); g.fill();
+  g.beginPath(); for (let i=0;i<C.d.length;i+=step){ i===0 ? g.moveTo(X(C.d[i]), Y(C.alt[i])) : g.lineTo(X(C.d[i]), Y(C.alt[i])); } g.stroke();
+  g.font = '10px sans-serif'; g.textAlign = 'center'; g.textBaseline = 'top';
+  PL.pts.forEach((p,i)=>{
+    const x = X(p.km*1000);
+    g.strokeStyle = css.getPropertyValue('--accent').trim() || '#17b8a4'; g.setLineDash([3,3]); g.beginPath(); g.moveTo(x, MT); g.lineTo(x, H-MB); g.stroke(); g.setLineDash([]);
+    g.fillStyle = g.strokeStyle; g.beginPath(); g.arc(x, MT-5, 7, 0, Math.PI*2); g.fill();
+    g.fillStyle = '#08211d'; g.textBaseline = 'middle'; g.fillText(String(i+1), x, MT-5);
+  });
+  g.fillStyle = 'rgba(165,170,180,.8)'; g.textBaseline = 'bottom'; g.textAlign = 'left'; g.fillText(Math.round(lo)+'〜'+Math.round(hi)+' m', ML+2, H-1);
+  cv._geom = { ML, MR, W };
+}
+$('#plProfile').addEventListener('click', e=>{
+  const cv = e.currentTarget, C = PL.course; if (!C || !cv._geom) return;
+  const r = cv.getBoundingClientRect(), {ML, MR, W} = cv._geom;
+  const m = Math.max(0, Math.min(C.total, (e.clientX-r.left-ML)/(W-ML-MR)*C.total));
+  const km = Math.round(m/100)/10;
+  if (km<=0.1 || km>=C.total/1000-0.1) return;
+  if (PL.pts.some(p=>Math.abs(p.km-km)<0.3)) return;
+  PL.pts.push({ km, name:'', rest:0, power:null });
+  plRecalc();
+  $('#plPoints').innerHTML = ''; plRenderList();
+});
+window.addEventListener('resize', ()=>{ if (PL.course && currentPageNum==='PL') plDrawProfile(); });
+$('#plCopy').addEventListener('click', async ()=>{
+  try{ await navigator.clipboard.writeText(PL.text||''); showHeaderMsg('計画をコピーしました', false); }
+  catch(e){ const r = document.createRange(); r.selectNodeContents($('#plOut')); const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r); showHeaderMsg('コピーできなかったため、テキストを選択しました', true); }
+});
+$('#plSave').addEventListener('click', ()=>{
+  const nm = ((PL.course && PL.course.name) || 'プラン').replace(/[\\/:*?"<>|]/g,'_');
+  saveFile(nm+'-ペース配分.txt', new Blob([PL.text||''], { type:'text/plain' }));
+});
+
 $('#e1Back').addEventListener('click', ()=> showPage(0));
 $('#eUndo').addEventListener('click', eUndo);
 // ---- the cards
