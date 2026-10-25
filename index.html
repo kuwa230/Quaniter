@@ -524,7 +524,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
 .plRow{ display:flex; align-items:center; gap:5px; margin-bottom:6px; flex-wrap:wrap; }
 .plRow input{ font:inherit; font-size:13px; color:var(--text); background:var(--surface-2); border:1px solid var(--border); border-radius:7px; padding:6px 6px; }
 .plNo{ width:20px; text-align:right; font-size:12px; color:var(--text-dim); }
-.plRow input.plKm{ width:66px; } .plRow input.plPow{ width:62px; } .plRow input.plRest{ width:50px; } .plRow input.plName{ width:auto; flex:1 1 110px; min-width:90px; }
+.plRow input.plKm{ width:66px; } .plRow input.plPow{ width:62px; } .plRow input.plSpdIn{ width:62px; } .plRow input.plRest{ width:50px; } .plRow input.plName{ width:auto; flex:1 1 110px; min-width:90px; }
 </style>
 </head>
 <body>
@@ -588,17 +588,22 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
   <div class="panel">
     <div class="panel-head"><h2>② ライダーと過去のライド</h2></div>
     <div class="plGrid">
-      <label class="field">体重(kg)<input type="number" id="plWeight" min="30" max="200" step="0.5" value="65"></label>
-      <label class="field">機材・荷物(kg)<input type="number" id="plBike" min="0" max="60" step="0.5" value="12"></label>
-      <label class="field">CdA(m²)<input type="number" id="plCda" min="0.15" max="0.7" step="0.01" value="0.32"></label>
-      <label class="field">転がり抵抗 Crr<input type="number" id="plCrr" min="0.002" max="0.02" step="0.001" value="0.005"></label>
-      <label class="field">強度(%)<input type="number" id="plInt" min="40" max="130" step="1" value="100"></label>
-      <label class="field">後半の低下(%)<input type="number" id="plFat" min="0" max="50" step="1" value="15"></label>
-      <label class="field">基準パワー 1時間(W)<input type="number" id="plP60" min="50" max="500" step="1" value="200"></label>
+      <label class="field">体重+機材(kg)<input type="number" id="plMass" min="40" max="250" step="0.5" value="70"></label>
+      <label class="field">CdA(m²)・一般的な仮の値<input type="number" id="plCda" min="0.15" max="0.7" step="0.01" value="0.32"></label>
+      <label class="field">転がり抵抗 Crr・仮の値<input type="number" id="plCrr" min="0.002" max="0.02" step="0.001" value="0.005"></label>
+    </div>
+    <div class="hint" style="margin:8px 0 4px;">区間は、目標の平均速度で計画します(区間ごとに変更もできます)。パワーカーブがあるときは、ヒルクライム区間だけパワーカーブから決めます。</div>
+    <div class="plGrid">
+      <label class="field">平地などの目標速度(km/h)<input type="number" id="plSpd" min="5" max="60" step="0.5" value="25"></label>
+      <label class="field">登りの目標速度(km/h)<input type="number" id="plClimbSpd" min="3" max="30" step="0.5" value="10"></label>
+      <label class="field">速度の種類<select id="plSpdKind"><option value="net">ネット(走行中)</option><option value="gross">グロス(停止を含む)</option></select></label>
+      <label class="field">停止ロス(分/10km)・ネットのとき<input type="number" id="plLoss" min="0" max="10" step="0.1" value="0.5"></label>
+      <label class="field">強度(%)・パワーカーブ使用時<input type="number" id="plInt" min="40" max="130" step="1" value="100"></label>
+      <label class="field">後半の低下(%)・同上<input type="number" id="plFat" min="0" max="50" step="1" value="15"></label>
     </div>
     <div class="vRow" style="margin-top:8px;"><label class="vBtn" for="plRides">過去のライドを選ぶ(ZIP/FIT・複数可)</label><input type="file" id="plRides" accept=".zip,.fit,application/zip,application/octet-stream" multiple hidden>
       <label class="vBtn" for="plRidesDir">📁 フォルダ</label><input type="file" id="plRidesDir" webkitdirectory directory multiple hidden></div>
-    <div class="hint" id="plCurveInfo" style="margin-top:6px;">過去のライドが未選択のときは、「基準パワー 1時間」から作った標準のカーブを使います。</div>
+    <div class="hint" id="plCurveInfo" style="margin-top:6px;">過去のライドを選ぶと、ヒルクライム区間をパワーカーブから決めます。未選択のときは、ヒルクライム区間も目標速度で決めます。</div>
   </div>
   <div class="panel">
     <div class="panel-head"><h2>③ 出発と休憩・区間</h2></div>
@@ -999,7 +1004,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
 // (this session's own publish count so far) is reconstructed from the
 // conversation itself rather than mechanically verified — best-effort, not
 // guaranteed exact. Increment by exactly 1 on every future publish.
-const APP_VERSION = 213;
+const APP_VERSION = 214;
 
 /* ============ FIT PARSER ============ */
 const FIT_EPOCH = 631065600; // seconds between 1970-01-01 and 1989-12-31 (FIT epoch)
@@ -8227,7 +8232,7 @@ $('#plBack').addEventListener('click', ()=> showPage(0));
 const PL = { course:null, pts:[], curveRides:null, curve:null, hasWheel:false };
 const PL_DURS = [60,120,300,600,1200,1800,3600,5400,7200,10800,14400,21600,28800,43200];
 (function(){
-  const KEY = 'quaniter.planner.v1', IDS = ['plWeight','plBike','plCda','plCrr','plInt','plFat','plP60','plDep'];
+  const KEY = 'quaniter.planner.v1', IDS = ['plMass','plCda','plCrr','plSpd','plClimbSpd','plSpdKind','plLoss','plInt','plFat','plDep'];
   try{ const v = JSON.parse(localStorage.getItem(KEY)||'null'); if (v) IDS.forEach(id=>{ if (v[id]!=null) $('#'+id).value = v[id]; }); }catch(e){}
   IDS.forEach(id=> $('#'+id).addEventListener('change', ()=>{
     try{ const o = {}; IDS.forEach(i=> o[i] = $('#'+i).value); localStorage.setItem(KEY, JSON.stringify(o)); }catch(e){}
@@ -8287,9 +8292,8 @@ async function plLoadRides(list){
 }
 // power (W) that can be held for d seconds: the rides' curve (log-linear between its points), else a standard curve from the 1-hour power
 function plCurve(d){
-  const base = plNum('plP60', 200);
   const c = PL.curveRides;
-  if (!c) return base*Math.pow(Math.max(d,60)/3600, -0.07);
+  if (!c) return null;
   const ks = Object.keys(c).map(Number).sort((a,b)=>a-b);
   if (d<=ks[0]) return c[ks[0]];
   const last = ks[ks.length-1];
@@ -8303,7 +8307,7 @@ function plShowCurve(used, skipped){
   const lab = d=> d<3600 ? (d/60)+'分' : (d/3600)+'時間';
   $('#plCurveInfo').innerHTML = c
     ? '過去のライド '+used+'件'+(skipped ? '(読めなかった/パワーなし '+skipped+'件)' : '')+' から作ったパワーカーブ:<br>'+Object.keys(c).map(Number).sort((a,b)=>a-b).map(d=>lab(d)+' '+Math.round(c[d])+'W').join(' ・ ')
-    : '使えるライドがありませんでした(パワーのあるZIP/FITが必要です)。標準のカーブを使います。';
+    : '使えるライドがありませんでした(パワーのあるZIP/FITが必要です)。ヒルクライム区間も目標速度で計画します。';
 }
 $('#plRides').addEventListener('change', e=> plLoadRides([...e.target.files]));
 $('#plRidesDir').addEventListener('change', e=> plLoadRides([...e.target.files]));
@@ -8325,7 +8329,7 @@ function plSetCourse(r){
     alt.push(sum/(b-a+1));
   }
   PL.course = { name:r.name, d, alt, total:d[d.length-1] };
-  PL.pts = [ { km:0, name:'出発', rest:0, power:null }, { km:d[d.length-1]/1000, name:'到着', rest:0, power:null } ];
+  PL.pts = [ { km:0, name:'出発', rest:0, power:null, speed:null }, { km:d[d.length-1]/1000, name:'到着', rest:0, power:null, speed:null } ];
   $('#plCourse').textContent = r.name+'('+(d[d.length-1]/1000).toFixed(1)+' km・獲得標高 '+Math.round(alt.reduce((g,v,i)=> i && v>alt[i-1] ? g+v-alt[i-1] : g, 0))+' m)';
   plRender();
 }
@@ -8361,28 +8365,55 @@ function plTimeFor(a, b, P, mass, cda, crr){
   }
   return t;
 }
+// average power (W) needed to hold speed v (m/s) over [a,b] metres (downhill stretches count as coasting, 0 W)
+function plPowerFor(a, b, v, mass, cda, crr){
+  const rho = 1.2, G = 9.8067, eff = 0.975;
+  const n = Math.max(1, Math.ceil((b-a)/200));
+  let e = 0, t = 0;
+  for (let k=0;k<n;k++){
+    const x0 = a+(b-a)*k/n, x1 = a+(b-a)*(k+1)/n;
+    const g = (plAltAt(x1)-plAltAt(x0))/Math.max(1, x1-x0);
+    const dt = (x1-x0)/v, p = (0.5*rho*cda*v*v*v + mass*G*(crr+g)*v)/eff;
+    e += Math.max(0, p)*dt; t += dt;
+  }
+  return t>0 ? e/t : 0;
+}
+function plIsClimb(a, b){
+  const rise = plAltAt(b)-plAltAt(a);
+  return b>a && rise>=30 && rise/(b-a)>=0.03;
+}
 function plRecalc(){
   const C = PL.course; if (!C) return;
   const pts = PL.pts.slice().sort((a,b)=>a.km-b.km);
   PL.pts = pts;
-  const mass = plNum('plWeight',65)+plNum('plBike',12), cda = plNum('plCda',0.32), crr = plNum('plCrr',0.005);
+  const mass = plNum('plMass',70), cda = plNum('plCda',0.32), crr = plNum('plCrr',0.005);
   const inten = plNum('plInt',100)/100, fat = plNum('plFat',15)/100;
+  const spd = plNum('plSpd',25), climbSpd = plNum('plClimbSpd',10), loss = plNum('plLoss',0.5), net = $('#plSpdKind').value!=='gross';
   const dep = ($('#plDep').value||'06:00').split(':').map(Number);
-  let clock = (dep[0]*60+dep[1])*60;
-  pts[0].arr = clock; pts[0].dep = clock; pts[0].auto = null;
+  const clock = (dep[0]*60+dep[1])*60;
+  pts[0].arr = clock; pts[0].dep = clock;
   const total = C.total;
-  pts.forEach((p,i)=>{ p.cum = p.km*1000; });
+  pts.forEach(p=>{ p.cum = p.km*1000; });
+  const lossT = len=> net ? loss*60*len/10000 : 0;
+  const timeAtSpeed = (len, kmh)=> len/(kmh/3.6) + lossT(len);
   for (let i=1;i<pts.length;i++){
-    const a = pts[i-1].cum, b = pts[i].cum, len = b-a;
-    const prog = total>0 ? ((a+b)/2)/total : 0;
-    const f = inten*(1-fat*prog);
-    let P = pts[i].power>0 ? pts[i].power : 150, t = len>0 ? plTimeFor(a, b, P, mass, cda, crr) : 0;
-    if (!(pts[i].power>0)){
-      for (let k=0;k<8;k++){ P = Math.max(40, plCurve(Math.max(60,t))*f); t = len>0 ? plTimeFor(a, b, P, mass, cda, crr) : 0; }
+    const a = pts[i-1].cum, b = pts[i].cum, len = b-a, p = pts[i];
+    const climb = plIsClimb(a, b), prog = total>0 ? ((a+b)/2)/total : 0;
+    let P, t, how;
+    if (!(len>0)){ P = 0; t = 0; how = ''; }
+    else if (p.power>0){ P = p.power; t = plTimeFor(a, b, P, mass, cda, crr); how = 'power'; }
+    else if (p.speed>0){ t = timeAtSpeed(len, p.speed); P = plPowerFor(a, b, len/(t-lossT(len)), mass, cda, crr); how = 'speed'; }
+    else if (climb && plCurve(600)!=null){
+      P = 150; t = plTimeFor(a, b, P, mass, cda, crr);
+      for (let k=0;k<8;k++){ P = Math.max(40, plCurve(Math.max(60,t))*inten*(1-fat*prog)); t = plTimeFor(a, b, P, mass, cda, crr); }
+      how = 'curve';
+    } else {
+      const v = climb ? climbSpd : spd;
+      t = timeAtSpeed(len, v); P = plPowerFor(a, b, len/(t-lossT(len)), mass, cda, crr); how = 'speed';
     }
-    pts[i].auto = P; pts[i].secP = P; pts[i].secT = t;
-    pts[i].arr = pts[i-1].dep + t;
-    pts[i].dep = pts[i].arr + (i<pts.length-1 ? pts[i].rest*60 : 0);
+    p.secP = P; p.secT = t; p.how = how; p.climb = climb; p.autoV = t>0 ? len/t*3.6 : 0;
+    p.arr = pts[i-1].dep + t;
+    p.dep = p.arr + (i<pts.length-1 ? p.rest*60 : 0);
   }
   plOutput(); plDrawProfile();
 }
@@ -8406,7 +8437,8 @@ function plRenderList(){
     return '<div class="plRow" data-i="'+i+'"><b class="plNo">'+(i+1)+'</b>'+
       '<input class="plKm" type="number" step="0.1" min="0" value="'+(Math.round(p.km*10)/10)+'"'+(fixed ? ' disabled' : '')+'><span class="hint">km</span>'+
       '<input class="plName" type="text" value="'+escapeHtml(p.name||'')+'" placeholder="名前">'+
-      (i>0 ? '<input class="plPow" type="number" step="1" min="0" value="'+(p.power>0 ? p.power : '')+'" placeholder="'+Math.round(p.auto||0)+'"><span class="hint">W</span>' : '<span class="hint plSp"></span>')+
+      (i>0 ? '<input class="plSpdIn" type="number" step="0.5" min="0" value="'+(p.speed>0 ? p.speed : '')+'" placeholder="'+(p.autoV ? p.autoV.toFixed(1) : '')+'"><span class="hint">km/h</span>'+
+        '<input class="plPow" type="number" step="1" min="0" value="'+(p.power>0 ? p.power : '')+'" placeholder="'+Math.round(p.secP||0)+'"><span class="hint">W'+(p.climb ? '・登り' : '')+'</span>' : '<span class="hint plSp"></span>')+
       (i>0 && !fixed ? '<input class="plRest" type="number" step="1" min="0" value="'+(p.rest||0)+'"><span class="hint">分休</span>' : '')+
       (!fixed ? '<button type="button" class="small ghost plDel">✕</button>' : '')+'</div>';
   }).join('');
@@ -8415,7 +8447,8 @@ function plRenderList(){
     const on = (sel, fn)=>{ const el = row.querySelector(sel); if (el) el.addEventListener('change', ()=>{ fn(el); plRecalc(); box.innerHTML = ''; plRenderList(); }); };
     on('.plKm', el=>{ const v = parseFloat(el.value); if (isFinite(v)) p.km = Math.max(0.1, Math.min(PL.course.total/1000-0.1, v)); });
     on('.plName', el=>{ p.name = el.value; });
-    on('.plPow', el=>{ const v = parseFloat(el.value); p.power = v>0 ? v : null; });
+    on('.plPow', el=>{ const v = parseFloat(el.value); p.power = v>0 ? v : null; if (p.power) p.speed = null; });
+    on('.plSpdIn', el=>{ const v = parseFloat(el.value); p.speed = v>0 ? v : null; if (p.speed) p.power = null; });
     on('.plRest', el=>{ p.rest = Math.max(0, parseFloat(el.value)||0); });
     const del = row.querySelector('.plDel'); if (del) del.addEventListener('click', ()=>{ PL.pts.splice(i,1); plRecalc(); box.innerHTML = ''; plRenderList(); });
   });
@@ -8455,7 +8488,7 @@ $('#plProfile').addEventListener('click', e=>{
   const km = Math.round(m/100)/10;
   if (km<=0.1 || km>=C.total/1000-0.1) return;
   if (PL.pts.some(p=>Math.abs(p.km-km)<0.3)) return;
-  PL.pts.push({ km, name:'', rest:0, power:null });
+  PL.pts.push({ km, name:'', rest:0, power:null, speed:null });
   plRecalc();
   $('#plPoints').innerHTML = ''; plRenderList();
 });
@@ -9310,7 +9343,7 @@ function makeChart(cv, box, pts, reg, useGross){
     sel = best; draw();
     if (!best) return;
     const r = best.rec;
-    tip = el('div', 'tip', '<b>'+r.date+(r.start?' '+esc(r.start):'')+'</b><br>'+(useGross?'グロス ':'ネット ')+fmtT(best.t)+' ・ PWR '+best.x.toFixed(2)+'<br>1000/T = '+best.y.toFixed(2)+(r.gear ? '<br>ギア '+esc(r.gear) : ''));
+    tip = el('div', 'tip', '<b>'+r.date+(r.start?' '+esc(r.start):'')+'</b>');
     box.appendChild(tip);
     const bw = box.clientWidth;
     tip.style.left = Math.max(60, Math.min(bw-60, toX(best.x)))+'px';
