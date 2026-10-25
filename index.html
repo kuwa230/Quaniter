@@ -531,10 +531,13 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
   <div class="titleScreen">
     <div class="titleLogo">Quaniter</div>
     <div class="titleSub">ライドを区切り、振り返り、比べる</div>
-    <button id="goAnalyzer" class="titleBtn" type="button"><b>アナライザー</b><span>ライドを区間に分けて解析する</span></button>
-    <button id="goViewer" class="titleBtn" type="button"><b>ビュワー</b><span>解析済みのライドを振り返る・比べる</span></button>
-    <button id="goEditor" class="titleBtn" type="button"><b>エディター</b><span>GPXファイルを分割・統合・逆転する</span></button>
-    <button id="goAdv" class="titleBtn" type="button"><b>アドバンスドアナライザー</b><span>お気に入り区間の記録を並べて回帰直線を求める(開発者向け)</span></button>
+    <button id="goPlanner" class="titleBtn" type="button"><b>プランナー</b><span>パワーガイド・パワーカーブから区間ごとの目標パワー、休憩、目標到着時刻を決める</span></button>
+    <button id="goCoach" class="titleBtn" type="button"><b>リアルタイムコーチ</b><span>GPS・ANT+と連動し、リアルタイム vs 過去データ vs プランで比べる</span></button>
+    <button id="goAnalyzer" class="titleBtn" type="button"><b>アナライザー</b><span>単体のアクティビティの区間設定、コメント、写真の追加</span></button>
+    <button id="goViewer" class="titleBtn" type="button"><b>ビューワー</b><span>ログ同士の比較</span></button>
+    <button id="goHistory" class="titleBtn" type="button"><b>ヒストリー</b><span>アクティビティの一覧、単体のアクティビティのビューワー</span></button>
+    <button id="goEditor" class="titleBtn" type="button"><b>エディター</b><span>GPX・FITファイルの編集。計画コースの分割・統合などを直感的に</span></button>
+    <button id="goAdv" class="titleBtn" type="button"><b>アドバンスドアナライザー</b><span>開発者専用機能</span></button>
     <div class="titleVer" id="titleVer"></div>
   </div>
 </div>
@@ -950,7 +953,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
 // (this session's own publish count so far) is reconstructed from the
 // conversation itself rather than mechanically verified — best-effort, not
 // guaranteed exact. Increment by exactly 1 on every future publish.
-const APP_VERSION = 211;
+const APP_VERSION = 212;
 
 /* ============ FIT PARSER ============ */
 const FIT_EPOCH = 631065600; // seconds between 1970-01-01 and 1989-12-31 (FIT epoch)
@@ -3512,6 +3515,7 @@ const COLUMN_DEFS = [
   {k:'elevMin', unit:'m', label:'最低標高', fmt:v=>v==null?'--':Math.round(v)+' m'},
   {k:'elevMax', unit:'m', label:'最高標高', fmt:v=>v==null?'--':Math.round(v)+' m'},
   {k:'elevGain', unit:'m', label:'獲得標高', fmt:v=>v==null?'--':Math.round(v)+' m'},
+  {k:'vam', unit:'m/h', label:'登坂速度(VAM)', fmt:v=>v==null?'--':Math.round(v)+' m/h'},
   {k:'avgGradient', unit:'%', label:'平均斜度', fmt:v=>v==null?'--':(v>0?'+':'')+v.toFixed(1)+' %'},
   {k:'avgTemp', unit:'℃', label:'平均温度', fmt:v=>v==null?'--':Math.round(v)+' ℃'},
   {k:'startTime', label:'開始時刻', fmt:v=>v==null?'--':fmtClockNoSec(v)},
@@ -3549,6 +3553,7 @@ const TERM_GLOSSARY = {
   netTimeCum: '合計ネットタイム\n\n区間1からその区間までの、ネットタイムの累計です。',
   avgSpeedNet: 'ネット平均速度\n\n区間の距離を「ネットタイム」(実際に走行していた時間)で割った平均速度です。停止時間を除いた、走行中の速度の目安になります。',
   avgSpeedGross: 'グロス平均速度\n\n区間の距離を「グロスタイム」(終了時刻-開始時刻)で割った平均速度です。信号待ちなどの停止時間も含めた、実際にかかった時間ベースの速度です。',
+  vam: '登坂速度(VAM)\n\nヒルクライム区間で、1時間あたりに登る高さ(m/h)です。区間の始点から終点までの標高の増加分を、ネットタイム(走行時間)で割って1時間あたりに換算します。ヒルクライムとして自動検出された区間、または標高が30m以上上がり平均斜度が3%以上の区間でだけ表示し、それ以外は「--」です。',
   np: 'NP(Normalized Power / 正規化パワー)\n\nパワーの激しい変動を考慮して算出する数値で、単純な平均パワーよりも体感的な負荷に近くなります。一般的に平均パワーと同じか、それより高くなります。',
   intensityFactor: 'IF(Intensity Factor)\n\nNPをFTP(機能的作業閾値パワー)で割った値で、その区間の運動強度を表します。1.0がFTP相当の強度にあたります。',
   ef: 'EF(Efficiency Factor)\n\nNP(算出できない場合は平均パワー)を平均心拍で割った値です。同じ心拍数に対してどれだけパワーを出せているかを示す、効率の指標です。',
@@ -5297,6 +5302,14 @@ function computeIntervalStats(iv, idx){
   st.stoppedTime1 = hasSpeedData ? Math.max(0, recordedSpan-net) : null;
   st.avgSpeedGross = (st.distance && st.duration) ? st.distance/st.duration*3.6 : null;
   st.avgSpeedNet = (st.distance && st.netTime) ? st.distance/st.netTime*3.6 : null;
+  // VAM (climbing speed, m/h): the net rise from the start to the end of the section per hour of moving time — only for a
+  // hill climb: an auto-detected 「ヒルクライム」, or a section that rises at least 30 m at an average gradient of 3 % or more
+  {
+    const rise = (st.startElev!=null && st.endElev!=null) ? st.endElev-st.startElev : null;
+    const tClimb = st.netTime || st.duration;
+    const isClimb = rise!=null && rise>0 && st.distance>0 && ((st.name==='ヒルクライム') || (rise>=30 && rise/st.distance>=0.03));
+    st.vam = isClimb && tClimb>0 ? rise/tClimb*3600 : null;
+  }
   // stoppedTime2 (and the toggle-consolidated stoppedTime) depend on the
   // NEXT interval's start time, so they're filled in afterwards once the
   // full row order is known (see computeAndRenderResults).
@@ -5508,6 +5521,7 @@ function darkenColor(hex, amount){
 const POWER_CHART_METRICS = {
   avgPower: {label:'平均パワー', unit:'W', color:'#0e9e8c', get:r=>r.avgPower, fmt:v=>Math.round(v)},
   elevation: {label:'標高', unit:'m', color:'#9aa3ad', get:r=>r.avgElevation, fmt:v=>Math.round(v)},
+  vam: {label:'登坂速度(VAM)', unit:'m/h', color:'#2e7d32', get:r=>r.vam, fmt:v=>Math.round(v)},
   avgSpeed: {label:'平均速度', unit:'km/h', color:'#e08a1e', get:r=>r.avgSpeedNet, fmt:v=>v.toFixed(1)},
   avgHr: {label:'平均心拍', unit:'bpm', color:'#e0435a', get:r=>r.avgHr, fmt:v=>Math.round(v)},
   avgCad: {label:'平均ケイデンス', unit:'rpm', color:'#7c5cff', get:r=>r.avgCad, fmt:v=>Math.round(v)},
@@ -6950,6 +6964,7 @@ $('#homeBtn').addEventListener('click', async ()=>{
 });
 $('#v1Back').addEventListener('click', ()=> showPage(0));
 $('#goAdv').addEventListener('click', ()=> showPage('A1'));
+[['goPlanner','プランナー'],['goCoach','リアルタイムコーチ'],['goHistory','ヒストリー']].forEach(([id,nm])=> $('#'+id).addEventListener('click', ()=> showHeaderMsg(nm+'は準備中です', false)));
 $('#aBack').addEventListener('click', ()=> showPage(0));
 $('#v2Back').addEventListener('click', ()=> showPage('V1'));
 
@@ -7076,6 +7091,7 @@ const V_METRICS = {
   workKj: { label:'運動量', unit:'kJ', stat:'workKj', sum:true, zero:true },
   kcal:   { label:'消費カロリー', unit:'kcal', stat:'kcal', sum:true, zero:true },
   ef:     { label:'EF', unit:'', stat:'ef', zero:true },
+  vam:    { label:'登坂速度(VAM)', unit:'m/h', stat:'vam', zero:true },
 };
 function vFillMetrics(){
   const sel = $('#vMetric'), cur = sel.value || 'power';
