@@ -950,7 +950,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
 // (this session's own publish count so far) is reconstructed from the
 // conversation itself rather than mechanically verified — best-effort, not
 // guaranteed exact. Increment by exactly 1 on every future publish.
-const APP_VERSION = 210;
+const APP_VERSION = 211;
 
 /* ============ FIT PARSER ============ */
 const FIT_EPOCH = 631065600; // seconds between 1970-01-01 and 1989-12-31 (FIT epoch)
@@ -1203,6 +1203,23 @@ function fmtElapsedAt(sec, fine){
   sec = Math.max(0, Math.round(sec));
   const h = Math.floor(sec/3600), m = Math.floor((sec%3600)/60), sc = sec%60, p2 = n=>String(n).padStart(2,'0');
   return h+':'+p2(m)+(fine ? ':'+p2(sc) : '');
+}
+// The default zoom of every graph: the main grid lines one hour apart (about 85 px per hour). For distance / energy the
+// "hour" is what the ride covers in an hour (on average), rounded to a round number. Returns the visible span in the
+// axis' own unit (seconds, metres, kcal) for a plot that is plotPx wide.
+function niceRound(v){
+  if (!(v>0)) return 1;
+  const p = Math.pow(10, Math.floor(Math.log10(v))), f = v/p;
+  const cands = [1,2,5,10];
+  let best = cands[0]; cands.forEach(c=>{ if (Math.abs(Math.log(f/c)) < Math.abs(Math.log(f/best))) best = c; });
+  return best*p;
+}
+function defaultViewSpan(kind, plotPx, recs, kcalTotal){
+  const hours = Math.max(1, plotPx/85);
+  const T = Math.max(1, recs[recs.length-1].elapsed-recs[0].elapsed);
+  if (kind==='dist') return niceRound((recs[recs.length-1].dist-recs[0].dist)/T*3600)*hours;
+  if (kind==='kcal') return niceRound((kcalTotal||0)/T*3600)*hours;
+  return 3600*hours;
 }
 function fmtKm(m){ return (m/1000).toFixed(1); }
 function fmtDate(unixSec){
@@ -1697,6 +1714,7 @@ async function handleFile(file){
               renderTimeline();
               renderRoutePreview();
               renderMapFrame();
+              markSaved();   // what the saved JSON holds is now what is on screen: nothing is unsaved yet
               if (trimmed) showHeaderMsg('ZIP内のJSONの一部区間が記録範囲外のため調整されました。', true);
             }catch(err){
               showHeaderMsg('ZIP内のJSONを読み込めませんでした: '+err.message, true);
@@ -3233,7 +3251,7 @@ function chartMetricRange(m){
 // positions; the step only changes with zoom. A tick up to ~one label width
 // before the left edge is included so its label can slide out smoothly.
 const TICK_TIME_STEPS = [1,2,5,10,15,30,60,120,300,600,900,1800,3600,7200,10800,21600,43200,86400];
-const TICK_DIST_STEPS = [10,20,50,100,200,500,1000,2000,5000,10000,20000,50000,100000,200000,500000];
+const TICK_DIST_STEPS = [100,200,500,1000,2000,5000,10000,20000,50000,100000,200000,500000];
 const TICK_MIN_PX = 64; // spacing needed for a label such as "12:34:56"
 function computeXTicks(view, widthPx){
   const span = view.max-view.min;
@@ -3258,7 +3276,7 @@ function computeXTicks(view, widthPx){
     let label;
     if (dist){
       const km = v/1000;
-      label = km.toFixed(step%1000===0 ? 0 : (step>=100 ? 1 : 2))+' km';
+      label = km.toFixed(step%1000===0 ? 0 : 1)+' km';
     } else if (clock){
       label = fmtClockAt(S.records[0].t+v, step<=TICK_FINE_SEC);
     } else label = fmtElapsedAt(v, step<=TICK_FINE_SEC);
@@ -3324,7 +3342,11 @@ function computeTimelineStats(){
 }
 function buildChart(){
   S.tlStats = computeTimelineStats();
-  if (!S.chartView){ const b = xBounds(); S.chartView = { min: b.lo, max: b.hi }; }
+  if (!S.chartView){
+    const b = xBounds(), w = ($('#tlBody') && $('#tlBody').clientWidth) || 360;
+    const span = defaultViewSpan(S.xMode==='dist' ? 'dist' : 'time', w, S.records);
+    S.chartView = { min: b.lo, max: Math.min(b.hi, b.lo+span) };   // main grid lines an hour apart
+  }
   renderTimeline();
   if (!chartZoomAttached){ attachTimelineGestures(); chartZoomAttached = true; }
   attachChartResizeObserver();
@@ -3337,11 +3359,17 @@ function buildChart(){
 // its width wherever possible (only shrinking it if it's wider than the full
 // data range) — this keeps zoom-out steps an even, predictable factor each
 // time instead of getting silently squashed once one edge hits the boundary.
+// the narrowest visible range: where the finest grid (1 s, or 0.1 km) is already showing there is no point in zooming on
+function minXRange(){
+  const w = ($('#tlBody') && $('#tlBody').clientWidth) || 360;
+  const finest = S.xMode==='dist' ? TICK_DIST_STEPS[0] : TICK_TIME_STEPS[0];
+  return finest*Math.max(2, Math.floor(w/TICK_MIN_PX));
+}
 function clampAndSetX(min,max){
   const full = xBounds();
   const {lo, hi} = (max-min) < (full.hi-full.lo)*0.999 ? xBounds(max-min) : full;
   let width = Math.min(max-min, hi-lo);
-  if (width < (hi-lo)*0.0005) return;
+  if (width < minXRange() - 1e-9) return;
   let newMin = min, newMax = min+width;
   if (newMin < lo){ newMin = lo; newMax = lo+width; }
   if (newMax > hi){ newMax = hi; newMin = hi-width; }
@@ -4399,7 +4427,7 @@ function attachTimelineGestures(){
     const midFrac = Math.max(0, Math.min(1, ((a.x+b.x)/2-rect.left)/(rect.width||1)));
     const {lo, hi} = xBounds();
     let range = pinch.startRange * pinch.startDist/nd;
-    range = Math.max((hi-lo)*0.0005, Math.min(hi-lo, range));
+    range = Math.max(minXRange(), Math.min(hi-lo, range));
     const min = pinch.anchor - midFrac*range;
     clampAndSetX(min, min+range);
   }
@@ -5505,7 +5533,9 @@ function p3NormSlots(arr){
   return out;
 }
 function pcFitMult(){ const w = $('#powerChartWrap'); return Math.max(0.2, ((w && w.clientWidth) || 350)/1000); }
-function pcMult(){ return Math.max(pcFitMult(), Math.min(POWER_CHART_WIDTH_MAX, S.powerChartWidthMult || 0)); }
+let p3MaxMult = 400;
+function ivEndElapsedForCap(){ return S.intervals.length ? S.intervals[S.intervals.length-1].end - S.intervals[0].start : (S.records.length ? S.records[S.records.length-1].elapsed : 1); }
+function pcMult(){ return Math.max(pcFitMult(), Math.min(p3MaxMult, POWER_CHART_WIDTH_MAX, S.powerChartWidthMult || 0)); }
 function buildPowerChartMetricChecks(){
   return;   // (the check boxes are gone: the ▲▼ pickers on the two axes choose the items)
   const wrap = $('#powerChartMetricChecks');
@@ -5540,7 +5570,7 @@ $$('#powerChartXModeSeg button').forEach(btn=>{
     if (lastResults) renderPowerChart(lastResults.rows.filter(r=>!r.isSummary));
   });
 });
-const POWER_CHART_WIDTH_MIN = 0.2, POWER_CHART_WIDTH_MAX = 30, POWER_CHART_WIDTH_STEP = 0.1;
+const POWER_CHART_WIDTH_MIN = 0.2, POWER_CHART_WIDTH_MAX = 400, POWER_CHART_WIDTH_STEP = 0.1;
 // Everything on the graph is touched through the transparent #p3Touch layer, which is never replaced:
 // the SVG underneath can therefore be redrawn on every pinch step (the browser would drop the touch if
 // the element under the fingers were swapped out), so the graph follows the fingers live.
@@ -5605,7 +5635,7 @@ let p3LastPinchEnd = 0;
       g.last = p;
     } else if (g.type==='pinch' && ptrs.size>=2){
       const [a,b] = [...ptrs.values()];
-      g.target = Math.max(pcFitMult(), Math.min(POWER_CHART_WIDTH_MAX, g.mult*Math.max(1, Math.abs(a.x-b.x))/g.d));
+      g.target = Math.max(pcFitMult(), Math.min(p3MaxMult, POWER_CHART_WIDTH_MAX, g.mult*Math.max(1, Math.abs(a.x-b.x))/g.d));
       if (raf) return;
       raf = requestAnimationFrame(()=>{
         raf = 0;
@@ -5650,7 +5680,7 @@ let p3LastPinchEnd = 0;
     e.preventDefault(); stopMom();
     if (Math.abs(e.deltaX) > Math.abs(e.deltaY)){ wrap.scrollLeft += e.deltaX; return; }
     const r = wrap.getBoundingClientRect(), mid = e.clientX-r.left, frac = (wrap.scrollLeft+mid)/Math.max(1, wrap.scrollWidth);
-    S.powerChartWidthMult = Math.max(pcFitMult(), Math.min(POWER_CHART_WIDTH_MAX, pcMult()*(e.deltaY<0 ? 1.2 : 1/1.2)));
+    S.powerChartWidthMult = Math.max(pcFitMult(), Math.min(p3MaxMult, POWER_CHART_WIDTH_MAX, pcMult()*(e.deltaY<0 ? 1.2 : 1/1.2)));
     p3Rerender();
     wrap.scrollLeft = frac*wrap.scrollWidth - mid;
   }, {passive:false});
@@ -5932,6 +5962,7 @@ function renderPowerChart(rows){
   let minX = Math.min(...S.intervals.map(ivX0));
   let maxX = Math.max(...S.intervals.map(ivX1));
   const spanX = Math.max(1, maxX-minX);
+  const spanXTime = Math.max(1, ivEndElapsedForCap());
   const xScale = t => padL + (t-minX)/spanX * (W-padL-padR);
   const xScaleInv = px => minX + (px-padL)/(W-padL-padR) * spanX; // pixels back to data-space (elapsed sec / distance m) — for converting a tap position into a width-independent value
 
@@ -6107,6 +6138,23 @@ function renderPowerChart(rows){
     ? pickStep(spanX, DIST_MAJOR_KM, DIST_MINOR_KM, DIST_SUBMIN_KM, 1000, W-padL-padR)
     : pickStep(spanX, TIME_MAJOR_MIN, TIME_MINOR_MIN, TIME_SUBMIN_MIN, 60, W-padL-padR);
   const xStep = xStepInfo.major, xMinorStep = xStepInfo.minor, xSubminStep = xStepInfo.submin;
+  {
+    // zoom stops where the finest grid is just showing; the default zoom puts the main grid an hour apart
+    const finest = kcalMode ? KCAL_MAJOR[0] : distMode ? DIST_MAJOR_KM[0]*1000 : TIME_MAJOR_MIN[0]*60;
+    const capMult = Math.max(pcFitMult(), ((LABEL_WIDTH_PX+CHAR_GAP_PX)*spanX/finest + padL+padR)/800);
+    p3MaxMult = capMult;
+    let want = null;
+    if (!S.powerChartWidthMult){
+      const hourUnit = kcalMode ? niceRound((kcalCum ? kcalCum[kcalCum.length-1]-kcalOffset : 0)/Math.max(1, spanXTime)*3600) : distMode ? niceRound(spanX/Math.max(1, spanXTime)*3600) : 3600;
+      want = Math.max(pcFitMult(), Math.min(capMult, ((85/SCALE)*spanX/hourUnit + padL+padR)/800));
+    } else if (S.powerChartWidthMult > capMult*1.001) want = capMult;
+    if (want==null && S.powerChartWidthMult > capMult*1.001) S.powerChartWidthMult = capMult;
+    if (want!=null && Math.abs(want-W/800) > 0.002 && !renderPowerChart._re){
+      S.powerChartWidthMult = want;
+      renderPowerChart._re = true;
+      try{ return renderPowerChart(rows); } finally { renderPowerChart._re = false; }
+    }
+  }
   let tickTs;
   if (valMode || xMode==='elapsed'){
     const xStart = Math.ceil(minX/xStep)*xStep;
@@ -7180,9 +7228,28 @@ function vXMax(){
   });
   return x1;
 }
+// the narrowest view: where the finest grid (1 s, 0.1 km, 1 kcal) already shows
+function vMinSpan(){
+  const cv = $('#vCanvas'), pw = Math.max(100, (cv ? cv.clientWidth : 360)-72), ax = $('#vXAxis').value;
+  const finest = ax==='dist' ? 0.1 : 1;
+  return finest*Math.max(2, Math.floor(pw/90));
+}
 function vFit(keepX){
   const x1 = vXMax(), x0 = vXMin();
-  if (!V.view || !keepX) V.view = { x0, x1:x1>x0 ? x1 : x0+1 };
+  if (!V.view || !keepX){
+    // the default zoom: main grid lines an hour apart (or the equivalent distance / energy)
+    const fr = vVisible()[0], cv = $('#vCanvas'), ax = $('#vXAxis').value;
+    let end = x1>x0 ? x1 : x0+1;
+    if (fr && cv && cv.clientWidth){
+      const pw = cv.clientWidth-72;
+      const kc = ax==='kcal' ? vKcalCum(fr) : null;
+      let span = defaultViewSpan(ax==='kcal' ? 'kcal' : ax==='dist' ? 'dist' : 'time', pw, fr.recs, kc ? kc[kc.length-1] : 0);
+      if (ax==='dist') span /= 1000;
+      end = Math.min(end, x0+span);
+      if (!(end>x0)) end = x1>x0 ? x1 : x0+1;
+    }
+    V.view = { x0, x1:end };
+  }
 }
 function vLowerBound(a, x){ let lo=0, hi=a.length; while (lo<hi){ const m=(lo+hi)>>1; if (a[m]<x) lo=m+1; else hi=m; } return lo; }
 ['#vMetric','#vXAxis'].forEach(id=> $(id).addEventListener('change', ()=>{
@@ -7331,7 +7398,7 @@ window.QuaniterAdvLoad = async function(entries, progress){
         if (!st || st.duration==null || !(st.duration>0)) return;
         const d = new Date(st.startTime*1000), p2 = n=>String(n).padStart(2,'0');
         out.push({ course:sec.name, date:d.getFullYear()+'/'+p2(d.getMonth()+1)+'/'+p2(d.getDate()), start:p2(d.getHours())+':'+p2(d.getMinutes()),
-          net:st.netTime, gross:st.duration, dist:st.distance!=null ? Math.round(st.distance/10)/100 : null, gain:st.elevGain!=null ? Math.round(st.elevGain) : null,
+          net:st.netTime, gross:st.duration, dist:st.distance!=null ? Math.round(st.distance/100)/10 : null, gain:st.elevGain!=null ? Math.round(st.elevGain) : null,
           avgPower:st.avgPower!=null ? Math.round(st.avgPower) : null, pwr:st.pwr!=null ? st.pwr : null,
           weight:Number(cfg.weight)>0 ? Number(cfg.weight) : null, ftp:Number(cfg.ftp)>0 ? Number(cfg.ftp) : null, gear:gearName, src:path });
       });
@@ -7359,7 +7426,7 @@ function vSectionAvg(ride, sec, m){
     return (f<1.5?1:f<3.5?2:f<7.5?5:10)*p;
   }
   function fmtX(x, xmode){
-    if (xmode==='dist') return (+x.toFixed(2))+'';
+    if (xmode==='dist') return (+x.toFixed(1))+'';
     const sec = Math.round(x), h = Math.floor(sec/3600), m = Math.floor((sec%3600)/60);
     return h>0 ? h+':'+String(m).padStart(2,'0') : (m+'分');
   }
@@ -7522,7 +7589,7 @@ function vSectionAvg(ride, sec, m){
     const opts = [1,2,5,10,15,30,60,120,300,600,900,1800,3600,7200,14400,28800];
     const pwid = W-ML-MR, span0 = V.view.x1-V.view.x0, wSec = ctx.measureText('0:00:00').width+34, wMin = ctx.measureText('00:00').width+34;
     // labels keep a clear gap: take the finest step whose labels fit
-    const xstep = sdist ? niceStep(span0, Math.max(2, Math.floor(pwid/(ctx.measureText('0000.0').width+34)))) : (opts.find(o=> span0/o <= Math.max(2, Math.floor(pwid/(o<=TICK_FINE_SEC ? wSec : wMin)))) || 28800);
+    const xstep = sdist ? Math.max($('#vXAxis').value==='dist' ? 0.1 : 1, niceStep(span0, Math.max(2, Math.floor(pwid/(ctx.measureText('0000.0').width+34))))) : (opts.find(o=> span0/o <= Math.max(2, Math.floor(pwid/(o<=TICK_FINE_SEC ? wSec : wMin)))) || 28800);
     // four rows of labels (clock, elapsed time, distance, energy) read off the front ride, the chosen axis in the brighter one
     const ax = $('#vXAxis').value, fr = all[0] ? all[0].r : null;
     const rowKeys0 = ['clock','elapsed','dist'].concat(fr && vKcalCum(fr) ? ['kcal'] : []);
@@ -7540,14 +7607,14 @@ function vSectionAvg(ride, sec, m){
     const textCol = getComputedStyle(document.documentElement).getPropertyValue('--text-dim').trim() || muted;
     const rowsAt = x=>{
       const o = {};
-      if (!fr){ o[own] = sdist ? (+x.toFixed(3))+'' : vHmsCol(x, fineTime); return o; }
+      if (!fr){ o[own] = sdist ? (+x.toFixed(1))+'' : vHmsCol(x, fineTime); return o; }
       const t = vTimeAtPos(fr, ax, x+p0f), r0 = fr.recs[0], rl = fr.recs[fr.recs.length-1];
       const inside = t>=r0.elapsed-1e-9 && t<=rl.elapsed+1e-9;
       o.clock = inside ? fmtClockAt(r0.t+(t-r0.elapsed), fineTime) : '';
       o.elapsed = fmtElapsedAt(t-o0, fineTime);
-      o.dist = inside ? (+((vDistAt(fr, t)-d0)/1000).toFixed(3))+'' : '';
+      o.dist = inside ? (+((vDistAt(fr, t)-d0)/1000).toFixed(1))+'' : '';
       if (kc) o.kcal = inside ? Math.round(kc[vIdxAt(fr, t)]-k0)+'' : '';
-      if (ax==='dist') o.dist = (+x.toFixed(3))+''; else if (ax==='kcal' && kc) o.kcal = Math.round(x)+'';
+      if (ax==='dist') o.dist = (+x.toFixed(1))+''; else if (ax==='kcal' && kc) o.kcal = Math.round(x)+'';
       return o;
     };
     ctx.textAlign = 'right'; ctx.textBaseline = 'top'; ctx.font = '9px sans-serif'; ctx.fillStyle = muted;
@@ -7730,7 +7797,7 @@ function vSectionAvg(ride, sec, m){
   function clampView(){
     const min = vXMin(), max = vXMax() > min ? vXMax() : min+1, span = max-min;
     let w = Math.min(V.view.x1-V.view.x0, span), x0 = V.view.x0;
-    if (w < span*0.002) w = span*0.002;
+    w = Math.max(w, Math.min(span, vMinSpan()));
     x0 = Math.max(min, Math.min(max-w, x0));   // from 0 to the end of the longest ride: no blank before or after
     V.view = { x0, x1:x0+w };
   }
@@ -7953,7 +8020,7 @@ function vSectionAvg(ride, sec, m){
     const tw = fnW + cols.reduce((a,c)=>a+cw[c],0);
     const pin = showFn ? -1 : 0;   // the first item column is pinned next to the ● when the file name is hidden
     const base = V.aligned ? '基準から' : '出発から';
-    const head = x==null ? base+' --' : xmode==='dist' ? base+' '+(+x.toFixed(2))+' km' : xmode==='kcal' ? base+' '+Math.round(x)+' kcal' : base+' '+vHms(x, true);
+    const head = x==null ? base+' --' : xmode==='dist' ? base+' '+(+x.toFixed(1))+' km' : xmode==='kcal' ? base+' '+Math.round(x)+' kcal' : base+' '+vHms(x, true);
     let html = '<div class="vTipHead"><b>'+head+'</b><button type="button" class="small ghost" id="vColBtn" title="表示項目">⚙</button></div>'+
       '<div class="vTipScroll"><table class="vTbl'+(showFn ? '' : ' noFn')+'" style="width:'+tw+'px;"><colgroup><col style="width:'+fnW+'px;">'+cols.map(c=>'<col style="width:'+cw[c]+'px;">').join('')+'</colgroup>'+
       '<thead><tr><th class="vFn">'+(showFn ? 'ファイル名' : '')+'</th>'+cols.map((c,i)=>'<th'+(i===pin ? ' class="vPin"' : '')+'>'+escapeHtml(vColLabel(c))+'</th>').join('')+'</tr></thead><tbody>';
@@ -8282,7 +8349,7 @@ function edDraw(){
   const sx = X(c.cd[d.i]);
   if (sx>=ML && sx<=ML+pw){ g.strokeStyle = '#fff'; g.setLineDash([4,3]); g.lineWidth = 1.5; g.beginPath(); g.moveTo(sx,MT); g.lineTo(sx,MT+ph); g.stroke(); g.setLineDash([]); }
   const p = c.pts[d.i];
-  $('#edInfo').textContent = (c.cd[d.i]/1000).toFixed(2)+' km 地点'+(p[2]!=null ? ' ・ 標高 '+Math.round(p[2])+' m' : '')+' ・ '+(d.i+1).toLocaleString()+' / '+c.pts.length.toLocaleString()+'点目 ・ 全長 '+(c.total/1000).toFixed(2)+' km';
+  $('#edInfo').textContent = (c.cd[d.i]/1000).toFixed(1)+' km 地点'+(p[2]!=null ? ' ・ 標高 '+Math.round(p[2])+' m' : '')+' ・ '+(d.i+1).toLocaleString()+' / '+c.pts.length.toLocaleString()+'点目 ・ 全長 '+(c.total/1000).toFixed(2)+' km';
   if (d.mk.k) d.mk.k.setLngLat([p[1], p[0]]);
   $('#edTitle').textContent = c.name;
 }
@@ -8332,7 +8399,7 @@ $('#edSplit').addEventListener('click', ()=>{
   eSnapshot();
   E.cards.splice(i, 1, eMake(c.name+' ①', c.pts.slice(0, d.i+1)), eMake(c.name+' ②', c.pts.slice(d.i)));
   edClose();
-  showHeaderMsg('「'+c.name+'」を'+(c.cd[d.i]/1000).toFixed(2)+' km地点で2つに分けました。', false);
+  showHeaderMsg('「'+c.name+'」を'+(c.cd[d.i]/1000).toFixed(1)+' km地点で2つに分けました。', false);
 });
 function edCut(keepAfter){
   const c = edCard(), d = E.det; if (!c) return;
