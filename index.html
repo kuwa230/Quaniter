@@ -628,14 +628,16 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
       <button id="pl3Back" class="small ghost icon-btn" type="button" title="2ページ目へ">←</button>
       <h2>プランナー(3/4):目標速度・パワー</h2>
     </div>
-    <div class="hint">登り・平坦(斜度0%以上)の区間は、パワーカーブから目標パワーを決め、距離と平均斜度から目標速度を求めます。下り(斜度0%未満)は30 km/hで固定です。速度は休憩を含まないグロス平均速度です。</div>
+    <div class="hint">全体で使えるエネルギー(パワーカーブ × 強度係数)を、走行時間が最短になるように区間へ配分します。登りは高め、平坦は控えめ、斜度-2%より急な下りは惰性です。速度は休憩を含まないグロス平均速度です。</div>
     <div class="plGrid" style="margin-top:8px;">
       <label class="field">体重(kg)<input type="number" id="plWeight" min="30" max="200" step="0.5" value="65"></label>
       <label class="field">機材(kg)<input type="number" id="plBike" min="0" max="60" step="0.5" value="10"></label>
       <label class="field">CdA(m²)<input type="number" id="plCda" min="0.15" max="0.7" step="0.01" value="0.32"></label>
       <label class="field">転がり抵抗 Crr<input type="number" id="plCrr" min="0.002" max="0.02" step="0.001" value="0.005"></label>
-      <label class="field">下りの速度(km/h)<input type="number" id="plDown" min="10" max="60" step="1" value="30"></label>
+      <label class="field">強度係数(%)<input type="number" id="plInt" min="30" max="150" step="0.1" value="90"></label>
+      <label class="field">パワーのばらつき上限(VI)<input type="number" id="plVi" min="1" max="1.5" step="0.01" value="1.15"></label>
     </div>
+    <div class="msg" id="plBudget" style="margin-top:8px;"></div>
     <div class="hint" id="plFtpNote" style="margin-top:6px;"></div>
     <div class="overflowX" style="margin-top:8px;"><div id="plSecTable"></div></div>
   </div>
@@ -654,9 +656,9 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
     <div class="panel-head" style="margin-top:10px;"><h3 style="margin:0;font-size:13px;">全体の調整</h3></div>
     <div class="plGrid">
       <label class="field">目標の所要時間(出発〜到着、時:分)<input type="text" id="plTarget" placeholder="例 13:00" inputmode="numeric"></label>
-      <label class="field">全区間の倍率(×)<input type="number" id="plK" min="0.3" max="2" step="0.01" value="1"></label>
+      <label class="field">強度係数(%)<input type="number" id="plInt4" min="30" max="150" step="0.1" value="90"></label>
     </div>
-    <div class="vRow" style="margin-top:6px;"><button id="plSolve" class="small" type="button">目標時間に合わせて倍率を求める</button><button id="plKReset" class="small ghost" type="button">倍率を1に戻す</button></div>
+    <div class="vRow" style="margin-top:6px;"><button id="plSolve" class="small" type="button">目標時間に合わせて強度係数を求める</button></div>
     <div class="hint" id="plKNote" style="margin-top:4px;"></div>
     <div class="panel-head" style="margin-top:10px;"><h3 style="margin:0;font-size:13px;">区間ごとの微調整(空欄=自動。入力した区間は倍率の対象外)</h3></div>
     <div id="plAdjList"></div>
@@ -1053,7 +1055,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
 // (this session's own publish count so far) is reconstructed from the
 // conversation itself rather than mechanically verified — best-effort, not
 // guaranteed exact. Increment by exactly 1 on every future publish.
-const APP_VERSION = 215;
+const APP_VERSION = 216;
 
 /* ============ FIT PARSER ============ */
 const FIT_EPOCH = 631065600; // seconds between 1970-01-01 and 1989-12-31 (FIT epoch)
@@ -8293,7 +8295,7 @@ const PL_DURS = [60,120,300,600,1200,1800,3600,5400,7200,10800,14400,21600,28800
 const PL_GEN = [[60,1.70],[300,1.20],[600,1.10],[1200,1.05],[1800,1.02],[3600,1.00],[5400,0.95],[7200,0.90],[10800,0.82],[14400,0.77],[21600,0.70],[28800,0.65],[43200,0.58]];
 const plNum = (id, d)=>{ const v = parseFloat($('#'+id).value); return isFinite(v) ? v : d; };
 (function(){
-  const KEY = 'quaniter.planner.v2', IDS = ['plFtp','plWeight','plBike','plCda','plCrr','plDown','plDep'];
+  const KEY = 'quaniter.planner.v2', IDS = ['plFtp','plWeight','plBike','plCda','plCrr','plInt','plVi','plDep'];
   try{ const v = JSON.parse(localStorage.getItem(KEY)||'null'); if (v) IDS.forEach(id=>{ if (v[id]!=null) $('#'+id).value = v[id]; }); }catch(e){}
   IDS.forEach(id=> $('#'+id).addEventListener('change', ()=>{
     try{ const o = {}; IDS.forEach(i=> o[i] = $('#'+i).value); localStorage.setItem(KEY, JSON.stringify(o)); }catch(e){}
@@ -8470,53 +8472,109 @@ function plPowerFor(a, b, v){   // average power to hold v (m/s); descents coast
 }
 
 /* ---- the plan ---- */
-// base speed / power of every section (page 3), from the curve and the gradient. The fatigue of a long day is the curve's own
-// long-duration fall (curve(T)/curve(1 h) at the elapsed riding time T).
-function plBase(){
+// The ride gets an energy budget first (what the power curve says can be spent over the whole duration, times the intensity
+// factor); then the budget is spread over the sections so that the total time is shortest: more on climbs, less on the flat,
+// steep descents coast. Limits: no section above what the curve allows for its length, the early part held back, and the
+// variation of power (VI) kept under the chosen limit.
+const PL_GC = -0.02;    // downhill steeper than this: no pedalling
+const PL_VMAX = 15;     // m/s (54 km/h)
+const plSegSpeed = (p, g)=> g<PL_GC ? Math.min(PL_VMAX, plSpeed(0, g)) : Math.min(PL_VMAX, plSpeed(p, g));
+// for every section: time and energy over a grid of pedalling powers
+function plTables(){
   const secs = plSections();
-  const key = JSON.stringify([PL.pts.map(p=>p.km), plNum('plWeight',65), plNum('plBike',10), plNum('plCda',0.32), plNum('plCrr',0.005), plNum('plDown',30), plNum('plFtp',200), PL.curveRides]);
-  if (PL._baseKey===key && PL._base && PL._base.length===secs.length){ PL._base.forEach((b,i)=> Object.assign(secs[i], b)); return secs; }
-  const down = plNum('plDown',30)/3.6, c60 = plCurve(3600);
-  const fat = T=> T<=3600 ? 1 : Math.max(0.3, plCurve(T)/c60);
-  let cum = new Array(secs.length).fill(0);
-  for (let pass=0; pass<6; pass++){
-    let T = 0;
-    secs.forEach((s,k)=>{
-      if (!(s.len>0)){ s.t = 0; s.v = 0; s.P = 0; return; }
-      if (s.grade < 0){ s.v = down; s.t = s.len/down; s.P = plPowerFor(s.a, s.b, down); s.kind = 'down'; }
-      else {
-        const mid = T + (s.t||s.len/7)/2, f = fat(mid);
-        let P = s.P>0 && s.kind!=='down' ? s.P : 150, t = plTimeFor(s.a, s.b, P);
-        for (let it=0; it<6; it++){ P = Math.max(40, plCurve(Math.max(60,t))*f); t = plTimeFor(s.a, s.b, P); }
-        s.P = P; s.t = t; s.v = s.len/t; s.kind = s.grade>=0.03 ? 'climb' : 'flat';
-      }
-      T += s.t;
-    });
-  }
-  PL._baseKey = key; PL._base = secs.map(s=>({ t:s.t, v:s.v, P:s.P, kind:s.kind }));
+  const key = JSON.stringify([PL.pts.map(p=>p.km), plNum('plWeight',65), plNum('plBike',10), plNum('plCda',0.32), plNum('plCrr',0.005), plNum('plFtp',200)]);
+  if (PL._tk===key && PL._tab && PL._tab.length===secs.length){ PL._tab.forEach((g,i)=>{ secs[i].grid = g; }); return secs; }
+  const ftp = plNum('plFtp',200), pLo = 0.3*ftp, pHi = 1.9*ftp, N = 60;
+  secs.forEach(s=>{
+    const n = Math.max(1, Math.ceil(s.len/200)), segs = [];
+    for (let k=0;k<n;k++){ const x0 = s.a+s.len*k/n, x1 = s.a+s.len*(k+1)/n; segs.push({ len:x1-x0, g:(plAltAt(x1)-plAltAt(x0))/Math.max(1,x1-x0) }); }
+    const grid = [];
+    for (let k=0;k<=N;k++){
+      const p = pLo+(pHi-pLo)*k/N; let t = 0, E = 0;
+      if (s.len>0) segs.forEach(sg=>{ const v = plSegSpeed(p, sg.g), dt = sg.len/v; t += dt; if (sg.g>=PL_GC) E += p*dt; });
+      grid.push({ p, t, E });
+    }
+    s.grid = grid;
+  });
+  PL._tk = key; PL._tab = secs.map(s=>s.grid);
   return secs;
 }
-// with the rest times, adjustments and the factor k applied; fills arrival/departure
-function plCompute(k){
-  const secs = plBase();
-  const dep = ($('#plDep').value||'06:00').split(':').map(Number);
-  let clock = (dep[0]*60+dep[1])*60, moving = 0, rests = 0;
-  const pts = PL.pts;
-  pts[0].arr = clock; pts[0].dep = clock;
-  secs.forEach((s,idx)=>{
-    const to = s.to;
-    if (to.powerOv>0){ s.P = to.powerOv; s.t = s.len>0 ? plTimeFor(s.a, s.b, s.P) : 0; s.how = 'P'; }
-    else if (to.speedOv>0){ s.t = s.len/(to.speedOv/3.6); s.P = plPowerFor(s.a, s.b, to.speedOv/3.6); s.how = 'V'; }
-    else if (s.len>0){ s.t = s.t/k; s.P = plPowerFor(s.a, s.b, s.len/s.t); s.how = 'auto'; }
-    s.v = s.t>0 ? s.len/s.t : 0;
-    to.arr = pts[idx].dep + s.t;
-    const last = idx===secs.length-1;
-    const r = (!last && to.rest>0) ? to.rest*60 : 0;
-    to.dep = to.arr + r; moving += s.t; rests += r;
-  });
-  return { secs, moving, rests, total: pts[pts.length-1].arr - pts[0].dep + rests*0 };
+function plAlloc(secs, budget, vi, f){
+  const n = secs.length, G = secs.map(s=>s.grid), pLo = G[0][0].p, step = G[0][1].p-G[0][0].p, N = G[0].length-1, pHi = G[0][N].p;
+  const clampP = (p, i)=> Math.max(pLo, Math.min(pmax[i], p));
+  const at = (i, p)=>{ const x = Math.max(0, Math.min(N, (p-pLo)/step)), k = Math.min(N-1, Math.floor(x)), f = x-k, a = G[i][k], b = G[i][k+1]; return { t:a.t+(b.t-a.t)*f, E:a.E+(b.E-a.E)*f }; };
+  // what the curve allows for a section of that length (scaled with the intensity factor, a little above it for short ones)
+  const pmax = secs.map((s,i)=>{ if (!(s.len>0)) return pLo; for (let k=N;k>=0;k--){ const g = G[i][k]; if (g.p <= plCurve(Math.max(60, g.t))*Math.min(1.15, f*1.1)) return g.p; } return pLo; });
+  const Etot = pv=> pv.reduce((a,p,i)=> a+at(i,p).E, 0);
+  // the same pedalling power everywhere that uses the budget
+  let lo = pLo, hi = pHi;
+  for (let it=0;it<40;it++){ const mid = (lo+hi)/2; if (Etot(pmax.map((m,i)=>Math.min(mid,m))) > budget) hi = mid; else lo = mid; }
+  const pflat = lo;
+  // the early part is held back
+  const total = secs.length ? secs[secs.length-1].b : 1;
+  secs.forEach((s,i)=>{ if ((s.a+s.b)/2 < total*0.15) pmax[i] = Math.min(pmax[i], Math.max(pLo, 1.05*pflat)); });
+  // the cheapest way to save time: minimise t + lambda*E in every section
+  const popt = lam=> secs.map((s,i)=>{ if (!(s.len>0)) return pLo; let best = Infinity, bp = pLo; for (let k=0;k<=N;k++){ const g = G[i][k]; if (g.p>pmax[i]+1e-9) break; const c = g.t+lam*g.E; if (c<best){ best = c; bp = g.p; } } return bp; });
+  let l0 = 1e-7, l1 = 1;
+  for (let it=0;it<50;it++){ const lm = Math.sqrt(l0*l1); if (Etot(popt(lm)) > budget) l0 = lm; else l1 = lm; }
+  const po = popt(l1);
+  const build = s=>{
+    const pv = po.map((p,i)=> clampP(pflat+s*(p-pflat), i));
+    let a = 0.5, b = 1.6;
+    for (let it=0;it<25;it++){ const c = (a+b)/2; if (Etot(pv.map((p,i)=>clampP(p*c,i))) > budget) b = c; else a = c; }
+    return pv.map((p,i)=>clampP(p*a,i));
+  };
+  const ratio = pv=>{ let sT = 0, s4 = 0, sE = 0; pv.forEach((p,i)=>{ const q = at(i,p); sT += q.t; sE += q.E; if (q.t>0) s4 += q.t*Math.pow(q.E/q.t, 4); }); const avg = sE/Math.max(1,sT); return avg>0 ? Math.pow(s4/Math.max(1,sT), 0.25)/avg : 1; };
+  let pv = build(1), s = 1;
+  if (ratio(pv) > vi){
+    let a = 0, b = 1;
+    for (let it=0;it<18;it++){ const m = (a+b)/2; if (ratio(build(m)) > vi) b = m; else a = m; }
+    s = a; pv = build(s);
+  }
+  const out = pv.map((p,i)=>{ const q = at(i,p); return { p, t:q.t, E:q.E }; });
+  return { pv, items:out, T: out.reduce((x,o)=>x+o.t,0), E: out.reduce((x,o)=>x+o.E,0), vi: ratio(pv), spread:s };
 }
-function plK(){ return Math.max(0.3, Math.min(2, plNum('plK',1))); }
+function plRestSec(){ return PL.pts.reduce((a,p,i)=> a + (i>0 && i<PL.pts.length-1 && p.rest>0 ? p.rest*60 : 0), 0); }
+function plSolve(f, vi){
+  const secs = plTables(), rests = plRestSec();
+  let Ttot = secs.reduce((a,s)=>a+s.len/7,0)+rests, res = null;
+  for (let it=0;it<10;it++){
+    const budget = f*plCurve(Math.max(600,Ttot))*Math.max(600,Ttot);
+    res = plAlloc(secs, budget, vi, f); res.budget = budget;
+    const Tn = res.T+rests;
+    if (Math.abs(Tn-Ttot) < 20){ Ttot = Tn; break; }
+    Ttot = (Ttot+Tn)/2;
+  }
+  res.secs = secs; res.rests = rests; res.Ttot = Ttot;
+  return res;
+}
+// the plan with the person's own speed / power entries applied; fills the arrival and departure times
+function plCompute(){
+  const f = Math.max(0.2, Math.min(1.8, plNum('plInt',90)/100)), vi = Math.max(1, plNum('plVi',1.15));
+  const r = plSolve(f, vi), pts = PL.pts;
+  const dep = ($('#plDep').value||'06:00').split(':').map(Number);
+  const clock = (dep[0]*60+dep[1])*60;
+  pts[0].arr = clock; pts[0].dep = clock;
+  let moving = 0, rests = 0;
+  r.secs.forEach((s,idx)=>{
+    const it = r.items[idx], to = s.to;
+    s.t = it.t; s.pedal = it.p; s.E = it.E; s.how = 'auto';
+    if (to.powerOv>0 && s.len>0){
+      const g = s.grid; let best = g[0], bd = Infinity;
+      g.forEach(q=>{ const d = Math.abs(q.E/q.t-to.powerOv); if (d<bd){ bd = d; best = q; } });
+      s.t = best.t; s.pedal = best.p; s.E = best.E; s.how = 'P';
+    } else if (to.speedOv>0 && s.len>0){
+      s.t = s.len/(to.speedOv/3.6); s.E = plPowerFor(s.a, s.b, to.speedOv/3.6)*s.t; s.how = 'V';
+    }
+    s.P = s.t>0 ? s.E/s.t : 0; s.v = s.t>0 ? s.len/s.t : 0;
+    s.kind = s.grade < PL_GC ? 'down' : s.grade>=0.03 ? 'climb' : 'flat';
+    to.arr = pts[idx].dep + s.t;
+    const last = idx===r.secs.length-1, rs = (!last && to.rest>0) ? to.rest*60 : 0;
+    to.dep = to.arr + rs; moving += s.t; rests += rs;
+  });
+  r.moving = moving; r.rests = rests; r.total = moving+rests;
+  return r;
+}
 function plRefresh(){
   if (!PL.course) return;
   const cur = currentPageNum;
@@ -8796,12 +8854,14 @@ function plEnter3(){
 }
 const plKind = k=> k==='down' ? '下り' : k==='climb' ? '登り' : '平坦';
 function plRenderSecs(){
-  const r = PL.last = plCompute(1);
-  $('#plSecTable').innerHTML = '<table class="plTbl"><thead><tr><th>#</th><th>区間</th><th>距離</th><th>平均斜度</th><th>種別</th><th>目標速度</th><th>目標パワー</th><th>所要</th></tr></thead><tbody>'+
-    r.secs.map(s=> '<tr><td>'+s.i+'</td><td style="text-align:left">'+escapeHtml((s.from.name||'')+(s.to.name ? '→'+s.to.name : ''))+'</td><td>'+(s.len/1000).toFixed(1)+' km</td><td>'+(s.grade*100).toFixed(1)+' %</td><td>'+plKind(s.kind)+'</td><td>'+(s.v*3.6).toFixed(1)+' km/h</td><td>'+Math.round(s.P)+' W</td><td>'+fmtHMS(s.t)+'</td></tr>').join('')+
+  const r = PL.last = plCompute();
+  $('#plSecTable').innerHTML = '<table class="plTbl"><thead><tr><th>#</th><th>区間</th><th>距離</th><th>平均斜度</th><th>種別</th><th>目標速度</th><th>目標平均パワー</th><th>漕ぐときのパワー</th><th>所要</th></tr></thead><tbody>'+
+    r.secs.map(s=> '<tr><td>'+s.i+'</td><td style="text-align:left">'+escapeHtml((s.from.name||'')+(s.to.name ? '→'+s.to.name : ''))+'</td><td>'+(s.len/1000).toFixed(1)+' km</td><td>'+(s.grade*100).toFixed(1)+' %</td><td>'+plKind(s.kind)+'</td><td>'+(s.v*3.6).toFixed(1)+' km/h</td><td>'+Math.round(s.P)+' W</td><td>'+(s.kind==='down' ? '惰性' : Math.round(s.pedal)+' W')+'</td><td>'+fmtHMS(s.t)+'</td></tr>').join('')+
     '</tbody></table><div class="hint" style="margin-top:6px;">走行時間の合計 '+fmtHMS(r.moving)+'(休憩を含みません)</div>';
+  const avg = r.moving+r.rests>0 ? r.budget/(r.moving+r.rests) : 0;
+  $('#plBudget').innerHTML = '<b>エネルギー予算</b> '+Math.round(r.budget/1000)+' kJ(≒ '+Math.round(r.budget/1000)+' kcal)= パワーカーブ('+fmtHMS(r.Ttot)+') '+Math.round(plCurve(Math.max(600,r.Ttot)))+' W × 強度係数 '+Math.round(plNum('plInt',90))+'% × '+fmtHMS(r.Ttot)+'<br>全体の平均 '+Math.round(avg)+' W ・ ばらつき(VI) '+r.vi.toFixed(2)+'(上限 '+plNum('plVi',1.15).toFixed(2)+')'+(r.spread<1 ? ' ・ 上限に合わせてメリハリを '+Math.round(r.spread*100)+'% に抑えました' : '');
 }
-['plWeight','plBike','plCda','plCrr','plDown','plFtp'].forEach(id=> $('#'+id).addEventListener('change', ()=>{ if (currentPageNum==='PL3') plEnter3(); }));
+['plWeight','plBike','plCda','plCrr','plFtp','plInt','plVi'].forEach(id=> $('#'+id).addEventListener('change', ()=>{ if (currentPageNum==='PL3') plEnter3(); }));
 
 /* ---- page 4: rests, adjustment, output ---- */
 function plEnter4(){
@@ -8827,9 +8887,10 @@ function plAdjRows(r){
 }
 const plHM = s=>{ s = Math.round(s/60)*60; const day = Math.floor(s/86400); const m = Math.floor((s%86400)/60); return (day>0 ? '翌' : '')+Math.floor(m/60)+':'+String(m%60).padStart(2,'0'); };
 function plRenderOut(){
-  const k = plK(), r = PL.last = plCompute(k), pts = PL.pts;
+  const r = PL.last = plCompute(), pts = PL.pts;
   const tot = pts[pts.length-1].arr-pts[0].arr;
-  $('#plKNote').textContent = '出発〜到着 '+fmtHMS(tot)+'(走行 '+fmtHMS(r.moving)+' + 休憩 '+fmtHMS(r.rests)+')・倍率 ×'+k.toFixed(2);
+  $('#plInt4').value = $('#plInt').value;
+  $('#plKNote').textContent = '出発〜到着 '+fmtHMS(tot)+'(走行 '+fmtHMS(r.moving)+' + 休憩 '+fmtHMS(r.rests)+')・エネルギー予算 '+Math.round(r.budget/1000)+' kJ・強度係数 '+Math.round(plNum('plInt',90))+'%・VI '+r.vi.toFixed(2);
   const lines = [];
   pts.forEach((p,i)=>{
     const s = i>0 ? r.secs[i-1] : null;
@@ -8841,18 +8902,19 @@ function plRenderOut(){
   if (!($('#plAdjList').contains(document.activeElement) && document.activeElement.tagName==='INPUT')) plAdjRows(r);
 }
 $('#plDep').addEventListener('change', ()=>{ if (currentPageNum==='PL4') plRenderOut(); });
-$('#plK').addEventListener('change', ()=>{ plRenderOut(); });
-$('#plKReset').addEventListener('click', ()=>{ $('#plK').value = 1; plRenderOut(); });
+$('#plInt4').addEventListener('change', ()=>{ $('#plInt').value = $('#plInt4').value; plRenderOut(); });
 $('#plSolve').addEventListener('click', ()=>{
   const t = ($('#plTarget').value||'').trim().match(/^(\d{1,2})[:：.](\d{1,2})$/);
   if (!t){ showHeaderMsg('目標の所要時間を「時:分」(例 13:00)で入れてください', true); return; }
-  const target = (Number(t[1])*60+Number(t[2]))*60;
-  const total = k=>{ const r = plCompute(k); return r.moving + r.rests; };
-  let lo = 0.3, hi = 2;
-  if (target>total(lo) || target<total(hi)){ showHeaderMsg('その時間には倍率0.3〜2の範囲で合わせられません(現在 '+fmtHMS(total(1))+')', true); return; }
-  for (let i=0;i<40;i++){ const mid = (lo+hi)/2; if (total(mid)>target) lo = mid; else hi = mid; }
-  $('#plK').value = ((lo+hi)/2).toFixed(3);
+  const target = (Number(t[1])*60+Number(t[2]))*60, vi = Math.max(1, plNum('plVi',1.15));
+  const total = f=>{ const r = plSolve(f, vi); return r.T+r.rests; };
+  let lo = 0.3, hi = 1.6;
+  if (target>total(lo) || target<total(hi)){ showHeaderMsg('その時間には強度係数30〜160%の範囲で合わせられません(いまの計画 '+fmtHMS(total(plNum('plInt',90)/100))+')', true); return; }
+  for (let i=0;i<30;i++){ const mid = (lo+hi)/2; if (total(mid)>target) lo = mid; else hi = mid; }
+  const f = (lo+hi)/2;
+  $('#plInt').value = (f*100).toFixed(1); $('#plInt4').value = (f*100).toFixed(1);
   plRenderOut();
+  showHeaderMsg('必要な強度係数は約'+(f*100).toFixed(1)+'%です。'+(f<=1.0 ? 'パワーカーブの範囲内で走れる計画です。' : f<=1.1 ? 'パワーカーブをやや上回る、厳しい計画です。' : 'パワーカーブを大きく上回る、かなり厳しい(現実的でない)計画です。'), f>1.0);
 });
 $('#plCopy').addEventListener('click', async ()=>{
   try{ await navigator.clipboard.writeText(PL.text||''); showHeaderMsg('計画をコピーしました', false); }
