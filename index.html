@@ -589,7 +589,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
   </div>
   <div class="panel">
     <div class="panel-head"><h2>コース(GPX)</h2></div>
-    <div class="vRow"><label class="vBtn primary" for="plGpx">GPXを選ぶ</label><input type="file" id="plGpx" accept=".gpx,application/gpx+xml,text/xml,application/xml" hidden><span class="hint" id="plCourse">未選択</span></div>
+    <div class="vRow"><label class="vBtn primary" for="plGpx">GPXを選ぶ</label><label class="vBtn" for="plOpenZip">保存したプランを開く(ZIP)</label><input type="file" id="plOpenZip" accept=".zip,application/zip" hidden><input type="file" id="plGpx" accept=".gpx,application/gpx+xml,text/xml,application/xml" hidden><span class="hint" id="plCourse">未選択</span></div>
   </div>
   <div class="panel">
     <div class="panel-head"><h2>パワーカーブ</h2></div>
@@ -1056,7 +1056,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
 // (this session's own publish count so far) is reconstructed from the
 // conversation itself rather than mechanically verified — best-effort, not
 // guaranteed exact. Increment by exactly 1 on every future publish.
-const APP_VERSION = 217;
+const APP_VERSION = 218;
 
 /* ============ FIT PARSER ============ */
 const FIT_EPOCH = 631065600; // seconds between 1970-01-01 and 1989-12-31 (FIT epoch)
@@ -3195,8 +3195,13 @@ function renderRoute(){
   $('#mapGoogleSearch').addEventListener('click', (e)=>{
     const btn = e.currentTarget;
     if (!S.selection){ flashBtn(btn, '先に地点を選択'); return; }
-    const rec = S.records[S.selection.idx];
-    if (rec.lat==null || rec.lon==null){ flashBtn(btn, '位置情報なし'); return; }
+    let rec = S.records[S.selection.idx];
+    if (rec.lat==null || rec.lon==null){
+      // no position here (a tunnel, say): the nearest record that has one
+      const near = nearestGpsRecordTo(rec);
+      if (!near){ flashBtn(btn, '位置情報なし'); return; }
+      rec = near;
+    }
     const url = 'https://www.google.com/maps/search/?api=1&query='+rec.lat.toFixed(6)+','+rec.lon.toFixed(6);
     window.open(url, '_blank');
   });
@@ -8443,6 +8448,34 @@ function plSetCourse(r){
   $('#plCourse').textContent = r.name+'('+(d[d.length-1]/1000).toFixed(1)+' km・獲得標高 '+Math.round(gain)+' m)';
   $('#plTo2').disabled = false;
 }
+// a plan saved with 「設定ごとZIPで保存」: the GPX, the settings, the points (with rests and the entries made by hand) and the curve
+$('#plOpenZip').addEventListener('change', async e=>{
+  const f = e.target.files[0]; e.target.value = ''; if (!f) return;
+  try{
+    const zip = await JSZip.loadAsync(f);
+    const jn = Object.values(zip.files).find(x=>!x.dir && /\.json$/i.test(x.name)), gn = Object.values(zip.files).find(x=>!x.dir && /\.gpx$/i.test(x.name));
+    if (!jn || !gn) throw new Error('GPXとプランのJSONが入っていません');
+    const j = JSON.parse(await jn.async('string'));
+    if (!j || j.type!=='plan' || !Array.isArray(j.points)) throw new Error('Quaniterのプランではありません');
+    const txt = await gn.async('string');
+    plSetCourse(await eParse(new File([txt], gn.name.replace(/^.*\//,''), { type:'application/gpx+xml' })));
+    PL.gpxText = txt; PL.gpxName = gn.name.replace(/^.*\//,'');
+    Object.keys(j.settings||{}).forEach(id=>{ const el = $('#'+id); if (el && j.settings[id]!=null) el.value = j.settings[id]; });
+    const total = PL.course.total/1000;
+    PL.pts = j.points.filter(p=>isFinite(p.km)).map(p=>({ km:Math.max(0, Math.min(total, p.km)), name:p.name||'', rest:p.rest!=null ? p.rest : null, speedOv:p.speedOverrideKmh||null, powerOv:p.powerOverrideW||null }));
+    if (PL.pts.length<2 || PL.pts[0].km!==0){ PL.pts.unshift({ km:0, name:'出発', rest:null }); }
+    if (PL.pts[PL.pts.length-1].km < total-0.05) PL.pts.push({ km:total, name:'到着', rest:null });
+    PL.pts.sort((a,b)=>a.km-b.km);
+    if (j.powerCurve && j.powerCurve.source==='rides' && j.powerCurve.watts){
+      const c = {}; Object.keys(j.powerCurve.watts).forEach(d=>{ c[Number(d)] = j.powerCurve.watts[d]; });
+      PL.curveRides = c; plShowCurve(0, 0);
+      $('#plCurveInfo').innerHTML = '保存したプランのパワーカーブ(過去のライドから作ったもの)を使います。<br>'+Object.keys(c).map(Number).sort((a,b)=>a-b).map(d=>(d<3600 ? (d/60)+'分' : (d/3600)+'時間')+' '+Math.round(c[d])+'W').join(' ・ ');
+    } else { PL.curveRides = null; plShowCurve(0, 0); }
+    PL.hist = []; PL.sel = null;
+    showHeaderMsg('プラン「'+(j.course && j.course.name || PL.course.name)+'」を開きました(地点'+PL.pts.length+'つ)', false);
+    showPage('PL4');
+  }catch(err){ showHeaderMsg('プランを開けませんでした: '+err.message, true); }
+});
 $('#plGpx').addEventListener('change', async e=>{
   const f = e.target.files[0]; if (!f) return;
   try{ const txt = await f.text(); plSetCourse(await eParse(f)); PL.gpxText = txt; PL.gpxName = f.name; }catch(err){ showHeaderMsg('GPXを読み込めませんでした: '+err.message, true); }
