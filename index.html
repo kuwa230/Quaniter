@@ -612,6 +612,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
     <div class="msg" id="plStat" style="margin-top:6px;"></div>
     <div class="vRow" style="margin-top:8px;">
       <button id="plSplit" class="small primary" type="button">シーク位置で区間を分割</button>
+      <button id="plAuto" class="small" type="button">自動で区間を分ける</button>
       <button id="plRestBtn" class="small" type="button" disabled>休憩場所にする</button>
       <button id="plDelPt" class="small ghost" type="button" disabled>地点を削除</button>
       <button id="plUndo" class="small ghost" type="button" disabled>元に戻す</button>
@@ -666,7 +667,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
   <div class="panel">
     <div class="panel-head"><h2>計画</h2></div>
     <pre id="plOut" style="white-space:pre-wrap;font:inherit;font-size:13px;line-height:1.6;margin:0 0 8px;user-select:text;"></pre>
-    <div class="vRow"><button id="plCopy" class="small" type="button" disabled>コピー</button><button id="plSave" class="small" type="button" disabled>テキストを保存</button></div>
+    <div class="vRow"><button id="plCopy" class="small" type="button" disabled>コピー</button><button id="plSave" class="small" type="button" disabled>テキストを保存</button><button id="plZip" class="small" type="button" disabled>設定ごとZIPで保存</button></div>
   </div>
 </div>
 
@@ -1055,7 +1056,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
 // (this session's own publish count so far) is reconstructed from the
 // conversation itself rather than mechanically verified — best-effort, not
 // guaranteed exact. Increment by exactly 1 on every future publish.
-const APP_VERSION = 216;
+const APP_VERSION = 217;
 
 /* ============ FIT PARSER ============ */
 const FIT_EPOCH = 631065600; // seconds between 1970-01-01 and 1989-12-31 (FIT epoch)
@@ -2192,7 +2193,35 @@ function libRegisterActive(){
   const entry = { id:(prev ? prev.id : 'l'+Date.now().toString(36)+Math.random().toString(36).slice(2,6)), name:nm, nameType:isB?'b':'a', startName:isB?(iv.startName||''):undefined, endName:isB?(iv.endName||''):undefined,
     lengthM:Math.round(sm.lengthM), ascentM:Math.round(ascent), pts:sm.pts.map(p=>[+p[0].toFixed(5), +p[1].toFixed(5)]), createdAt:Date.now() };
   libEntries = libEntries.filter(e=>e.id!==entry.id).concat(entry);
-  if (libPersist()) showHeaderMsg('「'+nm+'」をお気に入り区間に登録しました(全'+libEntries.length+'件)', false);
+  const saved = libPersist();
+  const renamed = libApplyToCurrent(entry);
+  if (saved) showHeaderMsg('「'+nm+'」をお気に入り区間に登録しました(全'+libEntries.length+'件)'+(renamed>1 ? '。この記録の中の'+renamed+'区間の名前を登録名にしました' : ''), false);
+}
+// a favourite just registered is looked for in the ride that is open: every section that lies on it (about the same start and
+// end) takes the registered name — the section it was registered from included
+function libApplyToCurrent(entry){
+  let matches = [];
+  try{ matches = libMatch(S.records, entry); }catch(e){ matches = []; }
+  const hits = [];
+  matches.forEach(m=>{
+    let best = null, bi = 0;
+    S.intervals.forEach(iv=>{
+      const inter = Math.min(iv.end, m.end)-Math.max(iv.start, m.start);
+      const uni = Math.max(iv.end, m.end)-Math.min(iv.start, m.start);
+      if (inter>0 && uni>0 && inter/uni>bi){ bi = inter/uni; best = iv; }
+    });
+    if (best && bi>=0.5 && !hits.includes(best)) hits.push(best);
+  });
+  if (!hits.length) return 0;
+  pushIvHistory();
+  hits.forEach(iv=>{
+    iv.origin = 'auto';
+    if (entry.nameType==='b'){ iv.nameType = 'b'; iv.name = ''; iv.startName = entry.startName||''; iv.endName = entry.endName||''; }
+    else { iv.nameType = 'a'; iv.name = entry.name; iv.startName = ''; iv.endName = ''; }
+  });
+  saveState(); renderTimeline();
+  if (mapChartInitialized) renderMapFrame();
+  return hits.length;
 }
 function libExport(){
   if (!libEntries.length){ showHeaderMsg('登録されたお気に入り区間がありません', true); return; }
@@ -8416,7 +8445,7 @@ function plSetCourse(r){
 }
 $('#plGpx').addEventListener('change', async e=>{
   const f = e.target.files[0]; if (!f) return;
-  try{ plSetCourse(await eParse(f)); }catch(err){ showHeaderMsg('GPXを読み込めませんでした: '+err.message, true); }
+  try{ const txt = await f.text(); plSetCourse(await eParse(f)); PL.gpxText = txt; PL.gpxName = f.name; }catch(err){ showHeaderMsg('GPXを読み込めませんでした: '+err.message, true); }
 });
 function plAltAt(m){
   const C = PL.course; if (m<=0) return C.alt[0]; if (m>=C.total) return C.alt[C.alt.length-1];
@@ -8719,6 +8748,45 @@ $('#plSplit').addEventListener('click', ()=>{
   PL.sel = { type:'pt', i:PL.pts.findIndex(p=>p.km===km) };
   plPtsChanged();
 });
+// the analyser's own automatic split (climbs and the favourite sections found along the route); a GPX has no clock, so the course
+// is walked at a steady speed to give the rules their time axis — no rests or laps can be found in it
+function plAutoSplit(){
+  const C = PL.course; if (!C) return;
+  if (PL.pts.length>2 && !confirm('いまの地点を消して、自動で区間を分けます。よろしいですか?')) return;
+  // one record per second at 6 m/s (the rules expect a recording, not sparse track points)
+  const V = 6, recs = [];
+  for (let m=0, k=0; ; m+=V){
+    const mm = Math.min(m, C.total);
+    while (k<C.d.length-2 && C.d[k+1]<mm) k++;
+    const f = Math.max(0, Math.min(1, (mm-C.d[k])/Math.max(1e-9, C.d[k+1]-C.d[k])));
+    recs.push({ elapsed:mm/V, dist:mm, alt:C.alt[k]+(C.alt[k+1]-C.alt[k])*f, altSmooth:C.alt[k]+(C.alt[k+1]-C.alt[k])*f, lat:C.lat[k]+(C.lat[k+1]-C.lat[k])*f, lon:C.lon[k]+(C.lon[k+1]-C.lon[k])*f, speed:V, t:mm/V });
+    if (mm>=C.total) break;
+  }
+  let info;
+  try{ info = buildAutoIntervals(recs, [], false); }catch(e){ showHeaderMsg('自動分割に失敗しました: '+e.message, true); return; }
+  plPush();
+  const pts = [{ km:0, name:'出発', rest:null }];
+  info.ivs.forEach((iv, k)=>{
+    const km = iv.end*V/1000, last = k===info.ivs.length-1;
+    if (last) return;
+    let name = '';
+    if (iv.nameType==='b') name = iv.endName||'';
+    else if (iv.name==='ヒルクライム') name = 'ヒルクライム頂上';
+    else if (iv.name) name = iv.name+' 終点';
+    pts.push({ km:Math.round(km*10)/10, name, rest:null });
+  });
+  pts.push({ km:C.total/1000, name:'到着', rest:null });
+  // the climbs / favourites start somewhere too: name the start of a named section after its start
+  info.ivs.forEach((iv,k)=>{
+    if (k===0 || !pts[k]) return;
+    if (iv.nameType==='b' && iv.startName && !pts[k].name) pts[k].name = iv.startName;
+  });
+  PL.pts = pts.filter((p,i)=> i===0 || i===pts.length-1 || (p.km>0.1 && p.km<C.total/1000-0.1));
+  PL.sel = null;
+  plPtsChanged();
+  showHeaderMsg('自動で区間を分けました(ヒルクライム'+info.nClimbs+'か所・お気に入り区間'+info.nLib+'か所を検出)', false);
+}
+$('#plAuto').addEventListener('click', plAutoSplit);
 $('#plRestBtn').addEventListener('click', ()=>{
   if (!PL.sel || PL.sel.type!=='pt') return;
   const p = PL.pts[PL.sel.i]; plPush(); p.rest = p.rest!=null ? null : 10; plPtsChanged();
@@ -8898,7 +8966,7 @@ function plRenderOut(){
   });
   PL.text = lines.join('\n\n');
   $('#plOut').textContent = PL.text;
-  $('#plCopy').disabled = $('#plSave').disabled = false;
+  $('#plCopy').disabled = $('#plSave').disabled = $('#plZip').disabled = false;
   if (!($('#plAdjList').contains(document.activeElement) && document.activeElement.tagName==='INPUT')) plAdjRows(r);
 }
 $('#plDep').addEventListener('change', ()=>{ if (currentPageNum==='PL4') plRenderOut(); });
@@ -8919,6 +8987,31 @@ $('#plSolve').addEventListener('click', ()=>{
 $('#plCopy').addEventListener('click', async ()=>{
   try{ await navigator.clipboard.writeText(PL.text||''); showHeaderMsg('計画をコピーしました', false); }
   catch(e){ const r = document.createRange(); r.selectNodeContents($('#plOut')); const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r); showHeaderMsg('コピーできなかったため、テキストを選択しました', true); }
+});
+$('#plZip').addEventListener('click', async ()=>{
+  if (!PL.course || !window.JSZip){ showHeaderMsg('ZIPを作れませんでした', true); return; }
+  const r = PL.last || plCompute(), pts = PL.pts;
+  const ids = ['plFtp','plWeight','plBike','plCda','plCrr','plInt','plVi','plDep','plTarget'];
+  const settings = {}; ids.forEach(id=> settings[id] = $('#'+id).value);
+  const json = {
+    app:'Quaniter', type:'plan', version:1, savedAt:new Date().toISOString(),
+    course:{ name:PL.course.name, gpxFile:PL.gpxName||null, distanceKm:Math.round(PL.course.total/100)/10, elevationGainM:Math.round(PL.course.gain) },
+    settings,
+    powerCurve: PL.curveRides ? { source:'rides', watts:PL.curveRides } : { source:'ftp', ftp:plNum('plFtp',200) },
+    points: pts.map(p=>({ km:Math.round(p.km*1000)/1000, name:p.name||'', rest:p.rest!=null ? p.rest : null, speedOverrideKmh:p.speedOv||null, powerOverrideW:p.powerOv||null })),
+    plan: {
+      budgetKj:Math.round(r.budget/1000), vi:Math.round(r.vi*100)/100, movingSec:Math.round(r.moving), restSec:Math.round(r.rests),
+      points: pts.map((p,i)=>({ no:i+1, arrivalSec:Math.round(p.arr), departureSec:Math.round(p.dep), km:Math.round(p.km*10)/10, name:p.name||'', targetAvgPowerW: i>0 ? Math.round(r.secs[i-1].P) : null })),
+      sections: r.secs.map(s=>({ no:s.i, distanceKm:Math.round(s.len/100)/10, gradePercent:Math.round(s.grade*1000)/10, kind:s.kind, speedKmh:Math.round(s.v*36)/10, avgPowerW:Math.round(s.P), pedalPowerW:s.kind==='down' ? null : Math.round(s.pedal), timeSec:Math.round(s.t) }))
+    },
+    text: PL.text||''
+  };
+  const base = (PL.course.name||'プラン').replace(/[\/:*?"<>|]/g,'_');
+  const zip = new JSZip();
+  zip.file(PL.gpxName || (base+'.gpx'), PL.gpxText || '');
+  zip.file(base+'-プラン.json', JSON.stringify(json, null, 1));
+  const blob = await zip.generateAsync({ type:'blob' });
+  saveFile(base+'-プラン.zip', blob);
 });
 $('#plSave').addEventListener('click', ()=>{
   const nm = ((PL.course && PL.course.name) || 'プラン').replace(/[\\/:*?"<>|]/g,'_');
