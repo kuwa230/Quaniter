@@ -1085,7 +1085,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
 // (this session's own publish count so far) is reconstructed from the
 // conversation itself rather than mechanically verified — best-effort, not
 // guaranteed exact. Increment by exactly 1 on every future publish.
-const APP_VERSION = 220;
+const APP_VERSION = 221;
 
 /* ============ FIT PARSER ============ */
 const FIT_EPOCH = 631065600; // seconds between 1970-01-01 and 1989-12-31 (FIT epoch)
@@ -9066,12 +9066,13 @@ function plAdjRows(r){
 }
 const plHM = s=>{ s = Math.round(s/60)*60; const day = Math.floor(s/86400); const m = Math.floor((s%86400)/60); return (day>0 ? '翌' : '')+Math.floor(m/60)+':'+String(m%60).padStart(2,'0'); };
 // what a clip / the status shows: the section's own name, or its two end names when both are set; else nothing (the number only)
-function plSecShort(i){
+function plSecNames(i){
   const a = PL.pts[i], b = PL.pts[i+1];
-  if (a.secType==='a') return (a.secName||'').trim();
-  const s = (a.name||'').trim(), e = (b.name||'').trim();
-  return (s && e && i>0) ? s+'→'+e : (e && i===0 ? '→'+e : (s && e ? s+'→'+e : ''));
+  const st = (a.name||'').trim(), en = (b.name||'').trim();
+  return { st, en, both:!!(st && en), sec:(a.secName||'').trim() };
 }
+// the two end names count only when BOTH are entered, and then they win over the whole-section name
+function plSecShort(i){ const n = plSecNames(i); return n.both ? n.st+'→'+n.en : n.sec; }
 // the name of section i (0-based: from point i to point i+1)
 function plSecLabel(i){ return plSecShort(i) || '区間'+(i+1); }
 function plRenderOut(){
@@ -9097,7 +9098,8 @@ function plRenderOut(){
     if (!last && i>0 && p.rest>0) l += '\n（'+plHM(p.dep)+' 出発）';
     if (sec){
       const sp = (sec.v*3.6).toFixed(1)+' km/h,  '+Math.round(sec.P)+' W';
-      if (p.secType==='a' && (p.secName||'').trim()) l += '\n↓  '+p.secName.trim()+'\n    '+sp;
+      const nm = plSecNames(i);
+      if (!nm.both && nm.sec) l += '\n↓  '+nm.sec+'\n    '+sp;
       else l += '\n↓ '+sp;
     }
     lines.push(l);
@@ -9155,7 +9157,8 @@ $('#plZip').addEventListener('click', async ()=>{
   zip.file(PL.gpxName || (base+'.gpx'), PL.gpxText || '');
   zip.file(base+'-プラン.json', JSON.stringify(json, null, 1));
   const blob = await zip.generateAsync({ type:'blob' });
-  saveFile(base+'-プラン.zip', blob);
+  const gbase = (PL.gpxName ? PL.gpxName.replace(/\.gpx$/i,'') : base).replace(/[\\/:*?"<>|]/g,'_');   // named after the original GPX file
+  saveFile(gbase+'.zip', blob);
 });
 $('#plSave').addEventListener('click', ()=>{
   const nm = ((PL.course && PL.course.name) || 'プラン').replace(/[\\/:*?"<>|]/g,'_');
