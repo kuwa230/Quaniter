@@ -1085,7 +1085,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
 // (this session's own publish count so far) is reconstructed from the
 // conversation itself rather than mechanically verified — best-effort, not
 // guaranteed exact. Increment by exactly 1 on every future publish.
-const APP_VERSION = 221;
+const APP_VERSION = 222;
 
 /* ============ FIT PARSER ============ */
 const FIT_EPOCH = 631065600; // seconds between 1970-01-01 and 1989-12-31 (FIT epoch)
@@ -8574,8 +8574,8 @@ function plPowerFor(a, b, v){   // average power to hold v (m/s); descents coast
 /* ---- the plan ---- */
 // The ride gets an energy budget first (what the power curve says can be spent over the whole duration, times the intensity
 // factor); then the budget is spread over the sections so that the total time is shortest: more on climbs, less on the flat,
-// steep descents coast. Limits: no section above what the curve allows for its length, the early part held back, and the
-// variation of power (VI) kept under the chosen limit.
+// steep descents coast. Limits: no section above what the curve allows for its length, and the variation of power (VI)
+// kept under the chosen limit. (How the day is paced overall is the intensity factor's job: no extra hold-back at the start.)
 const PL_GC = -0.02;    // downhill steeper than this: no pedalling
 const PL_VMAX = 15;     // m/s (54 km/h)
 const plSegSpeed = (p, g)=> g<PL_GC ? Math.min(PL_VMAX, plSpeed(0, g)) : Math.min(PL_VMAX, plSpeed(p, g));
@@ -8610,9 +8610,6 @@ function plAlloc(secs, budget, vi, f){
   let lo = pLo, hi = pHi;
   for (let it=0;it<40;it++){ const mid = (lo+hi)/2; if (Etot(pmax.map((m,i)=>Math.min(mid,m))) > budget) hi = mid; else lo = mid; }
   const pflat = lo;
-  // the early part is held back
-  const total = secs.length ? secs[secs.length-1].b : 1;
-  secs.forEach((s,i)=>{ if ((s.a+s.b)/2 < total*0.15) pmax[i] = Math.min(pmax[i], Math.max(pLo, 1.05*pflat)); });
   // the cheapest way to save time: minimise t + lambda*E in every section
   const popt = lam=> secs.map((s,i)=>{ if (!(s.len>0)) return pLo; let best = Infinity, bp = pLo; for (let k=0;k<=N;k++){ const g = G[i][k]; if (g.p>pmax[i]+1e-9) break; const c = g.t+lam*g.E; if (c<best){ best = c; bp = g.p; } } return bp; });
   let l0 = 1e-7, l1 = 1;
