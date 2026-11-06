@@ -1085,7 +1085,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
 // (this session's own publish count so far) is reconstructed from the
 // conversation itself rather than mechanically verified — best-effort, not
 // guaranteed exact. Increment by exactly 1 on every future publish.
-const APP_VERSION = 222;
+const APP_VERSION = 223;
 
 /* ============ FIT PARSER ============ */
 const FIT_EPOCH = 631065600; // seconds between 1970-01-01 and 1989-12-31 (FIT epoch)
@@ -8480,7 +8480,7 @@ function plSetCourse(r){
   let gain = 0; for (let i=1;i<alt.length;i++) if (alt[i]>alt[i-1]) gain += alt[i]-alt[i-1];
   PL.course = { name:r.name, d, alt, lat:pts.map(p=>p[0]), lon:pts.map(p=>p[1]), total:d[d.length-1], gain };
   PL.pts = [ { km:0, name:'出発', rest:null, secType:'b', secName:'' }, { km:d[d.length-1]/1000, name:'到着', rest:null, secType:'b', secName:'' } ];
-  PL.hist = []; PL.sel = null; PL.seek = 0; PL.view = { x0:0, x1:d[d.length-1] }; PL.autoDone = false;
+  PL.hist = []; PL.sel = null; PL.multi = null; PL.seek = 0; PL.view = { x0:0, x1:d[d.length-1] }; PL.autoDone = false;
   if (PL.map){ try{ PL.map.ro && PL.map.ro.disconnect(); PL.map.map.remove(); }catch(e){} PL.map = null; $('#plMapWrap').innerHTML = ''; }
   $('#plCourse').textContent = r.name+'('+(d[d.length-1]/1000).toFixed(1)+' km・獲得標高 '+Math.round(gain)+' m)';
   $('#plTo2').disabled = false;
@@ -8682,7 +8682,7 @@ function plRefresh(){
 /* ---- page 2: map, elevation chart, section strip ---- */
 const plSnap = ()=> JSON.stringify(PL.pts);
 function plPush(){ PL.hist.push(plSnap()); if (PL.hist.length>40) PL.hist.shift(); $('#plUndo').disabled = false; }
-$('#plUndo').addEventListener('click', ()=>{ if (!PL.hist.length) return; PL.pts = JSON.parse(PL.hist.pop()); PL.sel = null; $('#plUndo').disabled = !PL.hist.length; plPtsChanged(); });
+$('#plUndo').addEventListener('click', ()=>{ if (!PL.hist.length) return; PL.pts = JSON.parse(PL.hist.pop()); PL.sel = null; PL.multi = null; $('#plUndo').disabled = !PL.hist.length; plPtsChanged(); });
 function plPtsChanged(){ PL.pts.sort((a,b)=>a.km-b.km); try{ PL.last = plCompute(); }catch(e){} plDraw(); plMapFrame(); plStatus(); plSelButtons(); }
 function plEnter2(){
   if (!PL.course) return;
@@ -8738,7 +8738,7 @@ function plDraw(){
   if (cv.width!==Math.round(W*dpr) || cv.height!==Math.round(H*dpr)){ cv.width = Math.round(W*dpr); cv.height = Math.round(H*dpr); }
   const g = cv.getContext('2d'); g.setTransform(dpr,0,0,dpr,0,0); g.clearRect(0,0,W,H);
   const css = getComputedStyle(document.documentElement), accent = css.getPropertyValue('--accent').trim() || '#17b8a4', border = css.getPropertyValue('--border').trim() || '#444', faint = css.getPropertyValue('--text-faint').trim() || '#888', text = css.getPropertyValue('--text').trim() || '#fff';
-  const V = PL.view, pB = H-PL_STRIP-18, pT = PL_MT, span = V.x1-V.x0;
+  const V = PL.view, pB = H-18, pT = PL_MT, span = V.x1-V.x0;
   const X = m=> PL_ML+(m-V.x0)/span*(W-PL_ML-PL_MR), M = x=> V.x0+(x-PL_ML)/(W-PL_ML-PL_MR)*span;
   let lo = Infinity, hi = -Infinity; C.alt.forEach(v=>{ if (v<lo) lo = v; if (v>hi) hi = v; });
   if (hi-lo<30){ hi = lo+30; }
@@ -8762,21 +8762,36 @@ function plDraw(){
   for (let i=i0;i<=i1;i+=stp) g.lineTo(X(C.d[i]), Y(C.alt[i]));
   g.lineTo(X(C.d[i1]), Y(C.alt[i1])); g.lineTo(X(C.d[i1]), pB); g.closePath(); g.fill();
   g.beginPath(); for (let i=i0;i<=i1;i+=stp){ i===i0 ? g.moveTo(X(C.d[i]), Y(C.alt[i])) : g.lineTo(X(C.d[i]), Y(C.alt[i])); } g.stroke();
-  // sections strip
-  const sy = H-PL_STRIP-2;
+  // the sections, laid over the profile like the analyser's clips (translucent); the picked ones are outlined, the picked one's edges have handles
+  const bandH = 40, sy = pB-bandH-4, handles = [];
   PL.pts.forEach((p,i)=>{
     if (i===0) return;
-    const a = X(PL.pts[i-1].km*1000), b = X(p.km*1000), sel = PL.sel && PL.sel.type==='sec' && PL.sel.i===i;
-    g.fillStyle = sel ? accent : (i%2 ? 'rgba(23,184,164,.38)' : 'rgba(23,184,164,.2)'); g.fillRect(a, sy, Math.max(1,b-a-1), PL_STRIP);
-    if (sel){ g.strokeStyle = '#fff'; g.lineWidth = 2; g.strokeRect(a+1, sy+1, Math.max(1,b-a-3), PL_STRIP-2); g.lineWidth = 1; }
-    if (b-a>46){ g.fillStyle = sel ? '#08211d' : text; g.textAlign = 'center'; g.textBaseline = 'middle'; g.font = '11px sans-serif';
+    const a = X(PL.pts[i-1].km*1000), b = X(p.km*1000);
+    const sel = (PL.sel && PL.sel.type==='sec' && PL.sel.i===i) || (PL.multi && PL.multi.has(i));
+    g.fillStyle = sel ? 'rgba(23,184,164,.55)' : (i%2 ? 'rgba(108,140,255,.32)' : 'rgba(23,184,164,.22)');
+    g.fillRect(a+1, sy, Math.max(1,b-a-2), bandH);
+    g.strokeStyle = sel ? '#fff' : (i%2 ? '#6c8cff' : accent); g.lineWidth = sel ? 2 : 1.2; g.strokeRect(a+1.5, sy+.5, Math.max(1,b-a-3), bandH-1); g.lineWidth = 1;
+    const left = Math.max(a,PL_ML), right = Math.min(b,W-PL_MR);
+    if (right-left>40){
+      g.fillStyle = text; g.textAlign = 'center'; g.textBaseline = 'middle'; g.font = '11px sans-serif';
       let lab = i+' '+(plSecShort(i-1) || ((p.km-PL.pts[i-1].km).toFixed(1)+'km'));
-      const room = Math.min(b,W-PL_MR)-Math.max(a,PL_ML)-6;
+      const room = right-left-6;
       while (lab.length>2 && g.measureText(lab).width>room) lab = lab.slice(0,-2)+'…';
-      g.fillText(lab, (Math.max(a,PL_ML)+Math.min(b,W-PL_MR))/2, sy+PL_STRIP/2-7);
+      g.fillText(lab, (left+right)/2, sy+bandH/2-7);
       const rise = plAltAt(p.km*1000)-plAltAt(PL.pts[i-1].km*1000), len = (p.km-PL.pts[i-1].km)*1000;
-      g.font = '10px sans-serif'; g.fillText((len>0 ? (rise/len*100).toFixed(1) : '0')+'%', (Math.max(a,PL_ML)+Math.min(b,W-PL_MR))/2, sy+PL_STRIP/2+8); }
+      g.font = '10px sans-serif'; g.fillText((len>0 ? (rise/len*100).toFixed(1) : '0')+'%', (left+right)/2, sy+bandH/2+8);
+    }
   });
+  if (PL.sel && PL.sel.type==='sec' && !PL.multi){
+    const i = PL.sel.i;
+    [i-1, i].forEach(k=>{
+      const movable = k>0 && k<PL.pts.length-1, x = X(PL.pts[k].km*1000);
+      if (x<PL_ML-12 || x>W-PL_MR+12) return;
+      g.fillStyle = movable ? '#fff' : 'rgba(255,255,255,.35)'; g.beginPath(); g.roundRect ? g.roundRect(x-13, sy+4, 26, bandH-8, 6) : g.rect(x-13, sy+4, 26, bandH-8); g.fill();
+      g.fillStyle = '#08211d'; g.font = '700 11px sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText('◀▶', x, sy+bandH/2);
+      if (movable) handles.push({ k, x });
+    });
+  }
   // points
   PL.pts.forEach((p,i)=>{
     const x = X(p.km*1000), sel = PL.sel && PL.sel.type==='pt' && PL.sel.i===i, rest = p.rest!=null;
@@ -8784,13 +8799,14 @@ function plDraw(){
     g.fillStyle = rest ? '#e08a1e' : accent; g.beginPath(); g.arc(x, 10, sel ? 9 : 7.5, 0, Math.PI*2); g.fill();
     if (sel){ g.strokeStyle = '#fff'; g.lineWidth = 2; g.stroke(); g.lineWidth = 1; }
     g.fillStyle = '#08211d'; g.font = '700 10px sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(String(i+1), x, 10.5);
+    if (rest && i>0 && i<PL.pts.length-1){ g.font = '13px sans-serif'; g.fillText('☕', x+16, 11); }   // a rest place carries its own pin
   });
   // seek
   const sx = X(PL.seek);
   g.strokeStyle = '#fff'; g.setLineDash([4,3]); g.lineWidth = 1.5; g.beginPath(); g.moveTo(sx, 20); g.lineTo(sx, pB); g.stroke(); g.setLineDash([]);
   g.fillStyle = '#fff'; g.beginPath(); g.arc(sx, Y(plAltAt(PL.seek)), 3.5, 0, Math.PI*2); g.fill();
   g.restore();
-  cv._geom = { W, H, pB, pT, X, M, sy };
+  cv._geom = { W, H, pB, pT, X, M, sy, bandH, handles };
 }
 function plStatus(){
   const C = PL.course; if (!C) return;
@@ -8805,15 +8821,44 @@ function plStatus(){
   $('#pl2Pt').textContent = sec ? '区間'+sec.i+(plSecShort(sec.i-1) ? ' '+plSecShort(sec.i-1) : '') : '--';
 }
 function plSelButtons(){
+  const multi = !!PL.multi;
+  const sp = $('#plSplit');
+  sp.textContent = multi ? '🔗' : '✄';
+  sp.title = multi ? '選んだ区間を統合' : 'シーク位置で区間を分割';
+  sp.classList.toggle('tbDim', multi && PL.multi.size<2);
   const pt = PL.sel && PL.sel.type==='pt' ? PL.pts[PL.sel.i] : null, fixed = PL.sel && (PL.sel.i===0 || PL.sel.i===PL.pts.length-1);
   const rb = $('#plRestBtn');
-  rb.disabled = !pt || fixed;
-  rb.title = pt && pt.rest!=null ? '休憩場所を解除' : '休憩場所にする';
-  rb.style.opacity = pt && pt.rest!=null ? '1' : '';
+  rb.disabled = multi;
+  rb.title = pt && pt.rest!=null ? '休憩場所を解除' : 'シーク位置を休憩場所にする(区間を分割)';
   rb.style.outline = pt && pt.rest!=null ? '3px solid #fff' : '';
   $('#plDelPt').disabled = !pt || fixed;
 }
+// ☕: the point under the seek bar (or the picked point) becomes / stops being a rest place; where no point stands, one is set at the seek position — the section is split there
+function plRestAction(){
+  if (PL.multi) return;
+  const C = PL.course, km = Math.round(PL.seek/100)/10, last = PL.pts.length-1;
+  let idx = PL.sel && PL.sel.type==='pt' ? PL.sel.i : PL.pts.findIndex(q=> Math.abs(q.km-PL.seek/1000)<0.15);
+  if (idx>=0){
+    if (idx===0 || idx===last){ showHeaderMsg('出発・到着は休憩場所にできません', true); return; }
+    const p = PL.pts[idx]; plPush(); p.rest = p.rest!=null ? null : 10; PL.sel = { type:'pt', i:idx }; plPtsChanged(); return;
+  }
+  if (km<=0.1 || km>=C.total/1000-0.1){ showHeaderMsg('出発・到着の近くには置けません', true); return; }
+  plPush(); PL.pts.push({ km, name:'', rest:10, secType:'b', secName:'' }); PL.pts.sort((a,b)=>a.km-b.km);
+  PL.sel = { type:'pt', i:PL.pts.findIndex(q=>q.km===km) };
+  plPtsChanged();
+  showHeaderMsg('シーク位置に休憩場所を置き、区間を分割しました(休憩時間は3ページ目)', false);
+}
+function plMerge(){
+  if (!PL.multi || PL.multi.size<2){ showHeaderMsg('統合する区間を2つ以上選んでください', true); return; }
+  const ids = [...PL.multi].sort((a,b)=>a-b), i0 = ids[0], i1 = ids[ids.length-1];
+  plPush();
+  PL.pts.splice(i0, i1-i0);   // the points strictly inside the chosen span go
+  PL.multi = null; PL.sel = { type:'sec', i:i0 };
+  plPtsChanged();
+}
+function plEnterMulti(i){ PL.multi = new Set([i]); PL.sel = null; plDraw(); plStatus(); plSelButtons(); }
 $('#plSplit').addEventListener('click', ()=>{
+  if (PL.multi){ plMerge(); return; }
   const km = Math.round(PL.seek/100)/10;
   if (km<=0.1 || km>=PL.course.total/1000-0.1){ showHeaderMsg('出発・到着の近くでは分割できません', true); return; }
   if (PL.pts.some(p=>Math.abs(p.km-km)<0.2)){ showHeaderMsg('近くにすでに地点があります', true); return; }
@@ -8930,10 +8975,7 @@ $('#plGoogle').addEventListener('click', ()=>{
   const k = plIdxAt(PL.seek);
   window.open('https://www.google.com/maps/search/?api=1&query='+C.lat[k].toFixed(6)+','+C.lon[k].toFixed(6), '_blank');
 });
-$('#plRestBtn').addEventListener('click', ()=>{
-  if (!PL.sel || PL.sel.type!=='pt') return;
-  const p = PL.pts[PL.sel.i]; plPush(); p.rest = p.rest!=null ? null : 10; plPtsChanged();
-});
+$('#plRestBtn').addEventListener('click', plRestAction);
 $('#plDelPt').addEventListener('click', ()=>{
   if (!PL.sel || PL.sel.type!=='pt') return;
   const i = PL.sel.i; if (i===0 || i===PL.pts.length-1) return;
@@ -8982,17 +9024,25 @@ function plList(){}   // (the point list moved into the ⋮ menu and the name di
     const c = gm.M(px), V = PL.view;
     PL.view = { x0:c-(c-V.x0)/k, x1:c+(V.x1-c)/k }; clamp();
   };
+  const inBand = p=>{ const gm = cv._geom; return gm && p.y>=gm.sy && p.y<=gm.sy+gm.bandH; };
+  const secAt = x=>{ const gm = cv._geom, m = gm.M(x); return PL.pts.findIndex((q,k)=> k>0 && m>=PL.pts[k-1].km*1000 && m<=q.km*1000); };
   function tap(p){
     const gm = cv._geom; if (!gm) return;
-    if (p.y>=gm.sy){   // the section strip
-      const m = gm.M(p.x); const i = PL.pts.findIndex((q,k)=> k>0 && m>=PL.pts[k-1].km*1000 && m<=q.km*1000);
-      if (i>0){ const again = PL.sel && PL.sel.type==='sec' && PL.sel.i===i; PL.sel = { type:'sec', i }; if (again){ plDraw(); plStatus(); plSelButtons(); plEditSection(i-1); return; } } else PL.sel = null;
+    if (inBand(p)){   // the section bars
+      const i = secAt(p.x);
+      if (PL.multi){   // picking several: a tap adds / removes one; a tap off the bars ends the picking
+        if (i>0){ if (PL.multi.has(i)) PL.multi.delete(i); else PL.multi.add(i); } else PL.multi = null;
+      } else if (i>0){
+        const again = PL.sel && PL.sel.type==='sec' && PL.sel.i===i; PL.sel = { type:'sec', i };
+        if (again){ plDraw(); plStatus(); plSelButtons(); plEditSection(i-1); return; }
+      } else PL.sel = null;
+    } else if (PL.multi){ PL.multi = null;
     } else if (p.y<=22){   // the numbered badges
       let best = -1, bd = 16;
       PL.pts.forEach((q,i)=>{ const d = Math.abs(gm.X(q.km*1000)-p.x); if (d<bd){ bd = d; best = i; } });
       if (best>=0){ PL.sel = { type:'pt', i:best }; PL.seek = PL.pts[best].km*1000; } else PL.sel = null;
     } else { PL.sel = null; seekAt(p.x); }
-    plDraw(); plStatus(); plSelButtons(); plList(); plMapFrame(true);
+    plDraw(); plStatus(); plSelButtons(); plMapFrame(true);
   }
   cv.addEventListener('pointerdown', e=>{
     stopMom(); lastCX = e.clientX;
@@ -9000,15 +9050,30 @@ function plList(){}   // (the point list moved into the ⋮ menu and the name di
     ptrs.set(e.pointerId, local(e));
     if (g && g.lp) clearTimeout(g.lp);
     if (ptrs.size===1){
-      g = { type:'pan', start:local(e), last:local(e), t:performance.now(), moved:false };
+      const p0 = local(e), gm = cv._geom;
+      // an edge handle of the picked section: dragging it moves the boundary shared with the neighbouring section
+      const hd = gm && !PL.multi && inBand(p0) ? gm.handles.find(h=> Math.abs(h.x-p0.x)<=18) : null;
+      if (hd){ plPush(); g = { type:'bound', k:hd.k, moved:false }; return; }
+      g = { type:'pan', start:p0, last:p0, t:performance.now(), moved:false, band:inBand(p0) };
       tracker.reset(e.clientX, e.timeStamp || performance.now());
-      g.lp = setTimeout(()=>{ if (g && g.type==='pan' && !g.moved && ptrs.size===1){ g.type = 'seek'; if (navigator.vibrate) navigator.vibrate(8); seekAt(g.start.x); edge.start(); } }, 380);
+      if (g.band){   // held on a section bar: picking several sections (as in the analyser)
+        g.lp = setTimeout(()=>{ if (g && g.type==='pan' && !g.moved && ptrs.size===1){ const i = secAt(g.start.x); if (i>0){ g.type = 'multi'; if (navigator.vibrate) navigator.vibrate(8); plEnterMulti(i); } } }, 450);
+      } else if (!PL.multi){
+        g.lp = setTimeout(()=>{ if (g && g.type==='pan' && !g.moved && ptrs.size===1){ g.type = 'seek'; if (navigator.vibrate) navigator.vibrate(8); seekAt(g.start.x); edge.start(); } }, 380);
+      }
     } else if (ptrs.size===2){ const [a,b] = [...ptrs.values()]; g = { type:'pinch', d:Math.max(1,Math.abs(a.x-b.x)), mid:(a.x+b.x)/2, view:{...PL.view}, moved:true }; }
   });
   cv.addEventListener('pointermove', e=>{
     if (!ptrs.has(e.pointerId) || !g) return;
     ptrs.set(e.pointerId, local(e)); lastCX = e.clientX;
     if (g.type==='seek'){ seekAt(local(e).x); return; }
+    if (g.type==='multi') return;
+    if (g.type==='bound'){
+      const gm = cv._geom, k = g.k, pts = PL.pts;
+      const km = Math.round(gm.M(local(e).x)/100)/10;
+      pts[k].km = Math.max(pts[k-1].km+0.1, Math.min(pts[k+1].km-0.1, km)); g.moved = true;
+      PL.seek = pts[k].km*1000; plDraw(); plStatus(); plMapFrame(false); return;
+    }
     if (g.type==='pan' && ptrs.size===1){
       const p = local(e); tracker.add(e, cv.getBoundingClientRect().left);
       if (Math.abs(p.x-g.start.x)>5 || Math.abs(p.y-g.start.y)>5){ g.moved = true; if (g.lp){ clearTimeout(g.lp); g.lp = null; } }
@@ -9025,6 +9090,7 @@ function plList(){}   // (the point list moved into the ⋮ menu and the name di
     ptrs.delete(e.pointerId);
     if (was && was.lp){ clearTimeout(was.lp); was.lp = null; }
     if (was && was.type==='seek'){ edge.stop(); plStatus(); }
+    if (was && was.type==='bound'){ g = null; plPtsChanged(); return; }
     if (ptrs.size===0){
       if (was && was.type==='pan'){
         if (!was.moved && performance.now()-was.t<500 && e.type==='pointerup') tap(p);
@@ -9043,6 +9109,7 @@ function plEnter3(){
   if (!PL.course) return;
   plRestRows(); plRenderOut();
 }
+const plKcal = J=> J/1000/0.24/4.184;   // work (J) -> kcal, as everywhere in the app
 const plKind = k=> k==='down' ? '下り' : k==='climb' ? '登り' : '平坦';
 function plRestRows(){
   const rest = PL.pts.map((p,i)=>({p,i})).filter(o=> o.p.rest!=null && o.i>0 && o.i<PL.pts.length-1);
@@ -9068,8 +9135,9 @@ function plSecNames(i){
   const st = (a.name||'').trim(), en = (b.name||'').trim();
   return { st, en, both:!!(st && en), sec:(a.secName||'').trim() };
 }
-// the two end names count only when BOTH are entered, and then they win over the whole-section name
-function plSecShort(i){ const n = plSecNames(i); return n.both ? n.st+'→'+n.en : n.sec; }
+// the mode switched to on page 2 decides: 'start and end names' counts only when BOTH are entered (else the whole-section name is used)
+function plUsesB(i){ return PL.pts[i].secType!=='a' && plSecNames(i).both; }
+function plSecShort(i){ const n = plSecNames(i); return plUsesB(i) ? n.st+'→'+n.en : n.sec; }
 // the name of section i (0-based: from point i to point i+1)
 function plSecLabel(i){ return plSecShort(i) || '区間'+(i+1); }
 function plRenderOut(){
@@ -9079,9 +9147,9 @@ function plRenderOut(){
   const f = plNum('plInt',90);
   $('#plIntVal').textContent = '×'+(f/100).toFixed(2)+'('+Math.round(f)+'%)';
   const tt = $('#plTarget'); if (document.activeElement!==tt){ const m = Math.round(r.total/60); tt.value = Math.floor(m/60)+':'+String(m%60).padStart(2,'0'); }
-  $('#plKNote').innerHTML = '出発〜到着 '+fmtHMS(tot)+'(走行 '+fmtHMS(r.moving)+' + 休憩 '+fmtHMS(r.rests)+')<br>エネルギー予算 '+Math.round(r.budget/1000)+' kJ(≒ '+Math.round(r.budget/1000)+' kcal)・全体の平均 '+Math.round(r.budget/Math.max(1,r.Ttot))+' W・ばらつき(VI) '+r.vi.toFixed(2)+'(上限 '+plNum('plVi',1.15).toFixed(2)+')';
-  $('#plSecTable').innerHTML = '<table class="plTbl"><thead><tr><th>#</th><th>区間</th><th>距離</th><th>斜度</th><th>目標速度</th><th>目標平均パワー</th><th>所要</th></tr></thead><tbody>'+
-    r.secs.map(s=> '<tr><td>'+s.i+'</td><td style="text-align:left">'+escapeHtml(plSecLabel(s.i-1))+'</td><td>'+(s.len/1000).toFixed(1)+' km</td><td>'+(s.grade*100).toFixed(1)+' %</td><td>'+(s.v*3.6).toFixed(1)+' km/h</td><td>'+Math.round(s.P)+' W</td><td>'+fmtHMS(s.t)+'</td></tr>').join('')+'</tbody></table>';
+  $('#plKNote').innerHTML = '出発〜到着 '+fmtHMS(tot)+'(走行 '+fmtHMS(r.moving)+' + 休憩 '+fmtHMS(r.rests)+')<br>消費エネルギー(計画) <b>'+Math.round(plKcal(r.secs.reduce((a,x)=>a+x.E,0)))+' kcal</b>・エネルギー予算 '+Math.round(r.budget/1000)+' kJ(≒ '+Math.round(plKcal(r.budget))+' kcal)・全体の平均 '+Math.round(r.budget/Math.max(1,r.Ttot))+' W・ばらつき(VI) '+r.vi.toFixed(2)+'(上限 '+plNum('plVi',1.15).toFixed(2)+')';
+  $('#plSecTable').innerHTML = '<table class="plTbl"><thead><tr><th>#</th><th>区間</th><th>距離</th><th>斜度</th><th>目標速度</th><th>目標平均パワー</th><th>所要</th><th>消費</th></tr></thead><tbody>'+
+    r.secs.map(s=> '<tr><td>'+s.i+'</td><td style="text-align:left">'+escapeHtml(plSecLabel(s.i-1))+'</td><td>'+(s.len/1000).toFixed(1)+' km</td><td>'+(s.grade*100).toFixed(1)+' %</td><td>'+(s.v*3.6).toFixed(1)+' km/h</td><td>'+Math.round(s.P)+' W</td><td>'+fmtHMS(s.t)+'</td><td>'+Math.round(plKcal(s.E))+' kcal</td></tr>').join('')+'</tbody></table>';
   // the text
   const lines = [];
   pts.forEach((p,i)=>{
@@ -9096,7 +9164,7 @@ function plRenderOut(){
     if (sec){
       const sp = (sec.v*3.6).toFixed(1)+' km/h,  '+Math.round(sec.P)+' W';
       const nm = plSecNames(i);
-      if (!nm.both && nm.sec) l += '\n↓  '+nm.sec+'\n    '+sp;
+      if (!plUsesB(i) && nm.sec) l += '\n↓  '+nm.sec+'\n    '+sp;
       else l += '\n↓ '+sp;
     }
     lines.push(l);
