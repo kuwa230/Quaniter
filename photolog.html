@@ -533,12 +533,17 @@ function exifBytes(o){
   const E = (tag,type,count,bytes)=>({ tag, type, count, bytes:Uint8Array.from(bytes) });
   const A = (tag,s)=>{ const b = asc(s); return E(tag, 2, b.length, b); };
   const dt = o.dt;
-  const ifd0 = [ A(0x0131, 'Quaniter Photolog'), A(0x0132, dt) ];
-  const exif = [ A(0x9003, dt), A(0x9004, dt), A(0x9010, o.off), A(0x9011, o.off), A(0x9012, o.off) ];
+  const SH = v=> E(0, 3, 1, [(v>>8)&255, v&255]), LG = v=> E(0, 4, 1, be32(v));
+  const T = (e, tag)=>{ e.tag = tag; return e; };
+  // the tags an iPhone / camera file carries (some readers, Apple's included, are pickier than others about a bare minimum)
+  const ifd0 = [ A(0x0131, 'Quaniter Photolog'), A(0x0132, dt), T(SH(1), 0x0112), E(0x011A, 5, 1, rat(72,1)), E(0x011B, 5, 1, rat(72,1)), T(SH(2), 0x0128) ];
+  const exif = [ E(0x9000, 7, 4, [0x30,0x32,0x33,0x31]), A(0x9003, dt), A(0x9004, dt), E(0x9101, 7, 4, [1,2,3,0]), A(0x9010, o.off), A(0x9011, o.off), A(0x9012, o.off), E(0xA000, 7, 4, [0x30,0x31,0x30,0x30]), T(SH(1), 0xA001) ];
+  if (o.w && o.h) exif.push(T(LG(o.w), 0xA002), T(LG(o.h), 0xA003));
   const gps = [];
   if (o.lat!=null){
     gps.push(E(0x0000, 1, 4, [2,3,0,0]), A(0x0001, o.lat>=0 ? 'N' : 'S'), E(0x0002, 5, 3, dms(o.lat)), A(0x0003, o.lon>=0 ? 'E' : 'W'), E(0x0004, 5, 3, dms(o.lon)));
     if (o.alt!=null){ gps.push(E(0x0005, 1, 1, [o.alt<0 ? 1 : 0]), E(0x0006, 5, 1, rat(Math.round(Math.abs(o.alt)*100), 100))); }
+    gps.push(A(0x0012, 'WGS-84'));
     gps.push(E(0x0007, 5, 3, rat(o.ut[0],1).concat(rat(o.ut[1],1), rat(o.ut[2],1))), A(0x001D, o.ud));
   }
   const sizeOf = ents=> 2+12*ents.length+4+ents.reduce((a,e)=> a+(e.bytes.length>4 ? e.bytes.length+(e.bytes.length&1) : 0), 0);
@@ -573,9 +578,19 @@ function exifBytes(o){
 }
 async function jpegWithExif(blob, info){
   const buf = new Uint8Array(await blob.arrayBuffer());
-  const app1 = exifBytes(info);
-  const out = new Uint8Array(buf.length+app1.length);
-  out.set(buf.subarray(0,2), 0); out.set(app1, 2); out.set(buf.subarray(2), 2+app1.length);
+  // read the picture size, and drop a JFIF / old EXIF segment sitting right after the start: the Exif segment must be the first one (as in camera files)
+  let pos = 2, w = 0, h = 0;
+  while (pos+4<buf.length && buf[pos]===0xFF){
+    const mk = buf[pos+1], len = (buf[pos+2]<<8)|buf[pos+3];
+    if (mk>=0xC0 && mk<=0xC3){ h = (buf[pos+5]<<8)|buf[pos+6]; w = (buf[pos+7]<<8)|buf[pos+8]; }
+    if (mk===0xDA) break;
+    pos += 2+len;
+  }
+  let start = 2;
+  while (start+4<buf.length && buf[start]===0xFF && (buf[start+1]===0xE0 || buf[start+1]===0xE1)) start += 2+((buf[start+2]<<8)|buf[start+3]);
+  const app1 = exifBytes(Object.assign({}, info, { w, h }));
+  const out = new Uint8Array(2+app1.length+(buf.length-start));
+  out.set(buf.subarray(0,2), 0); out.set(app1, 2); out.set(buf.subarray(start), 2+app1.length);
   return new Blob([out], { type:'image/jpeg' });
 }
 function exifInfo(unix, pt){
