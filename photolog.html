@@ -673,7 +673,8 @@ $('#run').addEventListener('click', async ()=>{
       if (useDir){ const fh = await P.dir.getFileHandle(name, { create:true }); const w = await fh.createWritable(); await w.write(r.blob); await w.close(); }
       else {
         if (!zip) zip = new JSZip();
-        zip.file(name, r.blob, { compression:'STORE' }); partBytes += r.blob.size; partCount++;
+        // the zip entry carries the shot time as its file date (JSZip writes the UTC fields, so shift by the chosen offset: the wall time comes out)
+        zip.file(name, r.blob, { compression:'STORE', date:new Date((r.t+P.tz*60)*1000) }); partBytes += r.blob.size; partCount++;
         if (partCount>=maxN || partBytes>=maxB) await flush();
       }
       total++;
@@ -683,6 +684,7 @@ $('#run').addEventListener('click', async ()=>{
     if (g) g.close();
     await flush();
     log((P.stop ? '中止しました。' : '完了しました。')+total+'枚を保存'+(useDir ? '(フォルダ)' : '')+'。'+(noGps ? '位置情報が付かなかった画像: '+noGps+'枚' : ''));
+    log(useDir ? '※フォルダに直接保存したファイルの「作成日・更新日」は、ブラウザの制約で保存した日時になります(撮影日時はJPEGの中のEXIFに入っています)。ファイルの日付も撮影時刻にしたいときは、zipで保存してください。' : '※zipの中の各ファイルの日付は撮影時刻です。展開の方法によっては、展開した日時になることがあります(撮影日時はJPEGの中のEXIFにも入っています)。');
   }catch(err){ log('エラー: '+err.message); try{ await flush(); }catch(e){} }
   P.busy = false; $('#run').disabled = $('#one').disabled = false; $('#stop').disabled = true;
 });
@@ -690,7 +692,7 @@ $('#stop').addEventListener('click', ()=>{ P.stop = true; });
 $('#one').addEventListener('click', async ()=>{
   const ci = clipAt(P.T), v = P.videos[ci]; if (!v || P.busy){ log('シークバーの位置に重なる動画がありません。'); return; }
   P.busy = true; $('#one').disabled = $('#run').disabled = true;
-  try{ const g = await grabber(v); const r = await makeOne(g, v, Math.max(0, P.T-effStart(v))); g.close(); download(r.blob, r.base+'.jpg'); log('1枚を保存しました: '+r.base+'.jpg'+(r.gps ? '' : '(位置情報なし)')); }
+  try{ const g = await grabber(v); const r = await makeOne(g, v, Math.max(0, P.T-effStart(v))); g.close(); download(r.blob, r.base+'.jpg'); log('1枚を保存しました: '+r.base+'.jpg'+(r.gps ? '' : '(位置情報なし)')+'。ファイルの作成日は保存した日時になります(撮影日時はEXIFに入っています)。'); }
   catch(err){ log('エラー: '+err.message); }
   P.busy = false; $('#one').disabled = $('#run').disabled = false;
 });
