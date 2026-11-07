@@ -617,7 +617,8 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
 
 <div id="pagePL2" class="page hidden">
   <div id="pl2Layout">
-    <div id="pl2Map" class="p2Block"><div id="plMapWrap"></div></div>
+    <div id="pl2Map" class="p2Block"><div id="plMapWrap"></div>
+      <div style="position:absolute;bottom:8px;right:6px;display:flex;flex-direction:column;gap:5px;z-index:2;"><button id="plGoogle" class="small mapCtrlBtn" type="button" title="シーク位置をGoogleマップで検索">📍</button></div></div>
     <div id="pl2Status" class="p2Block">
       <div id="pl2StatusRow">
         <div><span class="k">距離</span><span class="v" id="pl2Dist">--</span><span class="vSub" id="pl2Pt">--</span></div>
@@ -646,7 +647,10 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
     <button id="plUndo" type="button" disabled>↶ 元に戻す</button>
     <button id="plDelPt" type="button" disabled>🗑 選んだ地点を削除(区間を結合)</button>
     <button id="plAuto" type="button">⚡ 自動で区間を分け直す</button>
-    <button id="plGoogle" type="button">📍 シーク位置をGoogleマップで検索</button>
+    <button id="plLibAdd" type="button">⭐ お気に入り区間に登録する(選んだ区間)</button>
+    <button id="plLibList" type="button">⭐ お気に入り区間の一覧</button>
+    <button id="plLibExport" type="button">⭐ お気に入り区間を書き出す</button>
+    <button id="plLibImport" type="button">⭐ お気に入り区間を読み込む</button>
   </div>
 </div>
 
@@ -775,6 +779,8 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
       <div style="flex:1;"></div>
       <button id="undoBtn" class="small ghost icon-btn" type="button" title="取り消し" disabled>↶</button>
       <button id="redoBtn" class="small ghost icon-btn" type="button" title="やり直し" disabled>↷</button>
+      <button id="importPlanBtn" class="small ghost icon-btn" title="プランナーのプラン(ZIP)を読み込む">🗺</button>
+      <input type="file" id="importPlanFile" accept=".zip,application/zip" style="display:none">
       <button id="importSettingsBtn" class="small ghost icon-btn" title="JSONファイルを読み込む" disabled>📂</button>
       <input type="file" id="importSettingsFile" accept=".json" style="display:none">
       <button id="saveProjectAsTop" class="small ghost icon-btn" title="FIT+JSONをZIPで保存" disabled>💾</button>
@@ -1085,7 +1091,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
 // (this session's own publish count so far) is reconstructed from the
 // conversation itself rather than mechanically verified — best-effort, not
 // guaranteed exact. Increment by exactly 1 on every future publish.
-const APP_VERSION = 224;
+const APP_VERSION = 225;
 
 /* ============ FIT PARSER ============ */
 const FIT_EPOCH = 631065600; // seconds between 1970-01-01 and 1989-12-31 (FIT epoch)
@@ -2445,6 +2451,11 @@ async function processFitData(arrayBuffer, displayName, opts){
       autoInfo = buildAutoIntervals(records, S.laps, true, libsChosen);
       S.intervals = autoInfo.ivs;
     }
+    let planNote = '';
+    if (pendingPlan && autoSplit){   // a plan from the planner: its sections and names replace the automatic split
+      const pi = planIntervals(pendingPlan);
+      if (pi){ S.intervals = pi.ivs; planNote = 'プラン「'+pendingPlan.name+'」の区間と名前を適用しました('+pi.ivs.length+'区間'+(pi.byDist ? '・位置が合わなかったため距離で対応' : '')+')'; pendingPlan = null; }
+    }
     S.resultColumns = COLUMN_DEFS.map(d=>({key:d.k, enabled:DEFAULT_ENABLED_COLUMNS.includes(d.k)}));
     S.sensors = { hr:true, power:true, cad:true };
     S.metrics = ['speed','elevation']; S.xMode = 'clock'; S.ftp = null; S.weight = null; S.numberingStyle = 'circled'; S.summaryRowMode = 'last'; S.summaryScope = 'intervals';
@@ -2467,6 +2478,7 @@ async function processFitData(arrayBuffer, displayName, opts){
     $('#saveProjectAsTop').disabled = false;
     $('#importSettingsBtn').disabled = false;
     showPage(1);
+    if (planNote) showHeaderMsg(planNote, false);
 
     syncControlsFromState();
     buildMetricChecks();
@@ -3022,6 +3034,69 @@ async function saveProjectJsonFlow(btn){
 }
 $('#saveProjectAsTop').addEventListener('click', (e)=> saveProjectJsonFlow(e.currentTarget));
 $('#importSettingsBtn').addEventListener('click', ()=>{ $('#importSettingsFile').click(); });
+// ---- a plan saved by the planner (ZIP: GPX + JSON): its sections and names are carried over onto the ride
+let pendingPlan = null;
+async function readPlanZip(file){
+  const zip = await JSZip.loadAsync(file);
+  const jn = Object.values(zip.files).find(x=>!x.dir && /\.json$/i.test(x.name)), gn = Object.values(zip.files).find(x=>!x.dir && /\.gpx$/i.test(x.name));
+  if (!jn || !gn) throw new Error('GPXとプランのJSONが入っていません');
+  const j = JSON.parse(await jn.async('string'));
+  if (!j || j.type!=='plan' || !Array.isArray(j.points)) throw new Error('プランナーのプランではありません');
+  const g = await eParse(new File([await gn.async('string')], 'plan.gpx'));
+  const d = [0]; for (let i=1;i<g.pts.length;i++) d.push(d[i-1]+haversineM(g.pts[i-1][0], g.pts[i-1][1], g.pts[i][0], g.pts[i][1]));
+  const at = km=>{ let lo = 0, hi = d.length-1; const m = km*1000; while (lo<hi){ const mid = (lo+hi)>>1; if (d[mid]<m) lo = mid+1; else hi = mid; } return g.pts[lo]; };
+  const points = j.points.filter(p=>isFinite(p.km)).sort((a,b)=>a.km-b.km).map(p=>{ const q = at(p.km); return { km:p.km, name:(p.name||'').trim(), mode:p.sectionNameType==='section' ? 'a' : 'b', secName:(p.sectionName||'').trim(), lat:q[0], lon:q[1] }; });
+  if (points.length<2) throw new Error('区間がありません');
+  return { name:(j.course && j.course.name) || g.name || 'プラン', points };
+}
+// the plan's points located on the ride (by position, else by distance) -> intervals named as the plan says
+function planIntervals(plan){
+  const recs = S.records; if (!recs.length) return null;
+  const pts = plan.points, n = pts.length;
+  const loc = new Array(n).fill(null);
+  let from = 0;
+  for (let k=0;k<n;k++){
+    let best = -1, bd = 500;
+    for (let j=from;j<recs.length;j++){ const r = recs[j]; if (r.lat==null || r.lon==null) continue; const dd = haversineM(r.lat, r.lon, pts[k].lat, pts[k].lon); if (dd<bd){ bd = dd; best = j; } }
+    if (best>=0){ loc[k] = best; from = best; }
+  }
+  let byDist = false;
+  const interiorOk = loc.slice(1, n-1).every(v=>v!=null) && loc.slice(1,n-1).every((v,i)=> i===0 || v>loc[i]);
+  const el = new Array(n);
+  if (interiorOk){
+    el[0] = loc[0]!=null ? recs[loc[0]].elapsed : recs[0].elapsed;
+    el[n-1] = loc[n-1]!=null ? recs[loc[n-1]].elapsed : recs[recs.length-1].elapsed;
+    for (let k=1;k<n-1;k++) el[k] = recs[loc[k]].elapsed;
+  } else {
+    byDist = true;
+    const d0 = recs[0].dist;
+    for (let k=0;k<n;k++){ const m = d0+pts[k].km*1000; el[k] = k===0 ? recs[0].elapsed : k===n-1 ? Math.min(recs[recs.length-1].elapsed, nearestRecordByDist(m).elapsed) : nearestRecordByDist(m).elapsed; }
+  }
+  const ivs = [];
+  for (let k=0;k<n-1;k++){
+    const a = pts[k], b = pts[k+1];
+    if (!(el[k+1]-el[k] > 5)) continue;
+    const iv = { id:S.nextId++, name:'', nameType:'a', origin:'manual', start:el[k], end:el[k+1], startSet:true, endSet:true };
+    if (a.mode!=='a' && a.name && b.name){ iv.nameType = 'b'; iv.startName = a.name; iv.endName = b.name; }
+    else if (a.secName) iv.name = a.secName;
+    ivs.push(iv);
+  }
+  return ivs.length ? { ivs, byDist } : null;
+}
+$('#importPlanBtn').addEventListener('click', ()=>{ $('#importPlanFile').value = ''; $('#importPlanFile').click(); });
+$('#importPlanFile').addEventListener('change', async e=>{
+  const f = e.target.files[0]; if (!f) return;
+  try{
+    const plan = await readPlanZip(f);
+    if (!S.records.length){ pendingPlan = plan; showHeaderMsg('プラン「'+plan.name+'」を読み込みました。FITファイルを読み込むと、区間と名前を引き継ぎます', false); return; }
+    const pi = planIntervals(plan);
+    if (!pi){ showHeaderMsg('プランの区間を、この記録に当てはめられませんでした', true); return; }
+    if (!confirm('いまの区間を、プラン「'+plan.name+'」の区間('+pi.ivs.length+'区間)に置き換えます。よろしいですか?')) return;
+    pushIvHistory(); S.intervals = pi.ivs; S.timelineSelectedId = null;
+    saveState(); renderTimeline(); if (mapChartInitialized) renderMapFrame(); try{ renderRoutePreview(); }catch(err){}
+    showHeaderMsg('プラン「'+plan.name+'」の区間と名前を適用しました('+pi.ivs.length+'区間'+(pi.byDist ? '・位置が合わなかったため距離で対応' : '')+')', false);
+  }catch(err){ showHeaderMsg('プランを読み込めませんでした: '+err.message, true); }
+});
 $('#importSettingsFile').addEventListener('change', e=>{
   const f = e.target.files[0];
   if (!f) return;
@@ -8872,11 +8947,9 @@ $('#plSplit').addEventListener('click', ()=>{
 });
 // the analyser's own automatic split (climbs and the favourite sections found along the route); a GPX has no clock, so the course
 // is walked at a steady speed to give the rules their time axis — no rests or laps can be found in it
-function plAutoSplit(silent){
-  const C = PL.course; if (!C) return;
-  if (!silent && PL.pts.length>2 && !confirm('いまの地点を消して、自動で区間を分けます。よろしいですか?')) return;
-  // one record per second at 6 m/s (the rules expect a recording, not sparse track points)
-  const V = 6, recs = [];
+// one record per second at 6 m/s (the analyser's rules and the favourite matching expect a recording, not sparse track points)
+function plPseudoRecs(){
+  const C = PL.course, V = 6, recs = [];
   for (let m=0, k=0; ; m+=V){
     const mm = Math.min(m, C.total);
     while (k<C.d.length-2 && C.d[k+1]<mm) k++;
@@ -8884,6 +8957,12 @@ function plAutoSplit(silent){
     recs.push({ elapsed:mm/V, dist:mm, alt:C.alt[k]+(C.alt[k+1]-C.alt[k])*f, altSmooth:C.alt[k]+(C.alt[k+1]-C.alt[k])*f, lat:C.lat[k]+(C.lat[k+1]-C.lat[k])*f, lon:C.lon[k]+(C.lon[k+1]-C.lon[k])*f, speed:V, t:mm/V });
     if (mm>=C.total) break;
   }
+  return recs;
+}
+function plAutoSplit(silent){
+  const C = PL.course; if (!C) return;
+  if (!silent && PL.pts.length>2 && !confirm('いまの地点を消して、自動で区間を分けます。よろしいですか?')) return;
+  const V = 6, recs = plPseudoRecs();
   let info;
   try{ info = buildAutoIntervals(recs, [], false); }catch(e){ if (!silent) showHeaderMsg('自動分割に失敗しました: '+e.message, true); return; }
   plPush();
@@ -8973,6 +9052,31 @@ function plEditNames(){
   plEditSection(i);
 }
 $('#plNameBtn').addEventListener('click', plEditNames);
+// ---- favourite sections (the same library as the analyser's): register the picked section, list, export, import
+function plRegisterFav(){
+  const C = PL.course; if (!C) return;
+  let i = PL.sel && PL.sel.type==='sec' ? PL.sel.i-1 : PL.pts.findIndex((q,k)=> k<PL.pts.length-1 && PL.seek>=q.km*1000 && PL.seek<=PL.pts[k+1].km*1000);
+  if (i<0){ showHeaderMsg('登録する区間を選んでください', true); return; }
+  const recs = plPseudoRecs(), V = 6, a = PL.pts[i].km*1000/V, b = PL.pts[i+1].km*1000/V;
+  const sm = libSummarize(recs, a, b);
+  if (!sm){ showHeaderMsg('この区間は短すぎて登録できません(200 m 以上の軌跡が必要です)', true); return; }
+  const def = plSecLabel(i), isB = plUsesB(i), nm0 = plSecNames(i);
+  let nm;
+  if (isB) nm = def;
+  else { const name = prompt('お気に入り区間の名前', def); if (name===null) return; nm = name.trim() || def; }
+  const prev = libEntries.find(e=>e.name===nm);
+  if (prev && !confirm('同じ名前「'+nm+'」が登録済みです。置き換えますか?')) return;
+  let ascent = 0, last = null;
+  recs.forEach(r=>{ if (r.elapsed<a || r.elapsed>b) return; if (last!=null && r.altSmooth>last) ascent += r.altSmooth-last; last = r.altSmooth; });
+  const entry = { id:(prev ? prev.id : 'l'+Date.now().toString(36)+Math.random().toString(36).slice(2,6)), name:nm, nameType:isB?'b':'a', startName:isB?nm0.st:undefined, endName:isB?nm0.en:undefined,
+    lengthM:Math.round(sm.lengthM), ascentM:Math.round(ascent), pts:sm.pts.map(p=>[+p[0].toFixed(5), +p[1].toFixed(5)]), createdAt:Date.now() };
+  libEntries = libEntries.filter(e=>e.id!==entry.id).concat(entry);
+  if (libPersist()) showHeaderMsg('「'+nm+'」をお気に入り区間に登録しました(全'+libEntries.length+'件)', false);
+}
+$('#plLibAdd').addEventListener('click', plRegisterFav);
+$('#plLibList').addEventListener('click', ()=> libShowList());
+$('#plLibExport').addEventListener('click', ()=> libExport());
+$('#plLibImport').addEventListener('click', ()=>{ $('#libInput').value = ''; $('#libInput').click(); });
 // the position the seek bar stands at, looked up in Google Maps
 $('#plGoogle').addEventListener('click', ()=>{
   const C = PL.course; if (!C) return;
