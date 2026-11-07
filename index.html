@@ -1091,7 +1091,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
 // (this session's own publish count so far) is reconstructed from the
 // conversation itself rather than mechanically verified — best-effort, not
 // guaranteed exact. Increment by exactly 1 on every future publish.
-const APP_VERSION = 225;
+const APP_VERSION = 226;
 
 /* ============ FIT PARSER ============ */
 const FIT_EPOCH = 631065600; // seconds between 1970-01-01 and 1989-12-31 (FIT epoch)
@@ -2454,7 +2454,9 @@ async function processFitData(arrayBuffer, displayName, opts){
     let planNote = '';
     if (pendingPlan && autoSplit){   // a plan from the planner: its sections and names replace the automatic split
       const pi = planIntervals(pendingPlan);
-      if (pi){ S.intervals = pi.ivs; planNote = 'プラン「'+pendingPlan.name+'」の区間と名前を適用しました('+pi.ivs.length+'区間'+(pi.byDist ? '・位置が合わなかったため距離で対応' : '')+')'; pendingPlan = null; }
+      if (pi.ivs){ S.intervals = pi.ivs; planNote = 'プラン「'+pendingPlan.name+'」の区間と名前を適用しました('+pi.ivs.length+'区間'+(pi.cut ? '・休憩'+pi.cut+'か所を除いて区切り' : '')+(pi.dropped ? '・位置が合わず省いた地点'+pi.dropped+'つ' : '')+')'; }
+      else planNote = pi.reason;
+      pendingPlan = null;
     }
     S.resultColumns = COLUMN_DEFS.map(d=>({key:d.k, enabled:DEFAULT_ENABLED_COLUMNS.includes(d.k)}));
     S.sensors = { hr:true, power:true, cad:true };
@@ -3045,43 +3047,53 @@ async function readPlanZip(file){
   const g = await eParse(new File([await gn.async('string')], 'plan.gpx'));
   const d = [0]; for (let i=1;i<g.pts.length;i++) d.push(d[i-1]+haversineM(g.pts[i-1][0], g.pts[i-1][1], g.pts[i][0], g.pts[i][1]));
   const at = km=>{ let lo = 0, hi = d.length-1; const m = km*1000; while (lo<hi){ const mid = (lo+hi)>>1; if (d[mid]<m) lo = mid+1; else hi = mid; } return g.pts[lo]; };
-  const points = j.points.filter(p=>isFinite(p.km)).sort((a,b)=>a.km-b.km).map(p=>{ const q = at(p.km); return { km:p.km, name:(p.name||'').trim(), mode:p.sectionNameType==='section' ? 'a' : 'b', secName:(p.sectionName||'').trim(), lat:q[0], lon:q[1] }; });
+  const points = j.points.filter(p=>isFinite(p.km)).sort((a,b)=>a.km-b.km).map(p=>{ const q = at(p.km); return { km:p.km, name:(p.name||'').trim(), mode:p.sectionNameType==='section' ? 'a' : 'b', secName:(p.sectionName||'').trim(), isRest:p.rest!=null, lat:q[0], lon:q[1] }; });
   if (points.length<2) throw new Error('区間がありません');
   return { name:(j.course && j.course.name) || g.name || 'プラン', points };
 }
-// the plan's points located on the ride (by position, else by distance) -> intervals named as the plan says
+// The plan's points are looked for on the ride by position only (the nearest record within 500 m, searched in order). The start and the
+// finish must both be found, otherwise the plan is not applied at all; an inner point that is not found is left out (its two sections
+// become one). At a rest place the ride's own rest (found with the usual rest rule) is cut out: the section before ends where the rest
+// starts, the section after begins where it ends.
 function planIntervals(plan){
-  const recs = S.records; if (!recs.length) return null;
-  const pts = plan.points, n = pts.length;
+  const recs = S.records; if (!recs.length) return { reason:'走行ログがありません' };
+  const pts = plan.points, n = pts.length, MAXD = 500;
   const loc = new Array(n).fill(null);
   let from = 0;
   for (let k=0;k<n;k++){
-    let best = -1, bd = 500;
+    let best = -1, bd = MAXD;
     for (let j=from;j<recs.length;j++){ const r = recs[j]; if (r.lat==null || r.lon==null) continue; const dd = haversineM(r.lat, r.lon, pts[k].lat, pts[k].lon); if (dd<bd){ bd = dd; best = j; } }
     if (best>=0){ loc[k] = best; from = best; }
   }
-  let byDist = false;
-  const interiorOk = loc.slice(1, n-1).every(v=>v!=null) && loc.slice(1,n-1).every((v,i)=> i===0 || v>loc[i]);
-  const el = new Array(n);
-  if (interiorOk){
-    el[0] = loc[0]!=null ? recs[loc[0]].elapsed : recs[0].elapsed;
-    el[n-1] = loc[n-1]!=null ? recs[loc[n-1]].elapsed : recs[recs.length-1].elapsed;
-    for (let k=1;k<n-1;k++) el[k] = recs[loc[k]].elapsed;
-  } else {
-    byDist = true;
-    const d0 = recs[0].dist;
-    for (let k=0;k<n;k++){ const m = d0+pts[k].km*1000; el[k] = k===0 ? recs[0].elapsed : k===n-1 ? Math.min(recs[recs.length-1].elapsed, nearestRecordByDist(m).elapsed) : nearestRecordByDist(m).elapsed; }
+  if (loc[0]==null || loc[n-1]==null) return { reason:'プランの'+(loc[0]==null ? '出発' : '到着')+'地点が、走行ログの位置から'+MAXD+' m以内に見つからないため、プランは適用しませんでした' };
+  const rests = detectRests(recs);
+  const use = [];   // {k, t, from, to}
+  let dropped = 0, cut = 0;
+  for (let k=0;k<n;k++){
+    if (loc[k]==null){ dropped++; continue; }
+    const t = recs[loc[k]].elapsed;
+    let a = t, b = t;
+    if (pts[k].isRest && k>0 && k<n-1){
+      // the ride's own rest at this place: the one that holds the time, else the nearest within ten minutes
+      let R = rests.find(x=> t>=x.start-1 && t<=x.end+1);
+      if (!R){ let bg = 600; rests.forEach(x=>{ const g = Math.min(Math.abs(x.start-t), Math.abs(x.end-t)); if (g<bg){ bg = g; R = x; } }); }
+      if (R){ a = R.start; b = R.end; cut++; }
+    }
+    use.push({ k, a, b, t });
   }
+  // every boundary: the section before ends at .a, the section after starts at .b
   const ivs = [];
-  for (let k=0;k<n-1;k++){
-    const a = pts[k], b = pts[k+1];
-    if (!(el[k+1]-el[k] > 5)) continue;
-    const iv = { id:S.nextId++, name:'', nameType:'a', origin:'manual', start:el[k], end:el[k+1], startSet:true, endSet:true };
-    if (a.mode!=='a' && a.name && b.name){ iv.nameType = 'b'; iv.startName = a.name; iv.endName = b.name; }
-    else if (a.secName) iv.name = a.secName;
+  for (let u=0;u<use.length-1;u++){
+    const P0 = use[u], P1 = use[u+1], pa = pts[P0.k], pb = pts[P1.k];
+    const start = P0.b, end = P1.a;
+    if (!(end-start > 5)) continue;
+    const iv = { id:S.nextId++, name:'', nameType:'a', origin:'manual', start, end, startSet:true, endSet:true };
+    const merged = P1.k-P0.k>1;      // inner points were dropped: its own names are not used
+    if (!merged && pa.mode!=='a' && pa.name && pb.name){ iv.nameType = 'b'; iv.startName = pa.name; iv.endName = pb.name; }
+    else if (!merged && pa.secName) iv.name = pa.secName;
     ivs.push(iv);
   }
-  return ivs.length ? { ivs, byDist } : null;
+  return ivs.length ? { ivs, dropped, cut } : { reason:'プランの区間を、この記録に当てはめられませんでした' };
 }
 $('#importPlanBtn').addEventListener('click', ()=>{ $('#importPlanFile').value = ''; $('#importPlanFile').click(); });
 $('#importPlanFile').addEventListener('change', async e=>{
@@ -3090,11 +3102,11 @@ $('#importPlanFile').addEventListener('change', async e=>{
     const plan = await readPlanZip(f);
     if (!S.records.length){ pendingPlan = plan; showHeaderMsg('プラン「'+plan.name+'」を読み込みました。FITファイルを読み込むと、区間と名前を引き継ぎます', false); return; }
     const pi = planIntervals(plan);
-    if (!pi){ showHeaderMsg('プランの区間を、この記録に当てはめられませんでした', true); return; }
+    if (!pi.ivs){ showHeaderMsg(pi.reason, true); return; }
     if (!confirm('いまの区間を、プラン「'+plan.name+'」の区間('+pi.ivs.length+'区間)に置き換えます。よろしいですか?')) return;
     pushIvHistory(); S.intervals = pi.ivs; S.timelineSelectedId = null;
     saveState(); renderTimeline(); if (mapChartInitialized) renderMapFrame(); try{ renderRoutePreview(); }catch(err){}
-    showHeaderMsg('プラン「'+plan.name+'」の区間と名前を適用しました('+pi.ivs.length+'区間'+(pi.byDist ? '・位置が合わなかったため距離で対応' : '')+')', false);
+    showHeaderMsg('プラン「'+plan.name+'」の区間と名前を適用しました('+pi.ivs.length+'区間'+(pi.cut ? '・休憩'+pi.cut+'か所を除いて区切り' : '')+(pi.dropped ? '・位置が合わず省いた地点'+pi.dropped+'つ' : '')+')', false);
   }catch(err){ showHeaderMsg('プランを読み込めませんでした: '+err.message, true); }
 });
 $('#importSettingsFile').addEventListener('change', e=>{
