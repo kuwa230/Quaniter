@@ -1091,7 +1091,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
 // (this session's own publish count so far) is reconstructed from the
 // conversation itself rather than mechanically verified — best-effort, not
 // guaranteed exact. Increment by exactly 1 on every future publish.
-const APP_VERSION = 226;
+const APP_VERSION = 227;
 
 /* ============ FIT PARSER ============ */
 const FIT_EPOCH = 631065600; // seconds between 1970-01-01 and 1989-12-31 (FIT epoch)
@@ -1934,6 +1934,9 @@ const AUTO_SPLIT = {
   // span a rest. Altitude is the smoothed trace (smoothAltitudes); a rise of
   // CLIMB_TRIGGER_M is needed to start tracking one, which filters noise.
   CLIMB_MIN_GAIN_M: 100, CLIMB_MIN_GRADE: 0.03, CLIMB_MIN_DIST_M: 2000,
+  // a long, gentle climb is one too (a 500 m rise spread over 35 km never reaches 3 % on average): a net rise of CLIMB_LONG_MIN_GAIN_M or more
+  // at an average of CLIMB_LONG_MIN_GRADE or more, valley to top
+  CLIMB_LONG_MIN_GAIN_M: 300, CLIMB_LONG_MIN_GRADE: 0.015,
   CLIMB_DROP_M: 10, CLIMB_DROP_FRAC: 0.10, CLIMB_FLAT_M: 300, CLIMB_FLAT_FRAC: 0.20, CLIMB_TRIGGER_M: 10,
   MIN_SEGMENT_S: 5, // cuts closer together than this are merged
   MIN_SEGMENT_FRAC: 0.001, // ... and no section may be shorter than this share (0.1 %) of the whole ride
@@ -2029,17 +2032,20 @@ function detectClimbs(recs, rests){
     // 5 km at 4-5%) pulls the average under 3%. The climb is the part that
     // meets the gradient: move the start up to the first point from which the
     // average gradient to the top reaches CLIMB_MIN_GRADE.
+    const wholeD = D[e]-D[s], wholeG = A[e]-A[s];
+    const longClimb = wholeD>0 && wholeG>=P.CLIMB_LONG_MIN_GAIN_M && wholeG/wholeD >= P.CLIMB_LONG_MIN_GRADE;   // gentle but big: valley to top as it is
     let st = s;
-    if (!(D[e]-D[s]>0) || (A[e]-A[s])/(D[e]-D[s]) < P.CLIMB_MIN_GRADE){
+    if (!(wholeD>0) || wholeG/wholeD < P.CLIMB_MIN_GRADE){
       st = -1;
       for (let k=s+1; k<e; k++){
         const dd = D[e]-D[k];
         if (dd>0 && (A[e]-A[k])/dd >= P.CLIMB_MIN_GRADE){ st = k; break; }
       }
-      if (st<0) return; // no stretch up to the top averages 3%: not a climb
+      if (st<0){ if (longClimb) out.push({start:T[s], end:T[e], gain:wholeG, dist:wholeD}); return; }   // no stretch up to the top averages 3%
     }
     const gain = A[e]-A[st], dist = D[e]-D[st];
     if (gain>=P.CLIMB_MIN_GAIN_M || dist>=P.CLIMB_MIN_DIST_M) out.push({start:T[st], end:T[e], gain, dist});
+    else if (longClimb) out.push({start:T[s], end:T[e], gain:wholeG, dist:wholeD});
   };
   let valley = 0, peak = 0, inClimb = false;
   for (let i=1;i<m;i++){
