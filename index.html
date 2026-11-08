@@ -1091,7 +1091,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
 // (this session's own publish count so far) is reconstructed from the
 // conversation itself rather than mechanically verified — best-effort, not
 // guaranteed exact. Increment by exactly 1 on every future publish.
-const APP_VERSION = 227;
+const APP_VERSION = 228;
 
 /* ============ FIT PARSER ============ */
 const FIT_EPOCH = 631065600; // seconds between 1970-01-01 and 1989-12-31 (FIT epoch)
@@ -3053,7 +3053,7 @@ async function readPlanZip(file){
   const g = await eParse(new File([await gn.async('string')], 'plan.gpx'));
   const d = [0]; for (let i=1;i<g.pts.length;i++) d.push(d[i-1]+haversineM(g.pts[i-1][0], g.pts[i-1][1], g.pts[i][0], g.pts[i][1]));
   const at = km=>{ let lo = 0, hi = d.length-1; const m = km*1000; while (lo<hi){ const mid = (lo+hi)>>1; if (d[mid]<m) lo = mid+1; else hi = mid; } return g.pts[lo]; };
-  const points = j.points.filter(p=>isFinite(p.km)).sort((a,b)=>a.km-b.km).map(p=>{ const q = at(p.km); return { km:p.km, name:(p.name||'').trim(), mode:p.sectionNameType==='section' ? 'a' : 'b', secName:(p.sectionName||'').trim(), isRest:p.rest!=null, lat:q[0], lon:q[1] }; });
+  const points = j.points.filter(p=>isFinite(p.km)).sort((a,b)=>a.km-b.km).map(p=>{ const q = at(p.km); return { km:p.km, name:(p.name||'').trim(), mode:p.sectionNameType==='section' ? 'a' : 'b', secName:(p.sectionName||'').trim(), isRest:p.rest!=null, gap:p.gapAfter===true, lat:q[0], lon:q[1] }; });
   if (points.length<2) throw new Error('区間がありません');
   return { name:(j.course && j.course.name) || g.name || 'プラン', points };
 }
@@ -3091,6 +3091,7 @@ function planIntervals(plan){
   const ivs = [];
   for (let u=0;u<use.length-1;u++){
     const P0 = use[u], P1 = use[u+1], pa = pts[P0.k], pb = pts[P1.k];
+    if (pa.gap && P1.k===P0.k+1) continue;   // a gap between the plan's sections is not a section
     const start = P0.b, end = P1.a;
     if (!(end-start > 5)) continue;
     const iv = { id:S.nextId++, name:'', nameType:'a', origin:'manual', start, end, startSet:true, endSet:true };
@@ -8592,7 +8593,7 @@ $('#plOpenZip').addEventListener('change', async e=>{
     PL.gpxText = txt; PL.gpxName = gn.name.replace(/^.*\//,'');
     Object.keys(j.settings||{}).forEach(id=>{ const el = $('#'+id); if (el && j.settings[id]!=null) el.value = j.settings[id]; });
     const total = PL.course.total/1000;
-    PL.pts = j.points.filter(p=>isFinite(p.km)).map(p=>({ km:Math.max(0, Math.min(total, p.km)), name:p.name||'', secType:p.sectionNameType==='section' ? 'a' : 'b', secName:p.sectionName||'', rest:p.rest!=null ? p.rest : null, speedOv:p.speedOverrideKmh||null, powerOv:p.powerOverrideW||null }));
+    PL.pts = j.points.filter(p=>isFinite(p.km)).map(p=>({ km:Math.max(0, Math.min(total, p.km)), name:p.name||'', secType:p.sectionNameType==='section' ? 'a' : 'b', secName:p.sectionName||'', gap:p.gapAfter===true, rest:p.rest!=null ? p.rest : null, speedOv:p.speedOverrideKmh||null, powerOv:p.powerOverrideW||null }));
     if (PL.pts.length<2 || PL.pts[0].km!==0){ PL.pts.unshift({ km:0, name:'出発', rest:null, secType:'b', secName:'' }); }
     if (PL.pts[PL.pts.length-1].km < total-0.05) PL.pts.push({ km:total, name:'到着', rest:null, secType:'b', secName:'' });
     PL.pts.sort((a,b)=>a.km-b.km);
@@ -8629,7 +8630,7 @@ function plSections(){
     const a = p[i-1].km*1000, b = p[i].km*1000, len = b-a, rise = plAltAt(b)-plAltAt(a);
     let gain = 0; const n = Math.max(1, Math.ceil(len/100)); let prev = plAltAt(a);
     for (let k=1;k<=n;k++){ const v = plAltAt(a+len*k/n); if (v>prev) gain += v-prev; prev = v; }
-    out.push({ i, a, b, len, rise, grade: len>0 ? rise/len : 0, gain, from:p[i-1], to:p[i] });
+    out.push({ i, a, b, len, rise, grade: len>0 ? rise/len : 0, gain, from:p[i-1], to:p[i], gap:p[i-1].gap===true });
   }
   return out;
 }
@@ -8776,7 +8777,38 @@ function plRefresh(){
 const plSnap = ()=> JSON.stringify(PL.pts);
 function plPush(){ PL.hist.push(plSnap()); if (PL.hist.length>40) PL.hist.shift(); $('#plUndo').disabled = false; }
 $('#plUndo').addEventListener('click', ()=>{ if (!PL.hist.length) return; PL.pts = JSON.parse(PL.hist.pop()); PL.sel = null; PL.multi = null; $('#plUndo').disabled = !PL.hist.length; plPtsChanged(); });
-function plPtsChanged(){ PL.pts.sort((a,b)=>a.km-b.km); try{ PL.last = plCompute(); }catch(e){} plDraw(); plMapFrame(); plStatus(); plSelButtons(); }
+// a gap shorter than 50 m is no gap: its two points become one again
+function plNormalize(){
+  const pts = PL.pts;
+  for (let k=0;k<pts.length-1;){
+    const a = pts[k], b = pts[k+1];
+    if (a.gap===true && b.km-a.km<0.05){
+      const m = Object.assign({}, b);
+      m.km = k+1===pts.length-1 ? b.km : a.km;
+      m.name = k===0 ? (b.name||a.name) : (a.name||b.name);
+      m.rest = a.rest!=null ? a.rest : b.rest;
+      pts.splice(k, 2, m);
+    } else k++;
+  }
+}
+// make one edge of a section independent of its neighbour: the shared point becomes two points (the end of the one section, the
+// start of the next) joined by a gap of no length that can then be opened by dragging
+function plSplitEdge(s, edge){
+  const pts = PL.pts;
+  if (edge==='start'){
+    if (s>0 && pts[s-1].gap===true) return pts[s];
+    const old = pts[s];
+    const nw = { km:old.km, name:old.name, rest:null, secType:old.secType, secName:old.secName, gap:false };
+    old.secType = 'b'; old.secName = ''; old.gap = true;
+    pts.splice(s+1, 0, nw); return nw;
+  }
+  const old = pts[s+1];
+  if (s+1<pts.length-1 && old.gap===true) return old;
+  const nw = { km:old.km, name:old.name, rest:old.rest, secType:'b', secName:'', gap:true };
+  old.rest = null;
+  pts.splice(s+1, 0, nw); return nw;
+}
+function plPtsChanged(){ PL.pts.sort((a,b)=>a.km-b.km); plNormalize(); try{ PL.last = plCompute(); }catch(e){} plDraw(); plMapFrame(); plStatus(); plSelButtons(); }
 function plEnter2(){
   if (!PL.course) return;
   if (!PL.autoDone){ PL.autoDone = true; if (PL.pts.length<=2) plAutoSplit(true); }   // the automatic split is the starting point
@@ -8858,34 +8890,33 @@ function plDraw(){
   // the sections, laid over the profile like the analyser's clips (translucent); the picked ones are outlined, the picked one's edges have handles
   const bandH = 58, sy = pB-bandH-4, handles = [];
   PL.pts.forEach((p,i)=>{
-    if (i===0) return;
-    const a = X(PL.pts[i-1].km*1000), b = X(p.km*1000);
+    if (i===0 || PL.pts[i-1].gap===true) return;   // a gap between sections is left empty
+    const a = X(PL.pts[i-1].km*1000), b = X(p.km*1000), no = plSecNo(i-1);
     const sel = (PL.sel && PL.sel.type==='sec' && PL.sel.i===i) || (PL.multi && PL.multi.has(i));
     const rr = (x, y, w, h, r)=>{ g.beginPath(); if (g.roundRect) g.roundRect(x, y, w, h, r); else g.rect(x, y, w, h); };
-    g.fillStyle = sel ? 'rgba(23,184,164,.55)' : (i%2 ? 'rgba(108,140,255,.32)' : 'rgba(23,184,164,.22)');
+    g.fillStyle = sel ? 'rgba(23,184,164,.55)' : (no%2 ? 'rgba(108,140,255,.32)' : 'rgba(23,184,164,.22)');
     rr(a+1, sy, Math.max(1,b-a-2), bandH, 6); g.fill();
-    g.strokeStyle = sel ? '#fff' : (i%2 ? '#6c8cff' : accent); g.lineWidth = sel ? 2 : 1.5; rr(a+1.5, sy+.5, Math.max(1,b-a-3), bandH-1, 6); g.stroke(); g.lineWidth = 1;
+    g.strokeStyle = sel ? '#fff' : (no%2 ? '#6c8cff' : accent); g.lineWidth = sel ? 2 : 1.5; rr(a+1.5, sy+.5, Math.max(1,b-a-3), bandH-1, 6); g.stroke(); g.lineWidth = 1;
     const left = Math.max(a,PL_ML), right = Math.min(b,W-PL_MR);
     if (right-left>40){
       g.fillStyle = text; g.textAlign = 'center'; g.textBaseline = 'middle'; g.font = '700 12px sans-serif';
-      let lab = i+' '+(plSecShort(i-1) || ((p.km-PL.pts[i-1].km).toFixed(1)+'km'));
+      let lab = no+' '+(plSecShort(i-1) || ((p.km-PL.pts[i-1].km).toFixed(1)+'km'));
       const room = right-left-6;
       while (lab.length>2 && g.measureText(lab).width>room) lab = lab.slice(0,-2)+'…';
       g.fillText(lab, (left+right)/2, sy+bandH/2-9);
       const rise = plAltAt(p.km*1000)-plAltAt(PL.pts[i-1].km*1000), len = (p.km-PL.pts[i-1].km)*1000;
       g.font = '11px sans-serif'; g.fillText((len>0 ? (rise/len*100).toFixed(1) : '0')+'%', (left+right)/2, sy+bandH/2+10);
     }
+    if (sel && !PL.multi){   // the picked section's own edges: a handle inside each end, as on the analyser's page 2 (◀ start, ▶ end)
+      const hw = Math.max(10, Math.min(24, (b-a)/2-2));
+      [['start', a+1, '◀'], ['end', b-1-hw, '▶']].forEach(([edge, x, ch])=>{
+        if (x+hw<PL_ML-4 || x>W-PL_MR+4) return;
+        g.fillStyle = 'rgba(255,255,255,.16)'; g.fillRect(x, sy+2, hw, bandH-4);
+        g.fillStyle = '#fff'; g.font = '700 10px sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(ch, x+hw/2, sy+bandH/2);
+        handles.push({ seg:i-1, edge, x, w:hw });
+      });
+    }
   });
-  if (PL.sel && PL.sel.type==='sec' && !PL.multi){
-    const i = PL.sel.i;
-    [i-1, i].forEach(k=>{
-      const movable = k>0 && k<PL.pts.length-1, x = X(PL.pts[k].km*1000);
-      if (x<PL_ML-12 || x>W-PL_MR+12) return;
-      g.fillStyle = movable ? '#fff' : 'rgba(255,255,255,.35)'; g.beginPath(); g.roundRect ? g.roundRect(x-13, sy+4, 26, bandH-8, 6) : g.rect(x-13, sy+4, 26, bandH-8); g.fill();
-      g.fillStyle = '#08211d'; g.font = '700 11px sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText('◀▶', x, sy+bandH/2);
-      if (movable) handles.push({ k, x });
-    });
-  }
   // only the rest places carry a pin (the bars already show where the sections change); the picked point gets a small mark
   PL.pts.forEach((p,i)=>{
     const x = X(p.km*1000), sel = PL.sel && PL.sel.type==='pt' && PL.sel.i===i, rest = p.rest!=null && i>0 && i<PL.pts.length-1;
@@ -8915,7 +8946,7 @@ function plStatus(){
   const sp = sec && PL.last && PL.last.secs ? PL.last.secs[sec.i-1] : null;
   $('#pl2Grade').textContent = sec ? (sec.grade>=0 ? '+' : '')+(sec.grade*100).toFixed(1)+' %' : '--';
   $('#pl2Spd').textContent = sp && sp.v ? (sp.v*3.6).toFixed(1)+' km/h' : '--';
-  $('#pl2Pt').textContent = sec ? '区間'+sec.i+(plSecShort(sec.i-1) ? ' '+plSecShort(sec.i-1) : '') : '--';
+  $('#pl2Pt').textContent = sec ? (sec.gap ? '区間外' : '区間'+plSecNo(sec.i-1)+(plSecShort(sec.i-1) ? ' '+plSecShort(sec.i-1) : '')) : '--';
 }
 function plSelButtons(){
   const multi = !!PL.multi;
@@ -8940,7 +8971,7 @@ function plRestAction(){
     const p = PL.pts[idx]; plPush(); p.rest = p.rest!=null ? null : 10; PL.sel = { type:'pt', i:idx }; plPtsChanged(); return;
   }
   if (km<=0.1 || km>=C.total/1000-0.1){ showHeaderMsg('出発・到着の近くには置けません', true); return; }
-  plPush(); PL.pts.push({ km, name:'', rest:10, secType:'b', secName:'' }); PL.pts.sort((a,b)=>a.km-b.km);
+  plPush(); { const prev = PL.pts.slice().reverse().find(q=>q.km<=km); PL.pts.push({ km, name:'', rest:10, secType:'b', secName:'', gap:!!(prev && prev.gap) }); } PL.pts.sort((a,b)=>a.km-b.km);
   PL.sel = { type:'pt', i:PL.pts.findIndex(q=>q.km===km) };
   plPtsChanged();
   showHeaderMsg('シーク位置に休憩場所を置き、区間を分割しました(休憩時間は3ページ目)', false);
@@ -8959,7 +8990,7 @@ $('#plSplit').addEventListener('click', ()=>{
   const km = Math.round(PL.seek/100)/10;
   if (km<=0.1 || km>=PL.course.total/1000-0.1){ showHeaderMsg('出発・到着の近くでは分割できません', true); return; }
   if (PL.pts.some(p=>Math.abs(p.km-km)<0.2)){ showHeaderMsg('近くにすでに地点があります', true); return; }
-  plPush(); PL.pts.push({ km, name:'', rest:null, secType:'b', secName:'' }); PL.pts.sort((a,b)=>a.km-b.km);
+  plPush(); { const prev = PL.pts.slice().reverse().find(q=>q.km<=km); PL.pts.push({ km, name:'', rest:null, secType:'b', secName:'', gap:!!(prev && prev.gap) }); } PL.pts.sort((a,b)=>a.km-b.km);
   PL.sel = { type:'pt', i:PL.pts.findIndex(p=>p.km===km) };
   plPtsChanged();
 });
@@ -9151,7 +9182,7 @@ function plList(){}   // (the point list moved into the ⋮ menu and the name di
     PL.view = { x0:c-(c-V.x0)/k, x1:c+(V.x1-c)/k }; clamp();
   };
   const inBand = p=>{ const gm = cv._geom; return gm && p.y>=gm.sy && p.y<=gm.sy+gm.bandH; };
-  const secAt = x=>{ const gm = cv._geom, m = gm.M(x); return PL.pts.findIndex((q,k)=> k>0 && m>=PL.pts[k-1].km*1000 && m<=q.km*1000); };
+  const secAt = x=>{ const gm = cv._geom, m = gm.M(x); return PL.pts.findIndex((q,k)=> k>0 && PL.pts[k-1].gap!==true && m>=PL.pts[k-1].km*1000 && m<=q.km*1000); };
   function tap(p){
     const gm = cv._geom; if (!gm) return;
     if (inBand(p)){   // the section bars
@@ -9178,8 +9209,8 @@ function plList(){}   // (the point list moved into the ⋮ menu and the name di
     if (ptrs.size===1){
       const p0 = local(e), gm = cv._geom;
       // an edge handle of the picked section: dragging it moves the boundary shared with the neighbouring section
-      const hd = gm && !PL.multi && inBand(p0) ? gm.handles.find(h=> Math.abs(h.x-p0.x)<=18) : null;
-      if (hd){ plPush(); g = { type:'bound', k:hd.k, moved:false }; return; }
+      const hd = gm && !PL.multi && inBand(p0) ? gm.handles.find(h=> p0.x>=h.x-4 && p0.x<=h.x+h.w+4) : null;
+      if (hd){ plPush(); const pt = plSplitEdge(hd.seg, hd.edge); g = { type:'bound', pt, edge:hd.edge, moved:false }; return; }
       g = { type:'pan', start:p0, last:p0, t:performance.now(), moved:false, band:inBand(p0) };
       tracker.reset(e.clientX, e.timeStamp || performance.now());
       if (g.band){   // held on a section bar: picking several sections (as in the analyser)
@@ -9195,10 +9226,13 @@ function plList(){}   // (the point list moved into the ⋮ menu and the name di
     if (g.type==='seek'){ seekAt(local(e).x); return; }
     if (g.type==='multi') return;
     if (g.type==='bound'){
-      const gm = cv._geom, k = g.k, pts = PL.pts;
-      const km = Math.round(gm.M(local(e).x)/100)/10;
-      pts[k].km = Math.max(pts[k-1].km+0.1, Math.min(pts[k+1].km-0.1, km)); g.moved = true;
-      PL.seek = pts[k].km*1000; plDraw(); plStatus(); plMapFrame(false); return;
+      // each edge moves on its own: a start edge between the point before it and its own end, an end edge between its start and the point after it
+      const gm = cv._geom, pts = PL.pts, k = pts.indexOf(g.pt);
+      const km = Math.round(gm.M(local(e).x)/100)/10, total = PL.course.total/1000;
+      if (g.edge==='start') g.pt.km = Math.max(pts[k-1].km, Math.min(pts[k+1].km-0.1, km));
+      else g.pt.km = Math.max(pts[k-1].km+0.1, Math.min(k+1<pts.length ? pts[k+1].km : total, km));
+      g.moved = true;
+      PL.seek = g.pt.km*1000; plDraw(); plStatus(); plMapFrame(false); return;
     }
     if (g.type==='pan' && ptrs.size===1){
       const p = local(e); tracker.add(e, cv.getBoundingClientRect().left);
@@ -9245,7 +9279,7 @@ function plRestRows(){
   });
 }
 function plAdjRows(r){
-  $('#plAdjList').innerHTML = r.secs.map(s=> '<div class="plRow" data-i="'+s.i+'"><b class="plNo">'+s.i+'</b><span style="flex:1 1 110px;min-width:90px;font-size:12px;">'+escapeHtml(plSecLabel(s.i-1))+' <span class="hint">'+(s.len/1000).toFixed(1)+'km '+plKind(s.kind)+'</span></span>'+
+  $('#plAdjList').innerHTML = r.secs.map(s=> '<div class="plRow" data-i="'+s.i+'"><b class="plNo">'+(s.gap ? '-' : plSecNo(s.i-1))+'</b><span style="flex:1 1 110px;min-width:90px;font-size:12px;">'+escapeHtml(plSecLabel(s.i-1))+' <span class="hint">'+(s.len/1000).toFixed(1)+'km '+plKind(s.kind)+'</span></span>'+
     '<input class="plSpdIn" type="number" step="0.1" min="0" value="'+(s.to.speedOv>0 ? s.to.speedOv : '')+'" placeholder="'+(s.v*3.6).toFixed(1)+'"><span class="hint">km/h</span>'+
     '<input class="plPow" type="number" step="1" min="0" value="'+(s.to.powerOv>0 ? s.to.powerOv : '')+'" placeholder="'+Math.round(s.P)+'"><span class="hint">W</span></div>').join('');
   $('#plAdjList').querySelectorAll('.plRow').forEach(row=>{
@@ -9262,10 +9296,12 @@ function plSecNames(i){
   return { st, en, both:!!(st && en), sec:(a.secName||'').trim() };
 }
 // the mode switched to on page 2 decides: 'start and end names' counts only when BOTH are entered (else the whole-section name is used)
-function plUsesB(i){ return PL.pts[i].secType!=='a' && plSecNames(i).both; }
-function plSecShort(i){ const n = plSecNames(i); return plUsesB(i) ? n.st+'→'+n.en : n.sec; }
+function plUsesB(i){ return PL.pts[i].gap!==true && PL.pts[i].secType!=='a' && plSecNames(i).both; }
+function plSecShort(i){ if (PL.pts[i].gap===true) return ''; const n = plSecNames(i); return plUsesB(i) ? n.st+'→'+n.en : n.sec; }
 // the name of section i (0-based: from point i to point i+1)
-function plSecLabel(i){ return plSecShort(i) || '区間'+(i+1); }
+function plSecLabel(i){ return PL.pts[i].gap===true ? '(区間外)' : (plSecShort(i) || '区間'+(i+1)); }
+// section numbers count the sections only (a gap between them has none)
+function plSecNo(i){ let n = 0; for (let k=0;k<=i;k++) if (PL.pts[k].gap!==true) n++; return n; }
 function plRenderOut(){
   const r = PL.last = plCompute(), pts = PL.pts, n = pts.length;
   const tot = pts[n-1].arr-pts[0].arr;
@@ -9275,7 +9311,7 @@ function plRenderOut(){
   { const m = Math.round(r.total/60); $('#plTarget').value = Math.floor(m/60)+':'+String(m%60).padStart(2,'0'); }   // shown only: the time follows from the pacing, it is not a goal to be set
   $('#plKNote').innerHTML = '出発〜到着 '+fmtHMS(tot)+'(走行 '+fmtHMS(r.moving)+' + 休憩 '+fmtHMS(r.rests)+')<br>消費エネルギー(計画) <b>'+Math.round(plKcal(r.secs.reduce((a,x)=>a+x.E,0)))+' kcal</b>・エネルギー予算 '+Math.round(r.budget/1000)+' kJ(≒ '+Math.round(plKcal(r.budget))+' kcal)・全体の平均 '+Math.round(r.budget/Math.max(1,r.Ttot))+' W・ばらつき(VI) '+r.vi.toFixed(2)+'(上限 '+plNum('plVi',1.15).toFixed(2)+')';
   $('#plSecTable').innerHTML = '<table class="plTbl"><thead><tr><th>#</th><th>区間</th><th>距離</th><th>斜度</th><th>目標速度</th><th>目標平均パワー</th><th>所要</th><th>消費</th></tr></thead><tbody>'+
-    r.secs.map(s=> '<tr><td>'+s.i+'</td><td style="text-align:left">'+escapeHtml(plSecLabel(s.i-1))+'</td><td>'+(s.len/1000).toFixed(1)+' km</td><td>'+(s.grade*100).toFixed(1)+' %</td><td>'+(s.v*3.6).toFixed(1)+' km/h</td><td>'+Math.round(s.P)+' W</td><td>'+fmtHMS(s.t)+'</td><td>'+Math.round(plKcal(s.E))+' kcal</td></tr>').join('')+'</tbody></table>';
+    r.secs.map(s=> '<tr><td>'+(s.gap ? '-' : plSecNo(s.i-1))+'</td><td style="text-align:left">'+escapeHtml(plSecLabel(s.i-1))+'</td><td>'+(s.len/1000).toFixed(1)+' km</td><td>'+(s.grade*100).toFixed(1)+' %</td><td>'+(s.v*3.6).toFixed(1)+' km/h</td><td>'+Math.round(s.P)+' W</td><td>'+fmtHMS(s.t)+'</td><td>'+Math.round(plKcal(s.E))+' kcal</td></tr>').join('')+'</tbody></table>';
   // the text
   const lines = [];
   pts.forEach((p,i)=>{
@@ -9323,7 +9359,7 @@ $('#plZip').addEventListener('click', async ()=>{
     course:{ name:PL.course.name, gpxFile:PL.gpxName||null, distanceKm:Math.round(PL.course.total/100)/10, elevationGainM:Math.round(PL.course.gain) },
     settings,
     powerCurve: PL.curveRides ? { source:'rides', watts:PL.curveRides } : { source:'ftp', ftp:plNum('plFtp',200) },
-    points: pts.map(p=>({ km:Math.round(p.km*1000)/1000, name:p.name||'', sectionNameType:p.secType==='a' ? 'section' : 'startEnd', sectionName:p.secName||'', rest:p.rest!=null ? p.rest : null, speedOverrideKmh:p.speedOv||null, powerOverrideW:p.powerOv||null })),
+    points: pts.map(p=>({ km:Math.round(p.km*1000)/1000, name:p.name||'', sectionNameType:p.secType==='a' ? 'section' : 'startEnd', sectionName:p.secName||'', gapAfter:p.gap===true, rest:p.rest!=null ? p.rest : null, speedOverrideKmh:p.speedOv||null, powerOverrideW:p.powerOv||null })),
     plan: {
       budgetKj:Math.round(r.budget/1000), vi:Math.round(r.vi*100)/100, movingSec:Math.round(r.moving), restSec:Math.round(r.rests),
       points: pts.map((p,i)=>({ no:i+1, arrivalSec:Math.round(p.arr), departureSec:Math.round(p.dep), km:Math.round(p.km*10)/10, name:p.name||'', targetAvgPowerW: i>0 ? Math.round(r.secs[i-1].P) : null })),
