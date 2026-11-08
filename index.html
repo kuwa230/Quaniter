@@ -1091,7 +1091,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
 // (this session's own publish count so far) is reconstructed from the
 // conversation itself rather than mechanically verified — best-effort, not
 // guaranteed exact. Increment by exactly 1 on every future publish.
-const APP_VERSION = 228;
+const APP_VERSION = 229;
 
 /* ============ FIT PARSER ============ */
 const FIT_EPOCH = 631065600; // seconds between 1970-01-01 and 1989-12-31 (FIT epoch)
@@ -3065,13 +3065,44 @@ function planIntervals(plan){
   const recs = S.records; if (!recs.length) return { reason:'走行ログがありません' };
   const pts = plan.points, n = pts.length, MAXD = 500;
   const loc = new Array(n).fill(null);
-  let from = 0;
+  // Candidates for each plan point: the closest record of every pass within MAXD (a loop or out-and-back ride passes the same place twice).
+  // Then the in-order assignment with the smallest total distance is chosen; a point may be skipped for a penalty, the start and the
+  // finish must be matched. This keeps the start at the ride's start and the finish at its end even when both are the same place.
+  const cand = pts.map(p=>{
+    const out = []; let cur = null;
+    for (let j=0;j<recs.length;j++){
+      const r = recs[j]; if (r.lat==null || r.lon==null) continue;
+      const dd = haversineM(r.lat, r.lon, p.lat, p.lon);
+      if (dd<MAXD){ if (!cur || dd<cur.d) cur = { j, d:dd }; }
+      else if (cur){ out.push(cur); cur = null; }
+    }
+    if (cur) out.push(cur);
+    return out;
+  });
+  const SKIP = 300, INF = 1e18;
+  const f = cand.map(()=>[]), pr = cand.map(()=>[]);
   for (let k=0;k<n;k++){
-    let best = -1, bd = MAXD;
-    for (let j=from;j<recs.length;j++){ const r = recs[j]; if (r.lat==null || r.lon==null) continue; const dd = haversineM(r.lat, r.lon, pts[k].lat, pts[k].lon); if (dd<bd){ bd = dd; best = j; } }
-    if (best>=0){ loc[k] = best; from = best; }
+    cand[k].forEach((c,ci)=>{
+      let best = INF, bp = null;
+      if (k===0){ best = c.d; }
+      else {
+        for (let k2=k-1;k2>=0;k2--){
+          cand[k2].forEach((c2,ci2)=>{
+            if (c2.j>=c.j || f[k2][ci2]>=INF) return;
+            const v = f[k2][ci2] + c.d + SKIP*(k-k2-1);
+            if (v<best){ best = v; bp = [k2,ci2]; }
+          });
+        }
+      }
+      f[k][ci] = best; pr[k][ci] = bp;
+    });
   }
-  if (loc[0]==null || loc[n-1]==null) return { reason:'プランの'+(loc[0]==null ? '出発' : '到着')+'地点が、走行ログの位置から'+MAXD+' m以内に見つからないため、プランは適用しませんでした' };
+  if (cand[n-1].length){
+    let bi = -1, bv = INF; cand[n-1].forEach((c,ci)=>{ if (f[n-1][ci]<bv){ bv = f[n-1][ci]; bi = ci; } });
+    let k = n-1, ci = bi;
+    while (bi>=0 && k!=null){ loc[k] = cand[k][ci].j; const p = pr[k][ci]; if (!p) break; k = p[0]; ci = p[1]; }
+  }
+  if (loc[0]==null || loc[n-1]==null) return { reason:'プランの'+(!cand[0].length ? '出発' : !cand[n-1].length ? '到着' : '出発から到着まで')+'地点が、走行ログの位置から'+MAXD+' m以内に順番どおり見つからないため、プランは適用しませんでした' };
   const rests = detectRests(recs);
   const use = [];   // {k, t, from, to}
   let dropped = 0, cut = 0;
