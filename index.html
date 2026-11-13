@@ -698,9 +698,8 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
     <div id="plCards"></div>
   </div>
   <div class="panel">
-    <div class="panel-head"><h2>計画</h2></div>
-    <pre id="plOut" style="white-space:pre-wrap;font:inherit;font-size:13px;line-height:1.6;margin:0 0 8px;user-select:text;"></pre>
-    <div class="vRow"><button id="plCopy" class="small" type="button" disabled>コピー</button><button id="plSave" class="small" type="button" disabled>テキストを保存</button><button id="plZip" class="small" type="button" disabled>設定ごとZIPで保存</button></div>
+    <div class="panel-head"><h2>書き出し</h2></div>
+    <div class="vRow"><button id="plCopy" class="small" type="button" disabled>テキストをコピー</button><button id="plZip" class="small" type="button" disabled>設定ごとZIPで保存</button></div>
   </div>
 </div>
 <div id="plGearSheet" class="tlMenu hidden">
@@ -1111,7 +1110,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
 // (this session's own publish count so far) is reconstructed from the
 // conversation itself rather than mechanically verified — best-effort, not
 // guaranteed exact. Increment by exactly 1 on every future publish.
-const APP_VERSION = 231;
+const APP_VERSION = 232;
 
 /* ============ FIT PARSER ============ */
 const FIT_EPOCH = 631065600; // seconds between 1970-01-01 and 1989-12-31 (FIT epoch)
@@ -8679,9 +8678,9 @@ function plSections(){
   const p = PL.pts, out = [];
   for (let i=1;i<p.length;i++){
     const a = p[i-1].km*1000, b = p[i].km*1000, len = b-a, rise = plAltAt(b)-plAltAt(a);
-    let gain = 0; const n = Math.max(1, Math.ceil(len/100)); let prev = plAltAt(a);
-    for (let k=1;k<=n;k++){ const v = plAltAt(a+len*k/n); if (v>prev) gain += v-prev; prev = v; }
-    out.push({ i, a, b, len, rise, grade: len>0 ? rise/len : 0, gain, from:p[i-1], to:p[i], gap:p[i-1].gap===true });
+    let gain = 0, loss = 0; const n = Math.max(1, Math.ceil(len/100)); let prev = plAltAt(a);
+    for (let k=1;k<=n;k++){ const v = plAltAt(a+len*k/n); if (v>prev) gain += v-prev; else loss += prev-v; prev = v; }
+    out.push({ i, a, b, len, rise, grade: len>0 ? rise/len : 0, gain, loss, from:p[i-1], to:p[i], gap:p[i-1].gap===true });
   }
   return out;
 }
@@ -9368,10 +9367,10 @@ function plCards(r){
     return h+'</div>';
   };
   const mv = (v, secs)=>{
-    const dist = secs.reduce((a,x)=>a+x.len,0)/1000, gain = secs.reduce((a,x)=>a+x.gain,0), t = secs.reduce((a,x)=>a+x.t,0), E = secs.reduce((a,x)=>a+x.E,0);
+    const dist = secs.reduce((a,x)=>a+x.len,0)/1000, gain = secs.reduce((a,x)=>a+x.gain,0), loss = secs.reduce((a,x)=>a+x.loss,0), t = secs.reduce((a,x)=>a+x.t,0), E = secs.reduce((a,x)=>a+x.E,0);
     const rise = secs.reduce((a,x)=>a+x.rise,0), grade = dist>0 ? rise/(dist*1000)*100 : 0;
     const s0 = secs.length===1 ? secs[0] : null, fk = s0 && s0.to.factor>0 ? s0.to.factor : 1;
-    let h = '<div class="plMove"><div class="plMoveL">'+(s0 ? '×'+fk.toFixed(2) : '')+'</div><div class="plMoveB"><div>'+plFmtKm(dist)+'<small> km,</small> ↑'+Math.round(gain)+'<small> m,</small> '+(grade>=0?'+':'')+grade.toFixed(1)+'<small> %,</small></div>'+
+    let h = '<div class="plMove"><div class="plMoveL">'+(s0 ? '×'+fk.toFixed(2) : '')+'</div><div class="plMoveB"><div>'+plFmtKm(dist)+'<small> km,</small> ↑'+Math.round(gain)+'<small> m,</small> ↓'+Math.round(loss)+'<small> m,</small> '+(grade>=0?'+':'')+grade.toFixed(1)+'<small> %,</small></div>'+
       '<div>'+plDur(t)+'<small>,</small> '+(t>0 ? (dist/(t/3600)).toFixed(1) : '-')+'<small> km/h,</small> '+Math.round(t>0 ? E/t : 0)+'<small> W,</small> '+Math.round(plKcal(E))+'<small> kcal</small></div>';
     if (edit && s0){
       const i = s0.i, to = s0.to;
@@ -9475,8 +9474,7 @@ function plRenderOut(){
     lines.push(l);
   });
   PL.text = lines.join('\n\n');
-  $('#plOut').textContent = PL.text;
-  $('#plCopy').disabled = $('#plSave').disabled = $('#plZip').disabled = false;
+  $('#plCopy').disabled = $('#plZip').disabled = false;
 }
 $('#plShowGap').addEventListener('change', e=>{ PL.showGap = e.target.checked; plRenderOut(); });
 $('#plDep').addEventListener('change', ()=>{ if (currentPageNum==='PL3') plRenderOut(); });
@@ -9487,7 +9485,10 @@ $('#plGearClose').addEventListener('click', ()=>{ $('#plGearSheet').classList.ad
 $('#plGearSheet').addEventListener('click', e=>{ if (e.target===$('#plGearSheet')){ $('#plGearSheet').classList.add('hidden'); plRenderOut(); } });
 $('#plCopy').addEventListener('click', async ()=>{
   try{ await navigator.clipboard.writeText(PL.text||''); showHeaderMsg('計画をコピーしました', false); }
-  catch(e){ const r = document.createRange(); r.selectNodeContents($('#plOut')); const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r); showHeaderMsg('コピーできなかったため、テキストを選択しました', true); }
+  catch(e){
+    try{ const ta = document.createElement('textarea'); ta.value = PL.text||''; ta.style.cssText = 'position:fixed;left:-9999px;top:0;'; document.body.appendChild(ta); ta.select(); const ok = document.execCommand('copy'); ta.remove(); showHeaderMsg(ok ? '計画をコピーしました' : 'コピーできませんでした', !ok); }
+    catch(e2){ showHeaderMsg('コピーできませんでした', true); }
+  }
 });
 $('#plZip').addEventListener('click', async ()=>{
   if (!PL.course || !window.JSZip){ showHeaderMsg('ZIPを作れませんでした', true); return; }
@@ -9515,10 +9516,7 @@ $('#plZip').addEventListener('click', async ()=>{
   const gbase = (PL.gpxName ? PL.gpxName.replace(/\.gpx$/i,'') : base).replace(/[\\/:*?"<>|]/g,'_');   // named after the original GPX file
   saveFile(gbase+'.zip', blob);
 });
-$('#plSave').addEventListener('click', ()=>{
-  const nm = ((PL.course && PL.course.name) || 'プラン').replace(/[\\/:*?"<>|]/g,'_');
-  saveFile(nm+'-ペース配分.txt', new Blob([PL.text||''], { type:'text/plain' }));
-});
+
 
 $('#e1Back').addEventListener('click', ()=> showPage(0));
 $('#eUndo').addEventListener('click', eUndo);
