@@ -530,6 +530,24 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
 .plRow{ display:flex; align-items:center; gap:5px; margin-bottom:6px; flex-wrap:wrap; }
 .plRow input{ font:inherit; font-size:13px; color:var(--text); background:var(--surface-2); border:1px solid var(--border); border-radius:7px; padding:6px 6px; }
 .plNo{ width:20px; text-align:right; font-size:12px; color:var(--text-dim); }
+.plCardBar{ display:flex; justify-content:flex-end; gap:6px; margin:2px 4px 8px; }
+.plIconBtn{ width:34px; height:30px; padding:0; border-radius:7px; border:1px solid var(--border); background:var(--surface-2); font-size:15px; cursor:pointer; }
+.plIconBtn.on{ background:var(--accent); }
+#plCards{ padding:0 2px 0 0; }
+.plCard{ position:relative; margin:0 0 0 36px; padding:8px 10px 8px 24px; border-radius:12px; background:#2dbf9f; color:#0b1d1a; }
+.plRestCard{ background:#d98a00; color:#241500; }
+.plCardNo{ position:absolute; left:-24px; top:-4px; width:34px; height:34px; border-radius:50%; background:#2dbf9f; color:#0b1d1a; border:3px solid var(--surface); display:flex; align-items:center; justify-content:center; font-size:17px; font-weight:600; }
+.plRestCard .plCardNo{ background:#d98a00; }
+.plCardRow{ display:flex; align-items:center; justify-content:space-between; gap:8px; }
+.plCardName{ font-size:17px; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; } .plCardName.plSmall{ font-size:13px; white-space:normal; line-height:1.2; }
+.plCardInfo{ font-size:17px; white-space:nowrap; } .plCard small, .plMove small{ font-size:11px; }
+.plCardRest{ display:flex; gap:12px; align-items:center; font-size:17px; border-top:1px solid rgba(0,0,0,.45); margin-top:5px; padding-top:5px; justify-content:center; }
+.plCardRest input{ width:54px; font:inherit; font-size:15px; text-align:right; }
+.plMove{ display:flex; align-items:stretch; margin:0 0 0 0; min-height:38px; }
+.plMoveL{ width:36px; flex:none; font-size:11px; display:flex; align-items:center; color:var(--text-faint); }
+.plMoveB{ flex:1; border-left:2px solid var(--text-faint); padding:6px 4px 6px 14px; font-size:17px; line-height:1.3; }
+.plMoveEdit{ display:flex; flex-wrap:wrap; gap:6px 8px; margin-top:6px; font-size:11px; color:var(--text-faint); }
+.plMoveEdit label{ display:flex; flex-direction:column; gap:2px; } .plMoveEdit input, .plMoveEdit select{ width:84px; font:inherit; font-size:14px; padding:5px; color:var(--text); background:var(--surface-2); border:1px solid var(--border); border-radius:7px; }
 .plAdjIn{ display:flex; align-items:center; gap:4px; flex:1 1 100%; } .plRow input.plTimeIn{ width:62px; } .plRow input.plFact{ width:58px; }
 .plRow input.plKm{ width:66px; } .plRow input.plPow{ width:62px; } .plRow input.plSpdIn{ width:62px; } .plRow input.plRest{ width:50px; } .plRow input.plName{ width:auto; flex:1 1 110px; min-width:90px; }
 #pl2Layout{ display:flex; flex-direction:column; height:calc(100dvh - env(safe-area-inset-top,0px) - 8px); min-height:420px; gap:0; }
@@ -675,8 +693,9 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
   </div>
   <div class="panel">
     <div class="panel-head"><h2>区間ごとの目標</h2></div>
-    <label class="hint" style="display:flex;align-items:center;gap:6px;margin-bottom:6px;"><input type="checkbox" id="plShowGap"> 区間外(空白)も表で表示する(計算には常に含まれます)</label>
-    <div class="overflowX"><div id="plSecTable"></div></div>
+    <label class="hint" style="display:flex;align-items:center;gap:6px;margin-bottom:6px;"><input type="checkbox" id="plShowGap"> 区間外(空白)も表示する(計算には常に含まれます)</label>
+    <div class="plCardBar"><button id="plCardEdit" class="plIconBtn" type="button" title="割増率・目標を入力する">✏️</button><button id="plCardSum" class="plIconBtn" type="button" title="全体の概要 / 区間ごと">🔼</button></div>
+    <div id="plCards"></div>
   </div>
   <div class="panel">
     <div class="panel-head"><h2>計画</h2></div>
@@ -694,8 +713,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
       <label class="field">転がり抵抗 Crr<input type="number" id="plCrr" min="0.002" max="0.02" step="0.001" value="0.005"></label>
       <label class="field">パワーのばらつき上限(VI)<input type="number" id="plVi" min="1" max="1.5" step="0.01" value="1.15"></label>
     </div>
-    <div class="panel-head" style="margin-top:8px;"><h3 style="margin:0;font-size:13px;">区間ごとの微調整(空欄=自動。入力した区間は強度係数の対象外)</h3></div>
-    <div id="plAdjList"></div>
+    <div class="hint" style="margin-top:8px;">区間ごとの割増率・目標時間・グロス速度・出力は、3ページ目の「区間ごとの目標」の ✏️ から入力します(空欄=自動。入力した区間は強度係数の対象外)。</div>
     <button id="plGearClose" type="button" class="primary" style="text-align:center;">閉じる</button>
   </div>
 </div>
@@ -1093,7 +1111,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
 // (this session's own publish count so far) is reconstructed from the
 // conversation itself rather than mechanically verified — best-effort, not
 // guaranteed exact. Increment by exactly 1 on every future publish.
-const APP_VERSION = 230;
+const APP_VERSION = 231;
 
 /* ============ FIT PARSER ============ */
 const FIT_EPOCH = 631065600; // seconds between 1970-01-01 and 1989-12-31 (FIT epoch)
@@ -9335,21 +9353,64 @@ function plRestRows(){
     row.querySelector('.plRestMin').addEventListener('change', e=>{ PL.pts[Number(row.dataset.i)].rest = Math.max(0, parseFloat(e.target.value)||0); plRenderOut(); });
   });
 }
-function plAdjRows(r){
-  const secs = r.secs.filter(s=> !s.gap);
-  $('#plAdjList').innerHTML = secs.map(s=> '<div class="plRow plAdj" data-i="'+s.i+'"><b class="plNo">'+plSecNo(s.i-1)+'</b><span style="flex:1 1 110px;min-width:90px;font-size:12px;">'+escapeHtml(plSecLabel(s.i-1))+' <span class="hint">'+(s.len/1000).toFixed(1)+'km '+plKind(s.kind)+'</span></span>'+
-    '<div class="plAdjIn"><span class="hint">速度</span><input class="plSpdIn" type="number" step="0.1" min="0" value="'+(s.to.speedOv>0 ? s.to.speedOv : '')+'" placeholder="'+(s.v*3.6).toFixed(1)+'"><span class="hint">km/h</span>'+
-    '<span class="hint">出力</span><input class="plPow" type="number" step="1" min="0" value="'+(s.to.powerOv>0 ? s.to.powerOv : '')+'" placeholder="'+Math.round(s.P)+'"><span class="hint">W</span></div>'+
-    '<div class="plAdjIn"><span class="hint">時間</span><input class="plTimeIn" type="number" step="0.5" min="0" value="'+(s.to.timeOv>0 ? s.to.timeOv : '')+'" placeholder="'+(s.t/60).toFixed(1)+'"><span class="hint">分</span>'+
-    '<span class="hint">割増率</span><input class="plFact" type="number" step="0.01" min="0.5" max="3" value="'+(s.to.factor>0 ? s.to.factor : '')+'" placeholder="1.00"><span class="hint">倍</span></div></div>').join('');
-  $('#plAdjList').querySelectorAll('.plRow').forEach(row=>{
-    const p = PL.pts[Number(row.dataset.i)];
+const plDur = t=>{ t = Math.round(t/60); return Math.floor(t/60)+'<small>h</small> '+String(t%60).padStart(2,'0')+'<small>m</small>'; };
+const plFmtKm = v=> v>=100 ? Math.round(v)+'' : v.toFixed(1);
+// the cards: places as cards from top to bottom, the movement between them (the factor at the left); 🔼/🔽 switch between the whole ride and the sections; ✏ opens the entries
+function plCards(r){
+  const el = $('#plCards'); if (!el) return;
+  const pts = PL.pts, n = pts.length, vis = plVisible(r), edit = !!PL.cardEdit, sum = !!PL.cardSummary;
+  $('#plCardEdit').classList.toggle('on', edit); $('#plCardSum').textContent = sum ? '🔽' : '🔼';
+  const card = v=>{
+    const p = pts[v.i], rest = !v.last && v.i>0 && p.rest>0, nm = (p.name||'').trim() || (v.last ? '到着' : '地点'+v.no);
+    const big = nm.length>7 ? ' plSmall' : '';
+    let h = '<div class="plCard'+(rest ? ' plRestCard' : '')+'"><span class="plCardNo">'+v.no+'</span><div class="plCardRow"><span class="plCardName'+big+'">'+escapeHtml(nm)+'</span><span class="plCardInfo">'+plHM(p.arr)+', '+plFmtKm(p.km)+'<small> km,</small> '+Math.round(plAltAt(p.km*1000))+'<small> m</small></span></div>';
+    if (rest) h += '<div class="plCardRest"><span>☕</span><span>'+plHM(p.arr)+'-'+plHM(p.dep)+' ('+(edit ? '<input class="plRestIn" type="number" min="0" step="1" value="'+p.rest+'" data-i="'+v.i+'"><small>分</small>' : plDur(p.rest*60))+')</span></div>';
+    return h+'</div>';
+  };
+  const mv = (v, secs)=>{
+    const dist = secs.reduce((a,x)=>a+x.len,0)/1000, gain = secs.reduce((a,x)=>a+x.gain,0), t = secs.reduce((a,x)=>a+x.t,0), E = secs.reduce((a,x)=>a+x.E,0);
+    const rise = secs.reduce((a,x)=>a+x.rise,0), grade = dist>0 ? rise/(dist*1000)*100 : 0;
+    const s0 = secs.length===1 ? secs[0] : null, fk = s0 && s0.to.factor>0 ? s0.to.factor : 1;
+    let h = '<div class="plMove"><div class="plMoveL">'+(s0 ? '×'+fk.toFixed(2) : '')+'</div><div class="plMoveB"><div>'+plFmtKm(dist)+'<small> km,</small> ↑'+Math.round(gain)+'<small> m,</small> '+(grade>=0?'+':'')+grade.toFixed(1)+'<small> %,</small></div>'+
+      '<div>'+plDur(t)+'<small>,</small> '+(t>0 ? (dist/(t/3600)).toFixed(1) : '-')+'<small> km/h,</small> '+Math.round(t>0 ? E/t : 0)+'<small> W,</small> '+Math.round(plKcal(E))+'<small> kcal</small></div>';
+    if (edit && s0){
+      const i = s0.i, to = s0.to;
+      h += '<div class="plMoveEdit" data-i="'+i+'">'+
+        '<label>割増率<select class="plFact">'+['']+'</select></label>'+
+        '<label>時間(分)<input class="plTimeIn" type="number" step="0.5" min="0" value="'+(to.timeOv>0 ? to.timeOv : '')+'" placeholder="'+(s0.t/60).toFixed(1)+'"></label>'+
+        '<label>グロス速度(km/h)<input class="plSpdIn" type="number" step="0.1" min="0" value="'+(to.speedOv>0 ? to.speedOv : '')+'" placeholder="'+(s0.v*3.6).toFixed(1)+'"></label>'+
+        '<label>出力(W)<input class="plPow" type="number" step="1" min="0" value="'+(to.powerOv>0 ? to.powerOv : '')+'" placeholder="'+Math.round(s0.P)+'"></label></div>';
+    }
+    return h+'</div></div>';
+  };
+  let html = '';
+  if (sum){
+    const first = vis[0], lastV = vis[vis.length-1];
+    const secs = r.secs.filter((s,i)=> s.i-1>=first.i && s.i-1<lastV.i && (PL.showGap || !s.gap));
+    const rests = pts.filter((p,i)=> i>0 && i<n-1 && p.rest>0 && i>first.i && i<lastV.i);
+    html = card({ i:first.i, last:false, no:1 }).replace(/<div class="plCardRest">.*?<\/div>/,'')+mv(first, secs).replace(/<div class="plMoveL">.*?<\/div>/,'<div class="plMoveL"></div>')+
+      (rests.length ? '<div class="plMove"><div class="plMoveL"></div><div class="plMoveB"><div>☕ 休憩 '+rests.length+'か所 計 '+plDur(rests.reduce((a,p)=>a+p.rest*60,0))+'</div></div></div>' : '')+card(lastV);
+  } else {
+    vis.forEach((v,k)=>{
+      html += card(v);
+      if (!v.last) html += mv(v, [r.secs[v.i]]);
+    });
+  }
+  el.innerHTML = html;
+  // the factor: a wheel (the native picker of the phone, like the time of day), 1.00 – 1.50 in steps of 0.05
+  el.querySelectorAll('.plMoveEdit').forEach(row=>{
+    const p = pts[Number(row.dataset.i)];
+    const sel = row.querySelector('.plFact'); let o = ''; for (let q=100;q<=150;q+=5) o += '<option value="'+(q/100).toFixed(2)+'">×'+(q/100).toFixed(2)+'</option>';
+    sel.innerHTML = o; const cur = p.factor>0 ? Math.max(1, Math.min(1.5, Math.round(p.factor*20)/20)) : 1; sel.value = cur.toFixed(2);
+    sel.addEventListener('change', e=>{ const v = parseFloat(e.target.value); p.factor = v>1.0001 ? v : null; plRenderOut(); });
     row.querySelector('.plSpdIn').addEventListener('change', e=>{ const v = parseFloat(e.target.value); p.speedOv = v>0 ? v : null; if (p.speedOv) p.powerOv = p.timeOv = null; plRenderOut(); });
     row.querySelector('.plPow').addEventListener('change', e=>{ const v = parseFloat(e.target.value); p.powerOv = v>0 ? v : null; if (p.powerOv) p.speedOv = p.timeOv = null; plRenderOut(); });
     row.querySelector('.plTimeIn').addEventListener('change', e=>{ const v = parseFloat(e.target.value); p.timeOv = v>0 ? v : null; if (p.timeOv) p.speedOv = p.powerOv = null; plRenderOut(); });
-    row.querySelector('.plFact').addEventListener('change', e=>{ const v = parseFloat(e.target.value); p.factor = v>0 ? Math.max(0.5, Math.min(3, v)) : null; plRenderOut(); });
   });
+  el.querySelectorAll('.plRestIn').forEach(inp=> inp.addEventListener('change', e=>{ pts[Number(e.target.dataset.i)].rest = Math.max(0, parseFloat(e.target.value)||0); plRenderOut(); }));
 }
+$('#plCardEdit').addEventListener('click', ()=>{ PL.cardEdit = !PL.cardEdit; if (PL.cardEdit) PL.cardSummary = false; plRenderOut(); });
+$('#plCardSum').addEventListener('click', ()=>{ PL.cardSummary = !PL.cardSummary; if (PL.cardSummary) PL.cardEdit = false; plRenderOut(); });
 const plHM = s=>{ s = Math.round(s/60)*60; const day = Math.floor(s/86400); const m = Math.floor((s%86400)/60); return (day>0 ? '翌' : '')+Math.floor(m/60)+':'+String(m%60).padStart(2,'0'); };
 // what a clip / the status shows: the section's own name, or its two end names when both are set; else nothing (the number only)
 function plSecNames(i){
@@ -9364,6 +9425,23 @@ function plSecShort(i){ if (PL.pts[i].gap===true) return ''; const n = plSecName
 function plSecLabel(i){ return PL.pts[i].gap===true ? '(区間外)' : (plSecShort(i) || '区間'+(i+1)); }
 // section numbers count the sections only (a gap between them has none)
 function plSecNo(i){ let n = 0; for (let k=0;k<=i;k++) if (PL.pts[k].gap!==true) n++; return n; }
+// the points that are listed (page 3 cards and the text): a section outside the plan (a gap, the offset from the true start / goal) is
+// calculated but not listed, unless asked for. {i: point index, last: the end of the last section (no leg follows), no: its number}
+function plVisible(r){
+  const pts = PL.pts, n = pts.length, out = [];
+  let lastReal = -1; if (!PL.showGap) for (let q=1;q<n;q++) if (!r.secs[q-1].gap) lastReal = q;
+  let no = 0;
+  pts.forEach((p,i)=>{
+    const isGapStart = i<n-1 && r.secs[i].gap;
+    const terminus = !PL.showGap && i===lastReal && (i===n-1 || r.secs[i].gap);
+    if (!PL.showGap && isGapStart && !terminus) return;
+    if (!PL.showGap && i>lastReal && !terminus) return;
+    const last = i===n-1 || terminus;
+    if (!last) no++;
+    out.push({ i, last, no: last ? no+1 : no });
+  });
+  return out;
+}
 function plRenderOut(){
   const r = PL.last = plCompute(), pts = PL.pts, n = pts.length;
   const tot = pts[n-1].arr-pts[0].arr;
@@ -9372,20 +9450,12 @@ function plRenderOut(){
   $('#plIntVal').textContent = '×'+(f/100).toFixed(2)+'('+Math.round(f)+'%)';
   { const m = Math.round(r.total/60); $('#plTarget').value = Math.floor(m/60)+':'+String(m%60).padStart(2,'0'); }   // shown only: the time follows from the pacing, it is not a goal to be set
   $('#plKNote').innerHTML = '出発〜到着 '+fmtHMS(tot)+'(走行 '+fmtHMS(r.moving)+' + 休憩 '+fmtHMS(r.rests)+')<br>消費エネルギー(計画) <b>'+Math.round(plKcal(r.secs.reduce((a,x)=>a+x.E,0)))+' kcal</b>・エネルギー予算 '+Math.round(r.budget/1000)+' kJ(≒ '+Math.round(plKcal(r.budget))+' kcal)・全体の平均 '+Math.round(r.budget/Math.max(1,r.Ttot))+' W・ばらつき(VI) '+r.vi.toFixed(2)+'(上限 '+plNum('plVi',1.15).toFixed(2)+')';
-  $('#plSecTable').innerHTML = '<table class="plTbl"><thead><tr><th>#</th><th>区間</th><th>距離</th><th>斜度</th><th>目標速度</th><th>目標平均パワー</th><th>所要</th><th>消費</th></tr></thead><tbody>'+
-    r.secs.filter(s=> PL.showGap || !s.gap).map(s=> '<tr><td>'+(s.gap ? '-' : plSecNo(s.i-1))+'</td><td style="text-align:left">'+escapeHtml(plSecLabel(s.i-1))+'</td><td>'+(s.len/1000).toFixed(1)+' km</td><td>'+(s.grade*100).toFixed(1)+' %</td><td>'+(s.v*3.6).toFixed(1)+' km/h</td><td>'+Math.round(s.P)+' W</td><td>'+fmtHMS(s.t)+'</td><td>'+Math.round(plKcal(s.E))+' kcal</td></tr>').join('')+'</tbody></table>';
+  plCards(r);
   // the text
   const lines = [];
   // a section outside the plan (a gap, the offset from the true start / goal) is calculated but not listed, unless asked for
-  let lastReal = -1; if (!PL.showGap) for (let q=1;q<n;q++) if (!r.secs[q-1].gap) lastReal = q;
-  let no = 0;
-  pts.forEach((p,i)=>{
-    const isGapStart = i<n-1 && r.secs[i].gap;
-    const terminus = !PL.showGap && i===lastReal && (i===n-1 || r.secs[i].gap);
-    if (!PL.showGap && isGapStart && !terminus) return;
-    if (!PL.showGap && i>lastReal && !terminus) return;
-    const last = i===n-1 || terminus, sec = last ? null : r.secs[i];
-    if (!last) no++;
+  plVisible(r).forEach(v=>{
+    const i = v.i, p = pts[i], last = v.last, sec = last ? null : r.secs[i], no = v.no;
     const km = Math.round(p.km), alt = Math.round(plAltAt(p.km*1000));
     const detail = plHM(p.arr)+',  '+km+' km,  '+alt+' m';
     let l = '';
@@ -9407,7 +9477,6 @@ function plRenderOut(){
   PL.text = lines.join('\n\n');
   $('#plOut').textContent = PL.text;
   $('#plCopy').disabled = $('#plSave').disabled = $('#plZip').disabled = false;
-  if (!($('#plAdjList').contains(document.activeElement) && document.activeElement.tagName==='INPUT')) plAdjRows(r);
 }
 $('#plShowGap').addEventListener('change', e=>{ PL.showGap = e.target.checked; plRenderOut(); });
 $('#plDep').addEventListener('change', ()=>{ if (currentPageNum==='PL3') plRenderOut(); });
