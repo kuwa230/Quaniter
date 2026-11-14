@@ -550,7 +550,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
 .plMoveEdit label{ display:flex; flex-direction:column; gap:2px; } .plMoveEdit input, .plMoveEdit select{ width:84px; font:inherit; font-size:14px; padding:5px; color:var(--text); background:var(--surface-2); border:1px solid var(--border); border-radius:7px; }
 .gtbl{ border-collapse:collapse; font-size:13px; } .gtbl th, .gtbl td{ border:1px solid var(--border); padding:3px; vertical-align:middle; white-space:nowrap; }
 .gtbl input{ width:112px; font:inherit; font-size:13px; color:var(--text); background:var(--surface-2); border:1px solid var(--border); border-radius:6px; padding:5px; }
-.gtbl th{ background:var(--surface-2); } .gtbl .gtName{ width:130px; font-weight:600; } .gtbl button{ font-size:12px; padding:2px 6px; }
+.gtbl th{ background:var(--surface-2); } .gtbl .gtName{ width:112px; font-weight:600; } .gtbl .gtTitle{ width:112px; } .gtbl button{ font-size:12px; padding:2px 6px; }
 .gtbl td.gtAddRowTd{ position:static !important; }
 .gtbl td:first-child, .gtbl th:first-child{ position:sticky; left:0; background:var(--surface); z-index:1; }
 .plAdjIn{ display:flex; align-items:center; gap:4px; flex:1 1 100%; } .plRow input.plTimeIn{ width:62px; } .plRow input.plFact{ width:58px; }
@@ -990,7 +990,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
 <div id="gearTableModal" class="ivReorderModal hidden" style="z-index:70;overflow:auto;">
   <div class="ivReorderHead"><h2>機材表</h2><button id="gearTableClose" class="small ghost icon-btn" type="button">✗</button></div>
   <div class="panel" style="margin-bottom:0;">
-    <div class="hint">行が機材、列がその機材の構成項目です。列の名前・機材名を変えても、行と列それぞれの内部番号は変わらないので、過去の走行の記録とは同じ機材・同じ項目として対応づきます。走行の記録には、使った機材の内容(項目名と値)も毎回すべて保存されます。</div>
+    <div class="hint">列が機材、行がその機材の構成項目です。項目名・機材名を変えても、機材と項目それぞれの内部番号は変わらないので、過去の走行の記録とは同じ機材・同じ項目として対応づきます。走行の記録には、使った機材の内容(項目名と値)も毎回すべて保存されます。</div>
     <div class="overflowX" style="margin-top:8px;"><div id="gearTable"></div></div>
   </div>
 </div>
@@ -1123,7 +1123,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
 // (this session's own publish count so far) is reconstructed from the
 // conversation itself rather than mechanically verified — best-effort, not
 // guaranteed exact. Increment by exactly 1 on every future publish.
-const APP_VERSION = 234;
+const APP_VERSION = 235;
 
 /* ============ FIT PARSER ============ */
 const FIT_EPOCH = 631065600; // seconds between 1970-01-01 and 1989-12-31 (FIT epoch)
@@ -2949,11 +2949,12 @@ $('#gearRefreshBtn').addEventListener('click', ()=>{
 });
 // the table editor
 function gearTableDraw(){
+  // shown transposed: a column per equipment, a row per component item (the stored data is unchanged)
   const d = gearData();
-  const head = '<tr><th>機材名</th>'+d.cols.map(c=>'<th><input class="gtTitle" data-c="'+c.id+'" value="'+escapeHtml(c.title)+'" placeholder="項目名"> <button type="button" class="ghost gtColDel" data-c="'+c.id+'" title="この列(項目)を削除">✗</button></th>').join('')+'<th><button type="button" id="gtAddCol">＋項目</button></th></tr>';
-  const body = d.rows.map(r=>'<tr><td><input class="gtName" data-r="'+r.id+'" value="'+escapeHtml(r.name)+'" placeholder="機材名"> <button type="button" class="ghost gtRowDel" data-r="'+r.id+'" title="この行(機材)を削除">✗</button></td>'+
-    d.cols.map(c=>'<td><input class="gtCell" data-r="'+r.id+'" data-c="'+c.id+'" value="'+escapeHtml(String(r.cells[c.id]||''))+'"></td>').join('')+'<td></td></tr>').join('');
-  $('#gearTable').innerHTML = '<table class="gtbl"><thead>'+head+'</thead><tbody>'+body+'<tr><td colspan="'+(d.cols.length+2)+'" class="gtAddRowTd" style="text-align:left;"><button type="button" id="gtAddRow">＋機材を追加</button></td></tr></tbody></table>';
+  const head = '<tr><th>項目</th>'+d.rows.map(r=>'<th><input class="gtName" data-r="'+r.id+'" value="'+escapeHtml(r.name)+'" placeholder="機材名"> <button type="button" class="ghost gtRowDel" data-r="'+r.id+'" title="この列(機材)を削除">✗</button></th>').join('')+'<th><button type="button" id="gtAddRow">＋機材</button></th></tr>';
+  const body = d.cols.map(c=>'<tr><td><input class="gtTitle" data-c="'+c.id+'" value="'+escapeHtml(c.title)+'" placeholder="項目名"> <button type="button" class="ghost gtColDel" data-c="'+c.id+'" title="この行(項目)を削除">✗</button></td>'+
+    d.rows.map(r=>'<td><input class="gtCell" data-r="'+r.id+'" data-c="'+c.id+'" value="'+escapeHtml(String(r.cells[c.id]||''))+'"></td>').join('')+'<td></td></tr>').join('');
+  $('#gearTable').innerHTML = '<table class="gtbl"><thead>'+head+'</thead><tbody>'+body+'<tr><td colspan="'+(d.rows.length+2)+'" class="gtAddRowTd" style="text-align:left;"><button type="button" id="gtAddCol">＋項目を追加</button></td></tr></tbody></table>';
   const upd = fn=>{ const dd = gearData(); fn(dd); gearStore(dd); };
   $('#gearTable').querySelectorAll('.gtTitle').forEach(i=> i.addEventListener('input', ()=> upd(dd=>{ dd.cols.find(c=>c.id===Number(i.dataset.c)).title = i.value; })));
   $('#gearTable').querySelectorAll('.gtName').forEach(i=> i.addEventListener('input', ()=> upd(dd=>{ dd.rows.find(r=>r.id===Number(i.dataset.r)).name = i.value; })));
@@ -2961,11 +2962,11 @@ function gearTableDraw(){
   $('#gtAddCol').addEventListener('click', ()=>{ const dd = gearData(); dd.cols.push({ id:dd.nextCol++, title:'' }); gearStore(dd); gearTableDraw(); });
   $('#gtAddRow').addEventListener('click', ()=>{ const dd = gearData(); dd.rows.push({ id:dd.nextRow++, name:'', cells:{} }); gearStore(dd); gearTableDraw(); });
   $('#gearTable').querySelectorAll('.gtColDel').forEach(b=> b.addEventListener('click', ()=>{
-    const dd = gearData(), c = dd.cols.find(x=>x.id===Number(b.dataset.c)); if (!c || !confirm('項目「'+(c.title||'(名前なし)')+'」の列を削除しますか?(過去の走行の記録には、保存された内容が残ります)')) return;
+    const dd = gearData(), c = dd.cols.find(x=>x.id===Number(b.dataset.c)); if (!c || !confirm('項目「'+(c.title||'(名前なし)')+'」の行を削除しますか?(過去の走行の記録には、保存された内容が残ります)')) return;
     dd.cols = dd.cols.filter(x=>x!==c); dd.rows.forEach(r=>{ delete r.cells[c.id]; }); gearStore(dd); gearTableDraw();
   }));
   $('#gearTable').querySelectorAll('.gtRowDel').forEach(b=> b.addEventListener('click', ()=>{
-    const dd = gearData(), r = dd.rows.find(x=>x.id===Number(b.dataset.r)); if (!r || !confirm('機材「'+(r.name||'(名前なし)')+'」を削除しますか?(過去の走行の記録には、保存された内容が残ります)')) return;
+    const dd = gearData(), r = dd.rows.find(x=>x.id===Number(b.dataset.r)); if (!r || !confirm('機材「'+(r.name||'(名前なし)')+'」の列を削除しますか?(過去の走行の記録には、保存された内容が残ります)')) return;
     dd.rows = dd.rows.filter(x=>x!==r); gearStore(dd); gearTableDraw();
   }));
 }
