@@ -548,6 +548,11 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
 .plMoveB{ flex:1; border-left:2px solid var(--text-faint); padding:6px 4px 6px 14px; font-size:17px; line-height:1.3; }
 .plMoveEdit{ display:flex; flex-wrap:wrap; gap:6px 8px; margin-top:6px; font-size:11px; color:var(--text-faint); }
 .plMoveEdit label{ display:flex; flex-direction:column; gap:2px; } .plMoveEdit input, .plMoveEdit select{ width:84px; font:inherit; font-size:14px; padding:5px; color:var(--text); background:var(--surface-2); border:1px solid var(--border); border-radius:7px; }
+.gtbl{ border-collapse:collapse; font-size:13px; } .gtbl th, .gtbl td{ border:1px solid var(--border); padding:3px; vertical-align:middle; white-space:nowrap; }
+.gtbl input{ width:112px; font:inherit; font-size:13px; color:var(--text); background:var(--surface-2); border:1px solid var(--border); border-radius:6px; padding:5px; }
+.gtbl th{ background:var(--surface-2); } .gtbl .gtName{ width:130px; font-weight:600; } .gtbl button{ font-size:12px; padding:2px 6px; }
+.gtbl td.gtAddRowTd{ position:static !important; }
+.gtbl td:first-child, .gtbl th:first-child{ position:sticky; left:0; background:var(--surface); z-index:1; }
 .plAdjIn{ display:flex; align-items:center; gap:4px; flex:1 1 100%; } .plRow input.plTimeIn{ width:62px; } .plRow input.plFact{ width:58px; }
 .plRow input.plKm{ width:66px; } .plRow input.plPow{ width:62px; } .plRow input.plSpdIn{ width:62px; } .plRow input.plRest{ width:50px; } .plRow input.plName{ width:auto; flex:1 1 110px; min-width:90px; }
 #pl2Layout{ display:flex; flex-direction:column; height:calc(100dvh - env(safe-area-inset-top,0px) - 8px); min-height:420px; gap:0; }
@@ -622,7 +627,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
   </div>
   <div class="panel">
     <div class="panel-head"><h2>コース(GPX)</h2></div>
-    <div class="vRow"><label class="vBtn primary" for="plGpx">GPXを選ぶ</label><label class="vBtn" for="plOpenZip">保存したプランを開く(ZIP)</label><input type="file" id="plOpenZip" accept=".zip,application/zip" hidden><input type="file" id="plGpx" accept=".gpx,application/gpx+xml,text/xml,application/xml" hidden><span class="hint" id="plCourse">未選択</span></div>
+    <div class="vRow"><label class="vBtn primary" for="plGpx">GPX / FITを選ぶ</label><label class="vBtn" for="plOpenZip">保存したプランを開く(ZIP)</label><input type="file" id="plOpenZip" accept=".zip,application/zip" hidden><input type="file" id="plGpx" accept=".gpx,.fit,.zip,application/gpx+xml,text/xml,application/xml,application/zip" hidden><span class="hint" id="plCourse">未選択</span></div>
   </div>
   <div class="panel">
     <div class="panel-head"><h2>パワーカーブ</h2></div>
@@ -982,20 +987,25 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
 
 </div>
 
+<div id="gearTableModal" class="ivReorderModal hidden" style="z-index:70;overflow:auto;">
+  <div class="ivReorderHead"><h2>機材表</h2><button id="gearTableClose" class="small ghost icon-btn" type="button">✗</button></div>
+  <div class="panel" style="margin-bottom:0;">
+    <div class="hint">行が機材、列がその機材の構成項目です。列の名前・機材名を変えても、行と列それぞれの内部番号は変わらないので、過去の走行の記録とは同じ機材・同じ項目として対応づきます。走行の記録には、使った機材の内容(項目名と値)も毎回すべて保存されます。</div>
+    <div class="overflowX" style="margin-top:8px;"><div id="gearTable"></div></div>
+  </div>
+</div>
 <div id="resultSettingsModal" class="ivReorderModal hidden" style="overflow:auto;">
   <div class="ivReorderHead"><h2>結果の表示項目</h2><button id="resultSettingsClose" class="small ghost icon-btn" type="button">✗</button></div>
   <div class="panel" style="margin-bottom:0;">
       <div class="presetBox" id="gearBox">
-        <span class="hint">ギア(この走行で使った機材)</span>
-        <label class="field" style="margin-top:6px;">ギアの名前<input type="text" id="gearName" placeholder="例: ロードバイクA"></label>
-        <label class="field" style="margin-top:6px;">メモ<textarea id="gearMemo" rows="2" style="width:100%;font:inherit;font-size:14px;color:var(--text);background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:8px;" placeholder="例: タイヤ28c 空気圧4.5bar、ホイール…"></textarea></label>
-        <div class="presetRow">
+        <span class="hint">機材(この走行で使った機材。機材表から選びます)</span>
+        <div class="presetRow" style="margin-top:6px;">
           <select id="gearSelect"></select>
-          <button id="gearLoadBtn" class="small" type="button">呼び出し</button>
-          <button id="gearSaveBtn" class="small" type="button">お気に入りに登録</button>
-          <button id="gearDelBtn" class="small ghost" type="button">削除</button>
+          <button id="gearEditBtn" class="small" type="button">機材表を編集</button>
         </div>
+        <div id="gearCurrent" style="margin-top:6px;font-size:13px;white-space:pre-wrap;"></div>
         <div class="hint" id="gearStatus" style="margin-top:6px;"></div>
+        <button id="gearRefreshBtn" class="small hidden" type="button" style="margin-top:6px;">機材表の最新の内容に更新する</button>
       </div>
       <div class="presetBox">
         <span class="hint">設定のプリセット(「全区間の解析情報を追加する」以降の設定と、表示項目の選択・並び順)</span>
@@ -1113,7 +1123,7 @@ footer{ text-align:center; color:var(--text-faint); font-size:11.5px; margin-top
 // (this session's own publish count so far) is reconstructed from the
 // conversation itself rather than mechanically verified — best-effort, not
 // guaranteed exact. Increment by exactly 1 on every future publish.
-const APP_VERSION = 233;
+const APP_VERSION = 234;
 
 /* ============ FIT PARSER ============ */
 const FIT_EPOCH = 631065600; // seconds between 1970-01-01 and 1989-12-31 (FIT epoch)
@@ -2611,7 +2621,7 @@ function serializeState(){
     // the display preset in force: its name (only the name the app can still vouch for) and, always, what it contains
     displayPreset: { name: presetNameShown(), details: presetCurrent() },
     rideComment: S.rideComment||'',
-    gear: S.gear && (S.gear.name||S.gear.memo) ? { name:S.gear.name||'', memo:S.gear.memo||'' } : null,
+    gear: gearSerialize(S.gear),
     powerChartMetrics: S.powerChartMetrics,
     powerChartXMode: S.powerChartXMode,
     // photos/videos: metadata only — the pictures themselves are never exported
@@ -2765,7 +2775,7 @@ function applyState(state, mode){
   if (state.grossIncludesStoppedTime!=null) S.grossIncludesStoppedTime = !!state.grossIncludesStoppedTime;
   if (state.avgGradientMethod==='diff' || state.avgGradientMethod==='gain') S.avgGradientMethod = state.avgGradientMethod;
   S.presetName = state.displayPreset && typeof state.displayPreset.name==='string' ? state.displayPreset.name : null;
-  if (state.gear && typeof state.gear==='object') S.gear = { name:String(state.gear.name||''), memo:String(state.gear.memo||'') };
+  if (state.gear && typeof state.gear==='object') S.gear = gearNorm(state.gear);
   if (state.sensors && typeof state.sensors==='object') S.sensors = { hr:state.sensors.hr!==false, power:state.sensors.power!==false, cad:state.sensors.cad!==false };
   if (state.ftp!=null && !isNaN(state.ftp) && state.ftp>0) S.ftp = Number(state.ftp);
   if (state.weight!=null && !isNaN(state.weight) && state.weight>0) S.weight = Number(state.weight);
@@ -2807,7 +2817,7 @@ function syncControlsFromState(){
   if ($('#cadZeroSelect')) $('#cadZeroSelect').value = S.cadZero ? '1' : '0';
   if ($('#powerZeroSelect')) $('#powerZeroSelect').value = S.powerZero!==false ? '1' : '0';
   if ($('#rideCommentInput')) $('#rideCommentInput').value = S.rideComment||'';
-  if ($('#gearName')) { $('#gearName').value = S.gear ? S.gear.name : ''; $('#gearMemo').value = S.gear ? S.gear.memo : ''; }
+  if (typeof gearSync==='function') gearSync();
   if (typeof presetStatus==='function') presetStatus();
   $$('#powerChartXModeSeg button').forEach(b=> b.classList.toggle('on', b.dataset.x===S.powerChartXMode));
   const dialValEl = $('#subdivideDialValue');
@@ -2871,36 +2881,96 @@ $('#avgGradientMethodSelect').addEventListener('change', e=>{
   if (lastResults) computeAndRenderResults();
 });
 /* ---- gear: a name and a note for this ride, and favourites to call up on other rides ---- */
-const GEAR_KEY = 'quaniter.gears.v1';
-function gearList(){ try{ const a = JSON.parse(localStorage.getItem(GEAR_KEY)||'[]'); return Array.isArray(a) ? a.filter(x=>x && typeof x.name==='string') : []; }catch(e){ return []; } }
-function gearStore(a){ try{ localStorage.setItem(GEAR_KEY, JSON.stringify(a)); return true; }catch(e){ return false; } }
-function gearBuild(sel){
-  const el = $('#gearSelect'), list = gearList();
-  el.innerHTML = list.length ? list.map(x=>'<option value="'+escapeHtml(x.name)+'">'+escapeHtml(x.name)+'</option>').join('') : '<option value="">(登録したギアはありません)</option>';
-  if (sel && list.some(x=>x.name===sel)) el.value = sel;
-  $('#gearLoadBtn').disabled = $('#gearDelBtn').disabled = !list.length;
+/* ---- equipment: a table (rows = equipment, columns = its component items). Every row and every column has its own internal number that is never reused,
+   so renaming either keeps the old records matched; a ride's record holds the number AND the full content (names and values) of the equipment it used ---- */
+const GEAR_KEY = 'quaniter.gears.v2', GEAR_KEY1 = 'quaniter.gears.v1';
+function gearData(){
+  let d = null;
+  try{ d = JSON.parse(localStorage.getItem(GEAR_KEY)||'null'); }catch(e){}
+  if (!d || !Array.isArray(d.cols) || !Array.isArray(d.rows)){
+    d = { v:2, nextCol:2, nextRow:1, cols:[{ id:1, title:'メモ' }], rows:[] };
+    try{   // the earlier list of favourites (name + memo) becomes the first rows
+      const old = JSON.parse(localStorage.getItem(GEAR_KEY1)||'[]');
+      if (Array.isArray(old)) old.filter(x=>x && typeof x.name==='string').forEach(x=>{ d.rows.push({ id:d.nextRow++, name:x.name, cells:{ 1:String(x.memo||'') } }); });
+    }catch(e){}
+  }
+  d.cols.forEach(c=>{ c.id = Number(c.id); c.title = String(c.title||''); });
+  d.rows.forEach(r=>{ r.id = Number(r.id); r.name = String(r.name||''); r.cells = r.cells && typeof r.cells==='object' ? r.cells : {}; });
+  d.nextCol = Math.max(Number(d.nextCol)||1, ...d.cols.map(c=>c.id+1), 1); d.nextRow = Math.max(Number(d.nextRow)||1, ...d.rows.map(r=>r.id+1), 1);
+  return d;
 }
-function gearFromInputs(){ S.gear = { name:$('#gearName').value.trim(), memo:$('#gearMemo').value }; saveState(); presetStatus(); }
-$('#gearName').addEventListener('input', gearFromInputs);
-$('#gearMemo').addEventListener('input', gearFromInputs);
-$('#gearSaveBtn').addEventListener('click', ()=>{
-  const name = $('#gearName').value.trim();
-  if (!name){ showHeaderMsg('ギアの名前を入力してください。', true); return; }
-  const list = gearList(), i = list.findIndex(x=>x.name===name), ent = { name, memo:$('#gearMemo').value };
-  if (i>=0 && !confirm('「'+name+'」は登録済みです。メモを上書きしますか?')) return;
-  if (i>=0) list[i] = ent; else list.push(ent);
-  if (!gearStore(list)){ showHeaderMsg('ギアを登録できませんでした。', true); return; }
-  gearBuild(name); showHeaderMsg('ギア「'+name+'」を登録しました。', false);
+function gearStore(d){ try{ localStorage.setItem(GEAR_KEY, JSON.stringify(d)); return true; }catch(e){ return false; } }
+// what a ride keeps: { rowId, name, items:[{colId, title, value}] } — a full copy of the equipment's content
+function gearSnapshot(d, row){ return { rowId:row.id, name:row.name, items:d.cols.map(c=>({ colId:c.id, title:c.title, value:String(row.cells[c.id]||'') })) }; }
+function gearNorm(g){
+  if (!g || typeof g!=='object') return null;
+  const items = Array.isArray(g.items) ? g.items.filter(x=>x && typeof x==='object').map(x=>({ colId:x.colId!=null && isFinite(Number(x.colId)) ? Number(x.colId) : null, title:String(x.title||''), value:String(x.value||'') })) : [];
+  if (!Array.isArray(g.items) && g.memo) items.push({ colId:null, title:'メモ', value:String(g.memo) });   // the earlier form: name + memo
+  const name = String(g.name||'');
+  if (!name && !items.some(x=>x.value)) return null;
+  return { rowId:g.rowId!=null && isFinite(Number(g.rowId)) ? Number(g.rowId) : null, name, items };
+}
+function gearSerialize(g){ g = gearNorm(g); return g ? { rowId:g.rowId, name:g.name, items:g.items.map(x=>({ colId:x.colId, title:x.title, value:x.value })) } : null; }
+function gearLabel(g){
+  if (!g) return '';
+  const v = g.items.filter(x=>x.value.trim()).map(x=>(x.title ? x.title+':' : '')+x.value.replace(/\s+/g,' ')).join(' / ');
+  return g.name+(v ? '('+v+')' : '');
+}
+function gearSame(a, b){
+  if (!a || !b) return false;
+  const m = g=>JSON.stringify([g.name, g.items.map(x=>[x.colId, x.title, x.value])]);
+  return m(a)===m(b);
+}
+function gearBuild(){
+  const el = $('#gearSelect'), d = gearData(), cur = S.gear;
+  let o = '<option value="">(なし)</option>'+d.rows.map(r=>'<option value="'+r.id+'">'+escapeHtml(r.name||'(名前なし)')+'</option>').join('');
+  const orphan = cur && (cur.rowId==null || !d.rows.some(r=>r.id===cur.rowId));
+  if (orphan) o += '<option value="x">'+escapeHtml(cur.name||'(名前なし)')+'(この走行の保存内容)</option>';
+  el.innerHTML = o;
+  el.value = !cur ? '' : orphan ? 'x' : String(cur.rowId);
+  const row = cur && cur.rowId!=null ? d.rows.find(r=>r.id===cur.rowId) : null;
+  $('#gearCurrent').textContent = cur ? cur.name+'\n'+cur.items.filter(x=>x.value.trim()).map(x=>'・'+(x.title||'(項目名なし)')+': '+x.value).join('\n') : '';
+  const diff = !!(row && !gearSame(cur, gearNorm(gearSnapshot(d, row))));
+  $('#gearStatus').textContent = !cur ? '' : !orphan ? (diff ? '機材表の内容が、この走行に保存した内容と異なります(この走行は保存した内容を使います)。' : '機材表と同じ内容です。')
+    : cur.rowId==null ? '機材表に登録されていない内容です(この走行に保存した内容を表示しています)。' : '機材表から削除された機材です(この走行に保存した内容を表示しています)。';
+  $('#gearRefreshBtn').classList.toggle('hidden', !diff);
+}
+function gearSync(){ if ($('#gearSelect')) gearBuild(); }
+function gearSetRide(g){ S.gear = g; saveState(); gearBuild(); presetStatus(); }
+$('#gearSelect').addEventListener('change', e=>{
+  const v = e.target.value, d = gearData();
+  if (v==='x') return;
+  if (!v){ gearSetRide(null); return; }
+  const row = d.rows.find(r=>r.id===Number(v)); if (row) gearSetRide(gearNorm(gearSnapshot(d, row)));
 });
-$('#gearLoadBtn').addEventListener('click', ()=>{
-  const x = gearList().find(y=>y.name===$('#gearSelect').value); if (!x) return;
-  $('#gearName').value = x.name; $('#gearMemo').value = x.memo||''; gearFromInputs();
-  showHeaderMsg('ギア「'+x.name+'」を呼び出しました。', false);
+$('#gearRefreshBtn').addEventListener('click', ()=>{
+  const d = gearData(), row = S.gear && S.gear.rowId!=null ? d.rows.find(r=>r.id===S.gear.rowId) : null;
+  if (row) gearSetRide(gearNorm(gearSnapshot(d, row)));
 });
-$('#gearDelBtn').addEventListener('click', ()=>{
-  const name = $('#gearSelect').value; if (!name || !confirm('お気に入りのギア「'+name+'」を削除しますか?(この走行の入力は消えません)')) return;
-  gearStore(gearList().filter(x=>x.name!==name)); gearBuild();
-});
+// the table editor
+function gearTableDraw(){
+  const d = gearData();
+  const head = '<tr><th>機材名</th>'+d.cols.map(c=>'<th><input class="gtTitle" data-c="'+c.id+'" value="'+escapeHtml(c.title)+'" placeholder="項目名"> <button type="button" class="ghost gtColDel" data-c="'+c.id+'" title="この列(項目)を削除">✗</button></th>').join('')+'<th><button type="button" id="gtAddCol">＋項目</button></th></tr>';
+  const body = d.rows.map(r=>'<tr><td><input class="gtName" data-r="'+r.id+'" value="'+escapeHtml(r.name)+'" placeholder="機材名"> <button type="button" class="ghost gtRowDel" data-r="'+r.id+'" title="この行(機材)を削除">✗</button></td>'+
+    d.cols.map(c=>'<td><input class="gtCell" data-r="'+r.id+'" data-c="'+c.id+'" value="'+escapeHtml(String(r.cells[c.id]||''))+'"></td>').join('')+'<td></td></tr>').join('');
+  $('#gearTable').innerHTML = '<table class="gtbl"><thead>'+head+'</thead><tbody>'+body+'<tr><td colspan="'+(d.cols.length+2)+'" class="gtAddRowTd" style="text-align:left;"><button type="button" id="gtAddRow">＋機材を追加</button></td></tr></tbody></table>';
+  const upd = fn=>{ const dd = gearData(); fn(dd); gearStore(dd); };
+  $('#gearTable').querySelectorAll('.gtTitle').forEach(i=> i.addEventListener('input', ()=> upd(dd=>{ dd.cols.find(c=>c.id===Number(i.dataset.c)).title = i.value; })));
+  $('#gearTable').querySelectorAll('.gtName').forEach(i=> i.addEventListener('input', ()=> upd(dd=>{ dd.rows.find(r=>r.id===Number(i.dataset.r)).name = i.value; })));
+  $('#gearTable').querySelectorAll('.gtCell').forEach(i=> i.addEventListener('input', ()=> upd(dd=>{ dd.rows.find(r=>r.id===Number(i.dataset.r)).cells[Number(i.dataset.c)] = i.value; })));
+  $('#gtAddCol').addEventListener('click', ()=>{ const dd = gearData(); dd.cols.push({ id:dd.nextCol++, title:'' }); gearStore(dd); gearTableDraw(); });
+  $('#gtAddRow').addEventListener('click', ()=>{ const dd = gearData(); dd.rows.push({ id:dd.nextRow++, name:'', cells:{} }); gearStore(dd); gearTableDraw(); });
+  $('#gearTable').querySelectorAll('.gtColDel').forEach(b=> b.addEventListener('click', ()=>{
+    const dd = gearData(), c = dd.cols.find(x=>x.id===Number(b.dataset.c)); if (!c || !confirm('項目「'+(c.title||'(名前なし)')+'」の列を削除しますか?(過去の走行の記録には、保存された内容が残ります)')) return;
+    dd.cols = dd.cols.filter(x=>x!==c); dd.rows.forEach(r=>{ delete r.cells[c.id]; }); gearStore(dd); gearTableDraw();
+  }));
+  $('#gearTable').querySelectorAll('.gtRowDel').forEach(b=> b.addEventListener('click', ()=>{
+    const dd = gearData(), r = dd.rows.find(x=>x.id===Number(b.dataset.r)); if (!r || !confirm('機材「'+(r.name||'(名前なし)')+'」を削除しますか?(過去の走行の記録には、保存された内容が残ります)')) return;
+    dd.rows = dd.rows.filter(x=>x!==r); gearStore(dd); gearTableDraw();
+  }));
+}
+$('#gearEditBtn').addEventListener('click', ()=>{ gearTableDraw(); $('#gearTableModal').classList.remove('hidden'); });
+$('#gearTableClose').addEventListener('click', ()=>{ $('#gearTableModal').classList.add('hidden'); gearBuild(); presetStatus(); });
 gearBuild();
 
 /* ---- presets of the display settings (from 「全区間の解析情報を追加する」 on, plus the chosen columns and their order) ---- */
@@ -2936,10 +3006,6 @@ function presetStatus(){
   const el = $('#presetStatus'); if (!el) return;
   const nm = presetNameShown(), d = presetCurrent();
   el.textContent = (nm ? '適用中のプリセット: 「'+nm+'」\n' : S.presetName ? '(この走行に使ったプリセット名の内容が、このアプリに保存されている内容と異なるため、名前は出さず、内容だけを表示します)\n' : '')+presetDetailText(d);
-  const g = $('#gearStatus'); if (g){
-    const f = S.gear && S.gear.name ? gearList().find(x=>x.name===S.gear.name) : null;
-    g.textContent = !f ? '' : (f.memo===(S.gear.memo||'') ? 'お気に入り「'+f.name+'」と同じ内容です。' : 'お気に入り「'+f.name+'」とはメモが異なります(この走行に保存した内容を表示しています)。');
-  }
 }
 function presetApply(d){
   if (Array.isArray(d.resultColumns)){
@@ -7733,7 +7799,7 @@ window.QuaniterAdvLoad = async function(entries, progress){
       }
       if (!secs.length){ noFav++; continue; }
       const cfg = set ? { weight:set.weight, ftp:set.ftp, age:set.age, sex:set.sex, grad:set.avgGradientMethod, powerZero:set.powerZero } : {};
-      const gearName = set && set.gear && set.gear.name ? set.gear.name+(set.gear.memo ? '('+String(set.gear.memo).replace(/\s+/g,' ')+')' : '') : '';
+      const gearName = gearLabel(gearNorm(set && set.gear));
       secs.forEach((sec,k)=>{
         const st = vCompute({ recs, cfg }, Object.assign({}, sec, { idx:k }));
         if (!st || st.duration==null || !(st.duration>0)) return;
@@ -8274,7 +8340,7 @@ function vSectionAvg(ride, sec, m){
     if (c==='fname') return ride.item.name;
     const rs = ride.recs, st = vWholeStats(ride);
     if (c==='memo') return (ride.cfg.memo||'').replace(/\s+/g,' ') || '--';
-    if (c==='gear') return ride.cfg.gear && ride.cfg.gear.name ? ride.cfg.gear.name+(ride.cfg.gear.memo ? '('+ride.cfg.gear.memo.replace(/\s+/g,' ')+')' : '') : '--';
+    if (c==='gear') return gearLabel(gearNorm(ride.cfg.gear)) || '--';
     if (c==='pwhr') return st.pwhr==null ? '--' : st.pwhr.toFixed(1)+' %';
     if (c==='pmaint') return st.pmaint==null ? '--' : Math.round(st.pmaint)+' %';
     if (c==='vi') return st.vi==null ? '--' : st.vi.toFixed(2);
@@ -8663,9 +8729,41 @@ $('#plOpenZip').addEventListener('change', async e=>{
     showPage('PL3');
   }catch(err){ showHeaderMsg('プランを開けませんでした: '+err.message, true); }
 });
+// the course from a FIT file (or a ZIP holding one): the recorded positions and altitudes, thinned to one point per 10 m or so; a GPX is made from them for the saved plan
+async function plCourseFromFit(buf, name){
+  const recs = parseFit(buf), pts = []; let lastLa = null, lastLo = null;
+  recs.forEach((r,i)=>{
+    if (r.lat==null || r.lon==null) return;
+    const alt = r.alt!=null ? r.alt : (r.altSmooth!=null ? r.altSmooth : null);
+    if (lastLa==null || haversineM(lastLa, lastLo, r.lat, r.lon)>=10){ pts.push([r.lat, r.lon, alt, null]); lastLa = r.lat; lastLo = r.lon; }
+  });
+  if (pts.length<2) throw new Error('FITに位置情報(GPS)がありません');
+  const gpx = '<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="Quaniter" xmlns="http://www.topografix.com/GPX/1/1"><trk><name>'+escapeHtml(name)+'</name><trkseg>'+
+    pts.map(p=>'<trkpt lat="'+p[0].toFixed(6)+'" lon="'+p[1].toFixed(6)+'">'+(p[2]!=null ? '<ele>'+p[2].toFixed(1)+'</ele>' : '')+'</trkpt>').join('')+'</trkseg></trk></gpx>';
+  return { course:{ name, pts }, gpx };
+}
 $('#plGpx').addEventListener('change', async e=>{
   const f = e.target.files[0]; if (!f) return;
-  try{ const txt = await f.text(); plSetCourse(await eParse(f)); PL.gpxText = txt; PL.gpxName = f.name; }catch(err){ showHeaderMsg('GPXを読み込めませんでした: '+err.message, true); }
+  try{
+    let buf = null;
+    if (/\.fit$/i.test(f.name)) buf = await f.arrayBuffer();
+    else if (/\.zip$/i.test(f.name)){
+      const zip = await JSZip.loadAsync(f);
+      const fit = Object.values(zip.files).find(x=>!x.dir && /\.fit$/i.test(x.name));
+      if (fit) buf = await fit.async('arraybuffer');
+      else {
+        const gn = Object.values(zip.files).find(x=>!x.dir && /\.gpx$/i.test(x.name));
+        if (!gn) throw new Error('ZIPにFITもGPXも入っていません');
+        const txt = await gn.async('string'), nm = gn.name.replace(/^.*\//,'');
+        plSetCourse(await eParse(new File([txt], nm, { type:'application/gpx+xml' }))); PL.gpxText = txt; PL.gpxName = nm; return;
+      }
+    }
+    if (buf){
+      const base = f.name.replace(/\.(fit|zip)$/i,'');
+      const r = await plCourseFromFit(buf, base);
+      plSetCourse(r.course); PL.gpxText = r.gpx; PL.gpxName = base+'.gpx';
+    } else { const txt = await f.text(); plSetCourse(await eParse(f)); PL.gpxText = txt; PL.gpxName = f.name; }
+  }catch(err){ showHeaderMsg('コースを読み込めませんでした: '+err.message, true); }
 });
 // tunnels: the altitude inside is replaced by the straight line between its two ends (the ups and downs inside do not count)
 function plApplyTunnels(){
@@ -8926,12 +9024,13 @@ function plMapFrame(follow){
     const m = p.km*1000, k = plIdxAt(m);
     let mk = mv.badges[i];
     if (!mk){ mk = addMarker(map, mapDot('mapBadgeNum', i+1), C.lon[k], C.lat[k]); mv.badges.push(mk); }
-    const startsSec = i<np-1 && p.gap!==true, noBadge = !(startsSec || i===lastReal);
+    const startsSec = i<np-1 && p.gap!==true, noBadge = !(startsSec || (i===lastReal && i!==np-1));   // the goal itself is the red dot
     mk.getElement().textContent = startsSec ? plSecNo(i) : (lastReal>0 ? plSecNo(lastReal-1)+1 : '');
     mk.getElement().style.display = noBadge ? 'none' : '';
     mk.getElement().style.opacity = p.rest>0 || p.rest===0 ? '1' : '.9';
     mk.setLngLat([C.lon[k], C.lat[k]]);
   });
+  { const e = C.lat.length-1; if (!mv.endDot) mv.endDot = addMarker(map, mapDot('mapDot mapDotEnd'), C.lon[e], C.lat[e]); else mv.endDot.setLngLat([C.lon[e], C.lat[e]]); }   // the end of the ride, red like in the analyser
   const k = plIdxAt(PL.seek);
   if (!mv.cursor) mv.cursor = addMarker(map, mapDot('mapCursor'), C.lon[k], C.lat[k]);
   mv.cursor.setLngLat([C.lon[k], C.lat[k]]);
